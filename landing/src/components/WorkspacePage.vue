@@ -295,10 +295,12 @@ function doLogout() {
             >
               <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" /><circle cx="12" cy="17" r="0.8" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="10" stroke-width="2" /></svg>
             </button>
-            <div class="hidden items-center gap-2.5 rounded-full border border-white/10 bg-white/5 py-1 pl-1 pr-3 sm:flex">
+            <button type="button" title="个人中心" :aria-label="`${user?.name || ''} · 打开个人中心`"
+              class="hidden items-center gap-2.5 rounded-full border border-white/10 bg-white/5 py-1 pl-1 pr-3 transition hover:border-indigo-400/40 hover:bg-white/10 sm:flex"
+              @click="navigate('account')">
               <span class="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-xs font-bold text-ink">{{ (user?.name || 'U').slice(0, 1) }}</span>
               <span class="hidden max-w-[9rem] truncate text-sm font-medium text-white sm:inline">{{ user?.name }}</span>
-            </div>
+            </button>
             <button
               class="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-400 transition hover:border-rose-400/40 hover:bg-rose-400/10 hover:text-rose-300"
               title="退出登录"
