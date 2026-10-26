@@ -39,6 +39,10 @@ These screenshots show the running application (2026-10-26, demo account), using
 
 ![Market chart](docs/images/market-chart.png)
 
+**AI Researcher: the AI reading for Ping An Bank, with the data each point cites listed under it**
+
+![AI Researcher](docs/images/agent-lab.png)
+
 ## 📖 About
 
 Prismind (镜思) is a research workbench for China's A-share market, built with **Vue 3 and FastAPI**. It brings data updates, stock screening, strategy building, factor evaluation, backtesting and AI-assisted research into one workflow, so researchers can record and test their own ideas. No coding is needed: strategies and screening conditions are set with forms or a one-sentence description.
