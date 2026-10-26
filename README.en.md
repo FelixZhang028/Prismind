@@ -25,15 +25,19 @@
 
 ## 🖥️ Screenshots
 
-These screenshots show the running application (2026-10-22).
+These screenshots show the running application (2026-10-26, demo account), using Ping An Bank (000001) as the example stock.
 
 **Brand homepage**
 
 ![Prismind homepage](docs/images/homepage.png)
 
-**Workspace home: market overview, your stock pool and the data calendar**
+**Workspace home: market overview, advancers and decliners, your stock pool**
 
 ![Workspace home](docs/images/workspace.png)
+
+**Market chart: Ping An Bank daily candles, moving averages, volume and MACD**
+
+![Market chart](docs/images/market-chart.png)
 
 ## 📖 About
 
