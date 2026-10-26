@@ -1,8 +1,8 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { setUserActive } from '../api.js'
+import { computed, nextTick, reactive, ref } from 'vue'
+import { renameUser, setUserActive } from '../api.js'
 
-// 用户列表：看每个人用了多少 AI、做了多少回测，可以停用或恢复账户。
+// 用户列表：看每个人用了多少 AI、做了多少回测，可以改昵称、停用或恢复账户。
 const props = defineProps({ users: { type: Array, default: () => [] } })
 const emit = defineEmits(['changed', 'notify'])
 
@@ -31,6 +31,38 @@ const rows = computed(() => {
 })
 
 const time = (value) => (value ? new Date(value).toLocaleString() : '—')
+const flagged = computed(() => props.users.filter((u) => u.banned_word).length)
+
+// 改昵称：管理员改不检查违禁词、不限次数，也不通知用户；记进操作记录。
+const NAME_MAX = 40
+const renaming = ref(null)
+const renameForm = reactive({ name: '', reason: '' })
+const renameError = ref('')
+const nameEl = ref(null)
+async function startRename(user) {
+  renaming.value = user
+  Object.assign(renameForm, { name: user.name, reason: '' })
+  renameError.value = ''
+  await nextTick()
+  nameEl.value?.select()
+}
+async function saveRename() {
+  const user = renaming.value
+  const name = renameForm.name.replace(/\s+/g, ' ').trim()
+  if (!name) return (renameError.value = '昵称不能为空')
+  if (name.length > NAME_MAX) return (renameError.value = `昵称最多 ${NAME_MAX} 个字`)
+  busy.value = user.id
+  try {
+    await renameUser(user.id, { name, reason: renameForm.reason.trim() })
+    renaming.value = null
+    emit('notify', `已把「${user.name}」的昵称改成「${name}」`)
+    emit('changed')
+  } catch (e) {
+    renameError.value = e.message || '修改失败'
+  } finally {
+    busy.value = 0
+  }
+}
 
 async function toggle(user) {
   const next = !user.is_active
@@ -56,11 +88,12 @@ async function toggle(user) {
     <div class="flex flex-wrap items-center gap-3">
       <h2 class="text-sm font-semibold text-white">注册用户</h2>
       <span class="text-xs text-slate-500">共 {{ users.length }} 人</span>
-      <input v-model="keyword" placeholder="搜索用户名或邮箱" class="ml-auto w-56 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-indigo-400/40" />
+      <input v-model="keyword" placeholder="搜索昵称或邮箱" class="ml-auto w-56 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-indigo-400/40" />
       <select v-model="order" aria-label="排序" class="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-200 outline-none">
         <option v-for="o in orders" :key="o.value" :value="o.value" class="bg-ink">{{ o.label }}</option>
       </select>
     </div>
+    <p v-if="flagged" class="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm text-amber-200">有 {{ flagged }} 个用户的昵称含违禁词（下面标出来了）。系统不会自动改，可以点“改昵称”处理。</p>
     <p class="mt-2 text-xs text-slate-500">AI 次数包括 AI 解读、追问、AI 问答、生成规则、AI 评估和个股判断；某个人用得特别多时，可以先停用，查清楚再恢复。给用户加或扣积分在“积分与兑换码”里。</p>
     <div class="mt-4 overflow-x-auto">
       <table class="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:px-3 [&_th]:px-3 [&_td:first-child]:pl-0 [&_th:first-child]:pl-0 [&_td:last-child]:pr-0 [&_th:last-child]:pr-0 w-full min-w-[960px] text-left text-sm">
@@ -82,7 +115,7 @@ async function toggle(user) {
           <tr v-for="u in rows" :key="u.id" class="text-slate-300 transition hover:bg-white/5" :class="{ 'opacity-60': !u.is_active }">
             <td class="py-3 font-mono text-xs text-indigo-300">{{ u.id }}</td>
             <td class="py-3">
-              <p class="font-medium text-white">{{ u.name }}</p>
+              <p class="font-medium text-white">{{ u.name }}<span v-if="u.banned_word" class="ml-2 rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[11px] font-normal text-amber-200" :title="`含违禁词“${u.banned_word}”`">昵称含违禁词</span></p>
               <p class="text-xs text-slate-500">{{ u.email }}</p>
             </td>
             <td class="py-3">
@@ -96,7 +129,8 @@ async function toggle(user) {
             <td class="py-3 text-right text-slate-400">{{ u.points ?? '—' }}</td>
             <td class="py-3 text-slate-400">{{ time(u.created_at) }}</td>
             <td class="py-3 text-slate-400">{{ time(u.last_seen_at) }}</td>
-            <td class="py-3 text-right">
+            <td class="space-x-2 py-3 text-right">
+              <button type="button" :disabled="busy === u.id" class="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300 transition hover:border-white/25 hover:text-white disabled:opacity-50" @click="startRename(u)">改昵称</button>
               <button v-if="!u.is_admin" type="button" :disabled="busy === u.id"
                 class="rounded-full border px-3 py-1 text-xs transition disabled:opacity-50"
                 :class="u.is_active ? 'border-rose-400/30 text-rose-300 hover:bg-rose-400/10' : 'border-emerald-400/30 text-emerald-300 hover:bg-emerald-400/10'"
@@ -106,6 +140,23 @@ async function toggle(user) {
         </tbody>
       </table>
       <p v-if="!rows.length" class="py-6 text-center text-sm text-slate-500">没有符合条件的用户。</p>
+    </div>
+
+    <div v-if="renaming" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" @click.self="renaming = null">
+      <form class="glass w-full max-w-sm rounded-2xl p-5" role="dialog" aria-label="改昵称" @submit.prevent="saveRename" @keydown.esc="renaming = null">
+        <h2 class="text-sm font-semibold text-white">改昵称</h2>
+        <p class="mt-1 break-all text-xs text-slate-400">{{ renaming.email }}，现在叫「{{ renaming.name }}」</p>
+        <label class="mt-4 block text-xs text-slate-400">新昵称（最多 {{ NAME_MAX }} 个字）
+          <input ref="nameEl" v-model="renameForm.name" :maxlength="NAME_MAX + 20" class="mt-1 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-indigo-400/40" /></label>
+        <label class="mt-3 block text-xs text-slate-400">原因（可以不填，只记在操作记录里）
+          <input v-model="renameForm.reason" maxlength="60" placeholder="例如 昵称不合适" class="mt-1 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-400/40" /></label>
+        <p class="mt-2 text-xs text-slate-500">管理员改的昵称不检查违禁词，也不会通知用户。</p>
+        <p v-if="renameError" class="mt-2 text-xs text-rose-300" role="alert">{{ renameError }}</p>
+        <div class="mt-4 flex justify-end gap-2">
+          <button type="button" class="rounded-full border border-white/10 px-4 py-1.5 text-sm text-slate-300" @click="renaming = null">取消</button>
+          <button type="submit" :disabled="busy === renaming.id" class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50">{{ busy === renaming.id ? '保存中…' : '保存' }}</button>
+        </div>
+      </form>
     </div>
   </section>
 </template>

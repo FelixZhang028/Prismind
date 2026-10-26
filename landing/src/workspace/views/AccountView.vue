@@ -1,11 +1,44 @@
 <script setup>
-import { reactive, ref } from 'vue'
-import { changePassword, deleteAccount, logout } from '../../api.js'
+import { nextTick, reactive, ref } from 'vue'
+import { changeName, changePassword, deleteAccount, logout } from '../../api.js'
 
 const props = defineProps({
   user: { type: Object, default: null },
   notify: { type: Function, default: () => {} },
 })
+const emit = defineEmits(['renamed'])
+
+// 改昵称：登录用邮箱，昵称只是显示的名字，可以重名；每天最多改 5 次。
+const NAME_MAX = 40
+const editingName = ref(false)
+const nameDraft = ref('')
+const savingName = ref(false)
+const nameError = ref('')
+const nameInput = ref(null)
+async function startRename() {
+  nameDraft.value = props.user?.name || ''
+  nameError.value = ''
+  editingName.value = true
+  await nextTick()
+  nameInput.value?.select()
+}
+async function saveName() {
+  const name = nameDraft.value.replace(/\s+/g, ' ').trim()
+  nameError.value = ''
+  if (!name) return (nameError.value = '昵称不能为空')
+  if (name.length > NAME_MAX) return (nameError.value = `昵称最多 ${NAME_MAX} 个字`)
+  if (name === props.user?.name) return (editingName.value = false)
+  savingName.value = true
+  try {
+    emit('renamed', await changeName(name))
+    editingName.value = false
+    props.notify('昵称已修改')
+  } catch (e) {
+    nameError.value = e.message || '修改失败'
+  } finally {
+    savingName.value = false
+  }
+}
 
 function doLogout() {
   logout()
@@ -61,8 +94,18 @@ const inputClass = 'w-full rounded-xl border border-white/10 bg-white/5 px-3 py-
       <div class="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-indigo-500/20 blur-3xl" />
       <div class="flex items-center gap-4">
         <span class="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-2xl font-bold text-white shadow-lg shadow-indigo-500/40">{{ (user?.name || 'U').slice(0, 1) }}</span>
-        <div>
-          <p class="text-xl font-bold text-white">{{ user?.name }}</p>
+        <div class="min-w-0 flex-1">
+          <form v-if="editingName" class="flex flex-wrap items-center gap-2" @submit.prevent="saveName" @keydown.esc="editingName = false">
+            <input ref="nameInput" v-model="nameDraft" :maxlength="NAME_MAX + 20" aria-label="新昵称" :class="inputClass" class="max-w-xs text-base" />
+            <button type="submit" :disabled="savingName" class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50">{{ savingName ? '保存中…' : '保存' }}</button>
+            <button type="button" class="rounded-full px-3 py-1.5 text-sm text-slate-400 hover:text-white" @click="editingName = false">取消</button>
+          </form>
+          <div v-else class="flex flex-wrap items-center gap-2">
+            <p class="min-w-0 break-all text-xl font-bold text-white">{{ user?.name }}</p>
+            <button type="button" class="rounded-full border border-white/10 px-2.5 py-0.5 text-xs text-slate-300 transition hover:border-white/25 hover:text-white" @click="startRename">修改昵称</button>
+          </div>
+          <p v-if="nameError" role="alert" class="mt-1 text-sm text-rose-300">{{ nameError }}</p>
+          <p v-else-if="editingName" class="mt-1 text-xs text-slate-500">最多 {{ NAME_MAX }} 个字，可以和别人重名；每天最多改 5 次。</p>
           <p class="text-sm text-slate-400">{{ user?.email }}</p>
         </div>
       </div>

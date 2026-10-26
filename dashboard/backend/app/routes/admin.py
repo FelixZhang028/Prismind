@@ -1,8 +1,9 @@
 """
 管理员接口，挂载在 /api/v1/admin 下（仅 is_admin=1 可访问）。
 
-- GET  /users                 全部用户：最后访问、今天和累计的 AI 次数、回测数、积分、是否停用
+- GET  /users                 全部用户：最后访问、今天和累计的 AI 次数、回测数、积分、是否停用、昵称里的违禁词
 - POST /users/{id}/active     停用或恢复一个账户（管理员账户不能停用）
+- POST /users/{id}/name       改一个用户的昵称（可以写原因，记进操作记录）
 - POST /users/{id}/points     给一个用户加或扣积分（要写原因）
 - GET  /points                积分概况：还有效的积分、最近发放和使用的积分、最近的明细、全部兑换码
 - POST /redeem-codes          生成兑换码（一次可以生成多个）
@@ -17,6 +18,9 @@
 - GET  /settings              系统设置：AI 模型、AI 次数、数据更新、邮件服务（密钥只显示前后几位）
 - PUT  /settings              保存或清除系统设置（要再输一次管理员密码），立刻生效
 - POST /settings/test         用页面上（可以还没保存）的设置测试文本模型、Jev 或发一封测试邮件
+- GET  /banned-words          昵称违禁词：内置的和管理员加的
+- POST /banned-words          加违禁词（一次可以加很多个）
+- POST /banned-words/delete   删掉一个管理员加的违禁词
 - GET  /audit                 管理员做过的操作
 - GET  /ai-usage              最近 30 天每天各类 AI 的次数、token 用量、用得最多的用户
 """
@@ -29,7 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from ..database import get_conn
-from ..quant import audit, backup, fundamentals_schedule, mailer, platform_ai, points, rate_limit, registration, site_config
+from ..quant import audit, backup, fundamentals_schedule, mailer, nicknames, platform_ai, points, rate_limit, registration, site_config
 from ..quant.runtime import MARKET_ROOT, RUNTIME_ROOT
 from ..routes.auth import get_current_user
 from ..security import verify_password
@@ -45,6 +49,19 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
 
 class ActiveIn(BaseModel):
     active: bool
+
+
+class NameIn(BaseModel):
+    name: str = Field(..., max_length=200, description="新昵称（整理空格后最多 40 个字）")
+    reason: str = Field("", max_length=60, description="原因，只记在操作记录里")
+
+
+class WordsIn(BaseModel):
+    words: str = Field(..., max_length=10000, description="用空格、逗号、顿号或换行分开")
+
+
+class WordIn(BaseModel):
+    word: str = Field(..., min_length=1, max_length=nicknames.WORD_MAX)
 
 
 class ModeIn(BaseModel):
@@ -87,10 +104,12 @@ def list_users():
             """,
             (platform_ai._today(), datetime.now(timezone.utc).isoformat()),
         ).fetchall()
+    banned = nicknames.matcher()
     return [
         {
             "id": r["id"],
             "name": r["name"],
+            "banned_word": None if r["is_admin"] else banned(r["name"]),    # 管理员可以用这些词
             "email": r["email"],
             "created_at": r["created_at"],
             "last_seen_at": r["last_seen_at"],
@@ -120,6 +139,27 @@ def set_user_active(uid: int, body: ActiveIn, admin: dict = Depends(require_admi
     audit.record(admin, "user.enable" if body.active else "user.disable",
                  f"{'恢复' if body.active else '停用'}了账户 {row['email']}", user_id=uid)
     return {"id": uid, "is_active": body.active}
+
+
+@router.post("/users/{uid}/name")
+def rename_user(uid: int, body: NameIn, admin: dict = Depends(require_admin)):
+    """管理员改昵称不检查违禁词（有时要用“官方”这样的名字），不限次数，也不通知用户。"""
+
+    try:
+        name = nicknames.check(body.name, allow_banned=True)
+    except nicknames.NicknameError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    with get_conn() as conn:
+        row = conn.execute("SELECT name, email FROM users WHERE id = ?", (uid,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="没有这个用户")
+        if row["name"] == name:
+            return {"id": uid, "name": name}
+        conn.execute("UPDATE users SET name = ? WHERE id = ?", (name, uid))
+    reason = body.reason.strip()
+    audit.record(admin, "user.rename", f"把 {row['email']} 的昵称从“{row['name']}”改成“{name}”" + (f"：{reason}" if reason else ""),
+                 user_id=uid, old=row["name"], new=name, reason=reason)
+    return {"id": uid, "name": name}
 
 
 @router.post("/users/{uid}/points")
@@ -392,6 +432,34 @@ def settings_test(body: SettingsTestIn, admin: dict = Depends(require_admin)):
         reason = "邮件发送失败，请检查服务器、端口、账号和授权码" if body.target == "email" else _ai_failure(exc)
         return {"ok": False, "message": reason, "seconds": round(time.monotonic() - started, 1)}
     return {"ok": True, "seconds": round(time.monotonic() - started, 1), **result}
+
+
+@router.get("/banned-words", dependencies=[Depends(require_admin)])
+def banned_words():
+    return {"items": nicknames.words(), "word_max": nicknames.WORD_MAX}
+
+
+@router.post("/banned-words", status_code=status.HTTP_201_CREATED)
+def add_banned_words(body: WordsIn, admin: dict = Depends(require_admin)):
+    try:
+        result = nicknames.add(body.words, str(admin.get("email") or ""))
+    except nicknames.NicknameError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    if result["added"]:
+        audit.record(admin, "nickname.add", f"加了 {len(result['added'])} 个昵称违禁词：{'、'.join(result['added'])}", words=result["added"])
+    return result
+
+
+@router.post("/banned-words/delete")
+def delete_banned_word(body: WordIn, admin: dict = Depends(require_admin)):
+    try:
+        removed = nicknames.remove(body.word)
+    except nicknames.NicknameError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    if not removed:
+        raise HTTPException(status_code=404, detail="没有这个违禁词")
+    audit.record(admin, "nickname.remove", f"删掉了昵称违禁词“{body.word}”", word=body.word)
+    return {"word": body.word}
 
 
 @router.get("/audit", dependencies=[Depends(require_admin)])

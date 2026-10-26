@@ -145,7 +145,7 @@ def test_admin_system_status_and_manual_backup(tmp_path, monkeypatch):
     app.include_router(auth.router)
     app.include_router(admin.router)
     client = TestClient(app)
-    client.post("/api/v1/auth/register", json={"name": "管理员", "email": "boss@example.test", "password": "correct horse 1"})
+    client.post("/api/v1/auth/register", json={"name": "站长", "email": "boss@example.test", "password": "correct horse 1"})
     with database.get_conn() as conn:
         conn.execute("UPDATE users SET is_admin = 1")
     login = client.post("/api/v1/auth/login", json={"email": "boss@example.test", "password": "correct horse 1"})

@@ -71,6 +71,19 @@ export function adminUsers() {
 export function adminStats() {
   return request('/api/v1/admin/stats', { auth: true })
 }
+export function renameUser(id, { name, reason = '' }) {
+  return request(`/api/v1/admin/users/${id}/name`, { method: 'POST', body: { name, reason }, auth: true })
+}
+// 昵称违禁词
+export function bannedWords() {
+  return request('/api/v1/admin/banned-words', { auth: true })
+}
+export function addBannedWords(words) {
+  return request('/api/v1/admin/banned-words', { method: 'POST', body: { words }, auth: true })
+}
+export function deleteBannedWord(word) {
+  return request('/api/v1/admin/banned-words/delete', { method: 'POST', body: { word }, auth: true })
+}
 export function setUserActive(id, active) {
   return request(`/api/v1/admin/users/${id}/active`, { method: 'POST', body: { active }, auth: true })
 }
