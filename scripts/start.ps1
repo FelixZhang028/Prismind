@@ -54,6 +54,13 @@ try {
     }
     # 本机开发：打开接口文档（/docs）。正式部署用 scripts/serve.ps1，默认关闭。
     $env:FELLOWQUANT_API_DOCS = 'on'
+    # 本机开发一般没有配置邮件服务：关掉注册时的邮箱验证，否则开放注册时注册不了。
+    # .env 里写了 FELLOWQUANT_SIGNUP_EMAIL_CODE（例如 on）就按 .env 的来；正式部署不受影响。
+    $envFile = Join-Path $backendRoot '.env'
+    $envText = if (Test-Path $envFile) { Get-Content -Raw -Encoding UTF8 $envFile } else { '' }
+    if (-not $env:FELLOWQUANT_SIGNUP_EMAIL_CODE -and $envText -notmatch '(?m)^[ \t]*FELLOWQUANT_SIGNUP_EMAIL_CODE[ \t]*=[ \t]*[^\s#]') {
+        $env:FELLOWQUANT_SIGNUP_EMAIL_CODE = 'off'
+    }
     $pythonPath = (Get-Command python -ErrorAction Stop).Source
     $nodePath = (Get-Command node -ErrorAction Stop).Source
     $processGroup = New-Object FellowQuant.Launcher.ProcessGroup
