@@ -102,7 +102,7 @@ const inputClass = 'w-full rounded-xl border border-white/10 bg-white/5 px-3 py-
           </form>
           <div v-else class="flex flex-wrap items-center gap-2">
             <p class="min-w-0 break-all text-xl font-bold text-white">{{ user?.name }}</p>
-            <button type="button" class="rounded-full border border-white/10 px-2.5 py-0.5 text-xs text-slate-300 transition hover:border-white/25 hover:text-white" @click="startRename">修改昵称</button>
+            <button type="button" class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-1.5 text-sm font-semibold text-white transition hover:-translate-y-0.5" @click="startRename">修改昵称</button>
           </div>
           <p v-if="nameError" role="alert" class="mt-1 text-sm text-rose-300">{{ nameError }}</p>
           <p v-else-if="editingName" class="mt-1 text-xs text-slate-500">最多 {{ NAME_MAX }} 个字，可以和别人重名；每天最多改 5 次。</p>
