@@ -57,7 +57,7 @@ GROUPS = {
     "limits": "每天免费次数",
     "points": "积分",
     "data": "数据更新",
-    "mail": "邮件服务（找回密码）",
+    "mail": "邮件服务（注册验证码、找回密码）",
 }
 
 SETTINGS: tuple[Setting, ...] = (
@@ -88,7 +88,7 @@ SETTINGS: tuple[Setting, ...] = (
             "所有用户、所有种类加起来；管理员的调用计入但不受限制。0 表示不限。", default=str(TOTAL_DEFAULT), minimum=0, maximum=1000000),
 
     Setting(points.SIGNUP[0], "points", "新用户赠送积分", "int",
-            "每个账户只送一次；以前注册的账户第一次打开时补上。0 表示不送。", default=str(points.SIGNUP[1]), minimum=0, maximum=100000),
+            "每个邮箱只送一次：注销后用同一个邮箱（包括不同写法）重新注册不再送；以前注册的账户第一次打开时补上。0 表示不送。", default=str(points.SIGNUP[1]), minimum=0, maximum=100000),
     Setting(points.GIFT_DAYS[0], "points", "赠送的积分多少天有效", "int", default=str(points.GIFT_DAYS[1]), minimum=1, maximum=3650),
     Setting(points.CHECKIN[0], "points", "每日打卡：第 1 天送多少积分", "int",
             "每个账户每天（北京时间）打一次卡，断了从第 1 天重新开始。0 表示关闭打卡。", default=str(points.CHECKIN[1]), minimum=0, maximum=10000),
@@ -112,11 +112,14 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("FELLOWQUANT_BAOSTOCK_INTERVAL", "data", "BaoStock 两次请求之间至少间隔（秒）", "number",
             "调大可以降低被数据源拉黑的可能，下载会变慢。对之后启动的任务生效。", default=str(DEFAULT_INTERVAL), minimum=0, maximum=5),
 
-    Setting("SMTP_HOST", "mail", "SMTP 服务器", "text", "例如 smtp.qq.com。"),
-    Setting("SMTP_PORT", "mail", "端口", "int", "使用 STARTTLS，一般是 587。", default="587", minimum=1, maximum=65535),
-    Setting("SMTP_USERNAME", "mail", "账号", "text"),
-    Setting("SMTP_PASSWORD", "mail", "密码或授权码", "secret"),
-    Setting("SMTP_FROM", "mail", "发件人地址", "email"),
+    Setting("SMTP_HOST", "mail", "SMTP 服务器", "text", "163 邮箱填 smtp.163.com，QQ 邮箱填 smtp.qq.com。"),
+    Setting("SMTP_PORT", "mail", "端口", "int",
+            "465 和 994 一开始就用 SSL 加密（163、QQ 邮箱都可以用 465）；别的端口用 STARTTLS 加密，一般是 587。",
+            default="587", minimum=1, maximum=65535),
+    Setting("SMTP_USERNAME", "mail", "账号", "text", "一般就是完整的邮箱地址。"),
+    Setting("SMTP_PASSWORD", "mail", "密码或授权码", "secret",
+            "163、QQ 邮箱要填在邮箱设置里开启 SMTP 服务时拿到的授权码，不是登录密码。"),
+    Setting("SMTP_FROM", "mail", "发件人地址", "email", "和上面的账号写同一个邮箱，否则邮箱服务商可能拒绝发送。"),
 )
 BY_NAME = {setting.name: setting for setting in SETTINGS}
 

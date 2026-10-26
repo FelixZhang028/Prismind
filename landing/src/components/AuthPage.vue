@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import DynamicBackground from './DynamicBackground.vue'
 import LegalDialog from './LegalDialog.vue'
 import ThemeToggle from './ThemeToggle.vue'
-import { getToken, login, register, registrationMode, setSession, forgotRequest, forgotReset, restoreSession } from '../api.js'
+import { getToken, login, register, registrationMode, setSession, forgotRequest, forgotReset, restoreSession, signupCode } from '../api.js'
 
 const checkingSession = ref(Boolean(getToken()))
 const sessionIssue = ref('')
@@ -23,15 +23,21 @@ async function resumeSession() {
 function checkRestoredPage() {
   if (!checkingSession.value && !submitting.value && getToken()) resumeSession()
 }
-// 注册方式：open 开放、invite 需要邀请码、closed 暂不开放（后端的 .env 决定）。
+// 注册方式：open 开放、invite 需要邀请码、closed 暂不开放（管理员在后台选）。
+// 邮件服务配好以后，注册要填发到邮箱的验证码；开放注册时邮件服务还没配好，暂时不能注册（reason 说明原因）。
 const registration = ref('open')
+const signup = reactive({ emailCode: false, available: true, reason: '' })
 onMounted(() => {
-  registrationMode().then((data) => { registration.value = data.mode || 'open' }).catch(() => {})
+  registrationMode().then((data) => {
+    registration.value = data.mode || 'open'
+    Object.assign(signup, { emailCode: Boolean(data.email_code), available: data.available !== false, reason: data.reason || '' })
+  }).catch(() => {})
   if (checkingSession.value) resumeSession()
   window.addEventListener('pageshow', checkRestoredPage)
   window.addEventListener('storage', checkRestoredPage)
 })
 onBeforeUnmount(() => {
+  clearInterval(codeTimer)
   window.removeEventListener('pageshow', checkRestoredPage)
   window.removeEventListener('storage', checkRestoredPage)
 })
@@ -44,6 +50,7 @@ const form = reactive({
   password: '',
   confirm: '',
   invite: '',
+  code: '',
   remember: true,
   agree: false,
 })
@@ -118,7 +125,8 @@ function enterForgot() {
 
 function validate() {
   Object.keys(errors).forEach((k) => delete errors[k])
-  if (!isLogin.value && registration.value === 'closed') errors.form = '暂时不开放注册'
+  if (!isLogin.value && !signup.available) errors.form = signup.reason || '暂时不开放注册'
+  if (!isLogin.value && signup.emailCode && !/^\d{6}$/.test(form.code.trim())) errors.code = '请填邮箱里收到的 6 位验证码'
   if (!isLogin.value && registration.value === 'invite' && !form.invite.trim()) errors.invite = '请输入邀请码'
   if (!isLogin.value && !form.name.trim()) errors.name = '请输入昵称'
   if (!form.email.trim()) {
@@ -138,6 +146,31 @@ function validate() {
   return Object.keys(errors).length === 0
 }
 
+// 发注册验证码：一分钟内不能再发
+const sendingCode = ref(false)
+const codeWait = ref(0)
+const codeNote = ref('')
+let codeTimer = null
+async function sendCode() {
+  if (sendingCode.value || codeWait.value) return
+  delete errors.email
+  delete errors.code
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return (errors.email = form.email.trim() ? '邮箱格式不正确' : '请先填邮箱')
+  sendingCode.value = true
+  try {
+    codeNote.value = (await signupCode(form.email.trim())).message
+    codeWait.value = 60
+    clearInterval(codeTimer)
+    codeTimer = setInterval(() => { codeWait.value -= 1; if (codeWait.value <= 0) clearInterval(codeTimer) }, 1000)
+  } catch (e) {
+    const msg = e?.message || '发送失败，请稍后重试'
+    if (/邮箱/.test(msg) && !/验证码/.test(msg)) errors.email = msg
+    else errors.code = msg
+  } finally {
+    sendingCode.value = false
+  }
+}
+
 async function onSubmit() {
   if (submitting.value) return
   if (!validate()) return
@@ -150,7 +183,7 @@ async function onSubmit() {
       // 登录成功，跳转功能台
       setTimeout(() => (window.location.href = '/app.html'), 500)
     } else {
-      await register({ name: form.name, email: form.email, password: form.password, invite_code: form.invite.trim() })
+      await register({ name: form.name, email: form.email, password: form.password, invite_code: form.invite.trim(), email_code: form.code.trim() })
       // 注册成功，自动登录并跳转功能台
       const data = await login({ email: form.email, password: form.password })
       setSession(data.token, data.user)
@@ -161,6 +194,7 @@ async function onSubmit() {
     // 后端字段级错误（如 409 邮箱已注册 / 401 凭据错误）映射到表单
     const msg = e && e.message ? e.message : '请求失败，请稍后重试'
     if (/邀请码/.test(msg)) errors.invite = msg
+    else if (/验证码/.test(msg)) errors.code = msg
     else if (/邮箱/.test(msg)) errors.email = msg
     else if (/密码|凭据/.test(msg)) errors.password = msg
     else errors.form = msg
@@ -393,6 +427,29 @@ const features = [
               <p v-if="errors.email" class="mt-1 text-xs text-rose-300">{{ errors.email }}</p>
             </div>
 
+            <!-- 邮箱验证码（邮件服务配好以后注册都要） -->
+            <div v-if="!isLogin && signup.emailCode">
+              <label class="mb-1.5 block text-xs font-medium text-slate-400">邮箱验证码</label>
+              <div class="flex gap-2">
+                <input
+                  v-model="form.code"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  maxlength="6"
+                  placeholder="6 位数字"
+                  aria-label="邮箱验证码"
+                  class="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white placeholder-slate-500 outline-none transition focus:border-indigo-400/50 focus:bg-white/10 focus:ring-2 focus:ring-indigo-500/30"
+                  :class="{ 'border-rose-400/50 focus:ring-rose-500/20': errors.code }"
+                />
+                <button type="button" :disabled="sendingCode || codeWait > 0"
+                  class="shrink-0 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-4 text-sm font-semibold text-white transition disabled:opacity-50"
+                  @click="sendCode">{{ sendingCode ? '发送中…' : codeWait ? `${codeWait} 秒后重发` : codeNote ? '重新发送' : '发送验证码' }}</button>
+              </div>
+              <p v-if="errors.code" class="mt-1 text-xs text-rose-300">{{ errors.code }}</p>
+              <p v-else-if="codeNote" class="mt-1 text-xs text-emerald-300">{{ codeNote }}</p>
+            </div>
+
             <div>
               <label class="mb-1.5 block text-xs font-medium text-slate-400">密码</label>
               <div class="relative">
@@ -476,7 +533,7 @@ const features = [
               </div>
               <p v-if="errors.invite" class="mt-1 text-xs text-rose-300">{{ errors.invite }}</p>
             </div>
-            <p v-if="!isLogin && registration === 'closed'" class="rounded-xl border border-amber-400/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">暂时不开放注册，已有账户可以直接登录。</p>
+            <p v-if="!isLogin && !signup.available" class="rounded-xl border border-amber-400/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">{{ signup.reason || '暂时不开放注册。' }}已有账户可以直接登录。</p>
 
             <!-- 记住我 / 忘记密码 -->
             <div v-if="isLogin" class="flex items-center justify-between text-xs">

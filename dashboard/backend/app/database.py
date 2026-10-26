@@ -16,6 +16,7 @@
 - point_checkins 每日打卡（每人每天一行，含补签）
 - point_makeup_cards 补签卡
 - screen_briefs 条件选股的 AI 解读（同一组条件、同一天再看不重复扣次数）
+- signup_emails 领过注册赠送积分的邮箱的“指纹”（注销账户时不删，同一个邮箱只送一次）
 
 使用 Python 标准库 sqlite3，无需额外依赖。
 数据库文件：backend/data/app.db
@@ -24,7 +25,7 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
-from .security import gen_salt, hash_password
+from .security import email_key, gen_salt, hash_password
 
 _DB_DIR = os.path.abspath(os.getenv("FELLOWQUANT_DATA_DIR") or os.path.join(os.path.dirname(os.path.dirname(__file__)), "data"))
 os.makedirs(_DB_DIR, exist_ok=True)
@@ -310,6 +311,11 @@ def init_db() -> None:
                 note       TEXT    NOT NULL DEFAULT '',
                 created_at TEXT    NOT NULL
             );
+            -- 领过注册赠送积分的邮箱：只存“指纹”（security.email_key），看不出原来的邮箱；注销账户时不删
+            CREATE TABLE IF NOT EXISTS signup_emails (
+                email_key  TEXT    PRIMARY KEY,
+                created_at TEXT    NOT NULL
+            );
             -- 管理员加的昵称违禁词（内置的写在 app/quant/nicknames.py 里）；word_key 是统一写法后的，用来去重
             CREATE TABLE IF NOT EXISTS nickname_banned_words (
                 word       TEXT    PRIMARY KEY,
@@ -338,6 +344,12 @@ def init_db() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN last_seen_at TEXT")
         if "makeup" not in {row["name"] for row in conn.execute("PRAGMA table_info(point_checkins)")}:
             conn.execute("ALTER TABLE point_checkins ADD COLUMN makeup INTEGER NOT NULL DEFAULT 0")
+        # 这张表以前没有：已经领过注册积分的账户补记一下，注销后再用同一个邮箱注册就不再送。
+        gifted = conn.execute(
+            "SELECT u.email, MIN(l.created_at) AS created_at FROM users u JOIN point_ledger l ON l.user_id = u.id AND l.kind = 'signup' GROUP BY u.id"
+        ).fetchall()
+        conn.executemany("INSERT OR IGNORE INTO signup_emails (email_key, created_at) VALUES (?, ?)",
+                         [(email_key(row["email"]), row["created_at"]) for row in gifted])
 
     # No public default credentials. Bootstrap only when explicitly configured.
     email = os.getenv("FELLOWQUANT_ADMIN_EMAIL", "").strip().lower()

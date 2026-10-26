@@ -1,8 +1,9 @@
 """
 认证 REST 接口，挂载在 /api/v1/auth 下。
 
-- GET  /registration      现在能不能注册、要不要邀请码
-- POST /register          官网注册 → 写入 SQLite users 表（可能需要邀请码）
+- GET  /registration      现在能不能注册、要不要邀请码、要不要邮箱验证码
+- POST /register/code     注册前发验证码到要注册的邮箱
+- POST /register          官网注册 → 写入 SQLite users 表（要邮箱验证码，可能还要邀请码）
 - POST /login             登录校验 → 返回签名令牌
 - POST /logout            退出登录：这个账户在所有设备上的令牌一起作废
 - POST /password          修改密码（要旧密码）；其他设备上的登录随之作废
@@ -14,9 +15,14 @@
 
 管理员停用的账户不能登录，已经登录的也会立即失效。
 
+注册要先验证邮箱（填发到邮箱的验证码），防止随便编一个邮箱就注册、领注册积分。邮件服务没有配置时：
+开放注册暂时不能注册（页面会说明），凭邀请码注册照常（邀请码由管理员控制）。
+``FELLOWQUANT_SIGNUP_EMAIL_CODE=off`` 关闭邮箱验证（只用于自己电脑上试用和测试）。
+
 登录、注册、找回密码都限制频率（见 ``app.quant.rate_limit``）。
 """
 import hmac
+import os
 import re
 import secrets
 import time
@@ -42,6 +48,8 @@ _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 # 忘记密码验证码（内存存储）：{user_id: (code, expires_at, attempts)}
 _RESET_CODES: dict[int, tuple[str, float, int]] = {}
+# 注册验证码（内存存储）：{邮箱（小写）: (code, expires_at, attempts)}
+_SIGNUP_CODES: dict[str, tuple[str, float, int]] = {}
 RESET_CODE_TTL = 10 * 60          # 验证码有效期：10 分钟
 RESET_CODE_MAX_ATTEMPTS = 5       # 验证码最多可尝试次数
 # 密码的长度：太长的密码会让每次加密都很慢，可以被用来拖慢服务器。
@@ -54,6 +62,9 @@ REGISTER_PER_IP = (5, 60 * 60)        # 同一地址每小时最多注册 5 个�
 FORGOT_PER_IP = (10, 60 * 60)
 FORGOT_PER_EMAIL = (3, 60 * 60)
 RENAME_PER_USER = (5, 24 * 60 * 60)   # 每个账户一天最多改 5 次昵称
+SIGNUP_CODE_PER_IP = (10, 60 * 60)    # 同一地址每小时最多发 10 次注册验证码
+SIGNUP_CODE_PER_EMAIL = (3, 60 * 60)  # 同一邮箱每小时最多 3 次（也防止拿网站去轰炸别人的邮箱）
+NO_MAIL_MESSAGE = "网站还没有配置邮件服务，暂时不能注册，请稍后再来或联系管理员。"
 # 最后访问时间最多每 5 分钟写一次，不必每个请求都写数据库。
 SEEN_EVERY = timedelta(minutes=5)
 DISABLED_MESSAGE = "这个账户已被停用，如有疑问请联系管理员。"
@@ -64,6 +75,11 @@ class RegisterIn(BaseModel):
     email: str = Field(..., max_length=254, description="邮箱")
     password: str = Field(..., min_length=PASSWORD_MIN, max_length=PASSWORD_MAX, description="密码 8 到 128 位")
     invite_code: str = Field("", max_length=64, description="邀请码（需要时）")
+    email_code: str = Field("", max_length=8, description="发到邮箱的验证码（需要时）")
+
+
+class SignupCodeIn(BaseModel):
+    email: str = Field(..., max_length=254, description="要注册的邮箱")
 
 
 class LoginIn(BaseModel):
@@ -145,9 +161,77 @@ def _password_row(user_id: int):
         ).fetchone()
 
 
-@router.get("/registration", summary="现在能不能注册、要不要邀请码")
+def email_code_required() -> bool:
+    """注册要不要验证邮箱（``FELLOWQUANT_SIGNUP_EMAIL_CODE=off`` 时不要）；邮件服务没有配置时见 :func:`signup_status`。"""
+
+    if os.getenv("FELLOWQUANT_SIGNUP_EMAIL_CODE", "on").strip().lower() in ("0", "off", "false", "no"):
+        return False
+    return True
+
+
+def signup_status() -> dict:
+    """注册方式，要不要邮箱验证码，现在能不能注册（不能时说明原因）。"""
+
+    mode, need_code = registration.mode(), email_code_required()
+    reason = ""
+    if mode == "closed":
+        reason = "暂时不开放注册。"
+    elif need_code and not mailer.configured() and mode == "open":
+        reason = NO_MAIL_MESSAGE
+    # 凭邀请码注册时，没有邮件服务也照常注册（邀请码由管理员控制）。
+    return {"mode": mode, "email_code": need_code and mailer.configured(), "available": not reason, "reason": reason}
+
+
+@router.get("/registration", summary="现在能不能注册、要不要邀请码和邮箱验证码")
 def registration_mode():
-    return {"mode": registration.mode()}
+    return signup_status()
+
+
+@router.post("/register/code", summary="注册前发验证码到要注册的邮箱")
+def signup_code(body: SignupCodeIn, request: Request):
+    email = body.email.strip().lower()
+    status_now = signup_status()
+    if not status_now["available"]:
+        raise HTTPException(status_code=403 if status_now["mode"] == "closed" else 503, detail=status_now["reason"])
+    if not status_now["email_code"]:
+        raise HTTPException(status_code=400, detail="现在注册不需要邮箱验证码")
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="邮箱格式不正确")
+    previous = _SIGNUP_CODES.get(email)
+    if previous and previous[1] - RESET_CODE_TTL > time.time() - 60:         # 一分钟内再点：不算次数
+        raise HTTPException(status_code=429, detail="请等待一分钟后重新获取验证码")
+    rate_limit.check(f"signup-code-ip:{rate_limit.client_ip(request)}", *SIGNUP_CODE_PER_IP, "获取验证码太频繁")
+    rate_limit.check(f"signup-code-email:{email}", *SIGNUP_CODE_PER_EMAIL, "这个邮箱获取验证码太频繁")
+    with get_conn() as conn:
+        if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+            raise HTTPException(status_code=409, detail="该邮箱已被注册，可以直接登录或找回密码")
+    code = f"{secrets.randbelow(1000000):06d}"
+    try:
+        mailer.send_mail(email, "【镜思】注册验证码",
+                         f"您的注册验证码是 {code}，10 分钟内有效。若非本人操作，请忽略此邮件，不会有账户被创建。")
+    except Exception:
+        raise HTTPException(status_code=503, detail="验证码邮件发送失败，请检查邮箱地址或稍后重试") from None
+    _SIGNUP_CODES[email] = (code, time.time() + RESET_CODE_TTL, 0)
+    return {"message": f"验证码已发到 {email}，10 分钟内有效。没收到的话看看垃圾邮件。", "expires_in": RESET_CODE_TTL}
+
+
+def _check_signup_code(email: str, given: str) -> None:
+    """注册时核对邮箱验证码；对了就作废，错了记一次，错 5 次要重新获取。"""
+
+    entry = _SIGNUP_CODES.get(email)
+    if not entry:
+        raise HTTPException(status_code=400, detail="请先获取邮箱验证码")
+    code, expires_at, attempts = entry
+    if time.time() > expires_at:
+        _SIGNUP_CODES.pop(email, None)
+        raise HTTPException(status_code=400, detail="验证码已过期，请重新获取")
+    if attempts >= RESET_CODE_MAX_ATTEMPTS:
+        _SIGNUP_CODES.pop(email, None)
+        raise HTTPException(status_code=400, detail="验证码错误次数过多，请重新获取")
+    if not hmac.compare_digest(code, given.strip()):
+        _SIGNUP_CODES[email] = (code, expires_at, attempts + 1)
+        raise HTTPException(status_code=400, detail="验证码错误")
+    _SIGNUP_CODES.pop(email, None)
 
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -156,11 +240,15 @@ def register(body: RegisterIn, request: Request):
         name = nicknames.check(body.name)
     except nicknames.NicknameError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
-    if not _EMAIL_RE.match(body.email.strip()):
+    email = body.email.strip().lower()
+    if not _EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="邮箱格式不正确")
-    if registration.mode() == "closed":
-        raise HTTPException(status_code=403, detail="暂时不开放注册。")
+    status_now = signup_status()
+    if not status_now["available"]:
+        raise HTTPException(status_code=403 if status_now["mode"] == "closed" else 503, detail=status_now["reason"])
     rate_limit.check(f"register:{rate_limit.client_ip(request)}", *REGISTER_PER_IP, "注册太频繁")
+    if status_now["email_code"]:
+        _check_signup_code(email, body.email_code)
     salt = gen_salt()
     pwd_hash = hash_password(body.password, salt)
     now = datetime.now(timezone.utc).isoformat()
@@ -171,7 +259,7 @@ def register(body: RegisterIn, request: Request):
             registration.claim(conn, body.invite_code)
             cur = conn.execute(
                 "INSERT INTO users (name, email, password_hash, salt, created_at) VALUES (?,?,?,?,?)",
-                (name, body.email.strip().lower(), pwd_hash, salt, now),
+                (name, email, pwd_hash, salt, now),
             )
             uid = cur.lastrowid
             points.ensure_signup(conn, uid)               # 注册赠送的积分，和账户一起生效

@@ -26,6 +26,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from ..database import get_conn
+from ..security import email_key
 
 # 每次使用要的积分（每天的免费次数用完以后）：种类 -> (环境变量, 默认)
 COSTS = {
@@ -116,20 +117,34 @@ def _has_signup(conn, user_id: int) -> bool:
     return conn.execute("SELECT 1 FROM point_ledger WHERE user_id = ? AND kind = 'signup' LIMIT 1", (user_id,)).fetchone() is not None
 
 
+def _email_gifted(conn, user_id: int) -> tuple[str, bool]:
+    """这个账户邮箱的“指纹”，和这个邮箱（不同写法算同一个）以前有没有领过注册积分。"""
+
+    row = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
+    key = email_key(row["email"]) if row else ""
+    return key, bool(key) and conn.execute("SELECT 1 FROM signup_emails WHERE email_key = ?", (key,)).fetchone() is not None
+
+
 def ensure_signup(conn, user_id: int) -> None:
     """Give the sign-up points once per account (also to accounts made before there were points).
 
+    Once per email address too: a deleted account's address (or another spelling of it, see
+    ``security.canonical_email``) gets nothing when it signs up again.
     Outside a transaction it only takes the write lock when the gift is still missing, and checks again under the lock.
     """
 
     amount = _number(SIGNUP)
-    if amount <= 0 or _has_signup(conn, user_id):
+    if amount <= 0 or _has_signup(conn, user_id) or _email_gifted(conn, user_id)[1]:
         return
     if not conn.in_transaction:
         conn.execute("BEGIN IMMEDIATE")
         if _has_signup(conn, user_id):
             return
+    key, gifted = _email_gifted(conn, user_id)
+    if gifted or not key:
+        return
     grant(conn, user_id, amount, "signup", _number(GIFT_DAYS, 1), "欢迎使用镜思 Prismind")
+    conn.execute("INSERT OR IGNORE INTO signup_emails (email_key, created_at) VALUES (?, ?)", (key, _iso(_now())))
 
 
 def _take(conn, user_id: int, amount: int) -> list[list[int]]:

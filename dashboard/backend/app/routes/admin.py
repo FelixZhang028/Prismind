@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 from ..database import get_conn
 from ..quant import audit, backup, fundamentals_schedule, mailer, nicknames, platform_ai, points, rate_limit, registration, site_config
 from ..quant.runtime import MARKET_ROOT, RUNTIME_ROOT
-from ..routes.auth import get_current_user
+from ..routes.auth import get_current_user, signup_status
 from ..security import verify_password
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -207,7 +207,9 @@ def set_redeem_code_active(code: str, body: ActiveIn, admin: dict = Depends(requ
 
 @router.get("/registration", dependencies=[Depends(require_admin)])
 def registration_settings():
-    return {"mode": registration.mode(), "locked": registration.env_locked(), "invites": registration.all_codes()}
+    # signup：注册要不要邮箱验证码、现在能不能注册（开放注册但邮件服务没配好时不能）。
+    return {"mode": registration.mode(), "locked": registration.env_locked(), "invites": registration.all_codes(),
+            "signup": signup_status()}
 
 
 MODE_NAMES = {"open": "开放注册", "invite": "凭邀请码注册", "closed": "暂停注册"}

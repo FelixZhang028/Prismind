@@ -64,8 +64,12 @@ async function request(path, { method = 'GET', body, auth = false } = {}) {
 export function registrationMode() {
   return request('/api/v1/auth/registration')
 }
-export function register({ name, email, password, invite_code = '' }) {
-  return request('/api/v1/auth/register', { method: 'POST', body: { name, email, password, invite_code } })
+// 注册前发验证码到要注册的邮箱（邮件服务配好以后注册都要）。
+export function signupCode(email) {
+  return request('/api/v1/auth/register/code', { method: 'POST', body: { email } })
+}
+export function register({ name, email, password, invite_code = '', email_code = '' }) {
+  return request('/api/v1/auth/register', { method: 'POST', body: { name, email, password, invite_code, email_code } })
 }
 export async function login({ email, password }) {
   const data = await request('/api/v1/auth/login', { method: 'POST', body: { email, password } })

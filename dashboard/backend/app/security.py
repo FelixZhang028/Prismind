@@ -115,3 +115,25 @@ def decode_token(token: str) -> dict | None:
         return payload
     except Exception:
         return None
+
+
+# Gmail 忽略地址里的点；googlemail.com 和 gmail.com 是同一个邮箱。
+_DOTLESS_DOMAINS = {"gmail.com": "gmail.com", "googlemail.com": "gmail.com"}
+
+
+def canonical_email(email: str) -> str:
+    """同一个邮箱的不同写法统一成一种：不分大小写，去掉“名字+任意内容@”里的“+任意内容”，Gmail 去掉点。"""
+
+    local, _, domain = str(email or "").strip().lower().rpartition("@")
+    if not local:
+        return domain
+    local = local.split("+", 1)[0] or local
+    if domain in _DOTLESS_DOMAINS:
+        local, domain = local.replace(".", ""), _DOTLESS_DOMAINS[domain]
+    return f"{local}@{domain}"
+
+
+def email_key(email: str) -> str:
+    """邮箱的“指纹”：同一个邮箱得到同一个结果，从结果看不出原来的邮箱（用服务器的签名密钥加密）。"""
+
+    return hmac.new(SECRET_KEY.encode("utf-8"), b"signup-email:" + canonical_email(email).encode("utf-8"), hashlib.sha256).hexdigest()
