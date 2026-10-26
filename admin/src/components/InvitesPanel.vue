@@ -103,6 +103,9 @@ const inputClass = 'w-full rounded-xl border border-white/10 bg-white/5 px-3 py-
         </button>
       </div>
       <p v-if="settings.mode === 'invite' && !available" class="mt-3 text-sm text-amber-200">现在没有还能用的邀请码，谁也注册不了。在下面生成一个吧。</p>
+      <p v-if="settings.signup && !settings.signup.available && settings.mode === 'open'" class="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm text-amber-200">
+        邮件服务还没有配置，开放注册暂时注册不了：注册要先填发到邮箱的验证码。到“系统设置 → 邮件服务”填好并发一封测试邮件就能注册了；凭邀请码注册不受影响。</p>
+      <p v-else-if="settings.signup?.email_code" class="mt-3 text-xs text-slate-500">注册要先填发到邮箱的验证码，编出来的邮箱注册不了。同一个邮箱只送一次注册积分，注销后再注册也不送。</p>
     </section>
 
     <section class="glass rounded-2xl p-5" aria-label="生成邀请码">

@@ -1,9 +1,10 @@
 import os
 
 # 在导入后端之前设置：测试里的密码只做少量加密轮次（真实部署是 60 万次），
-# 频率限制默认关闭（很多测试会连续注册、登录），专门的测试会自己打开。
+# 频率限制和注册时的邮箱验证默认关闭（很多测试会连续注册、登录），专门的测试会自己打开。
 os.environ.setdefault("FELLOWQUANT_PASSWORD_ITERATIONS", "1000")
 os.environ["FELLOWQUANT_RATE_LIMITS"] = "off"
+os.environ["FELLOWQUANT_SIGNUP_EMAIL_CODE"] = "off"
 
 import pytest  # noqa: E402
 
@@ -50,6 +51,7 @@ def isolated_factor_profiles(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def fresh_rate_limits(monkeypatch):
     monkeypatch.setenv("FELLOWQUANT_RATE_LIMITS", "off")
+    monkeypatch.setenv("FELLOWQUANT_SIGNUP_EMAIL_CODE", "off")
     rate_limit.reset()
     yield
     rate_limit.reset()

@@ -1,7 +1,8 @@
-"""Send an email through the configured SMTP server (password reset codes, the admin's test email).
+"""Send an email through the configured SMTP server (sign-up and password reset codes, the admin's test email).
 
 The settings come from the environment (``.env`` or the admin console), or from ``config`` when the
-admin page tests values that are not saved yet. STARTTLS is always used.
+admin page tests values that are not saved yet. The connection is always encrypted: ports 465 and 994
+use SSL from the start (163 and QQ mail), any other port upgrades with STARTTLS (usually 587).
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from collections.abc import Mapping
 from email.message import EmailMessage
 
 TIMEOUT_SECONDS = 15
+SSL_PORTS = (465, 994)
 
 
 def _value(config: Mapping[str, str] | None, name: str, default: str = "") -> str:
@@ -32,8 +34,11 @@ def send_mail(to: str, subject: str, body: str, config: Mapping[str, str] | None
     mail["From"] = _value(config, "SMTP_FROM")
     mail["To"] = to
     mail.set_content(body)
-    with smtplib.SMTP(_value(config, "SMTP_HOST"), int(_value(config, "SMTP_PORT", "587")), timeout=TIMEOUT_SECONDS) as server:
-        server.starttls()
+    host, port = _value(config, "SMTP_HOST"), int(_value(config, "SMTP_PORT", "587"))
+    connect = smtplib.SMTP_SSL if port in SSL_PORTS else smtplib.SMTP
+    with connect(host, port, timeout=TIMEOUT_SECONDS) as server:
+        if port not in SSL_PORTS:
+            server.starttls()
         if _value(config, "SMTP_USERNAME"):
             server.login(_value(config, "SMTP_USERNAME"), _value(config, "SMTP_PASSWORD"))
         server.send_message(mail)

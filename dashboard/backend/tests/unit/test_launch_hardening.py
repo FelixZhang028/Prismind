@@ -87,9 +87,9 @@ def test_behind_a_proxy_the_real_address_is_used(accounts, limits_on, monkeypatc
 
 
 def test_registration_can_require_an_invite_code_with_a_limited_number_of_uses(accounts, monkeypatch):
-    assert accounts.get("/api/v1/auth/registration").json() == {"mode": "open"}
+    assert accounts.get("/api/v1/auth/registration").json()["mode"] == "open"
     monkeypatch.setenv("FELLOWQUANT_INVITE_CODES", "friends2026:2, TEAM")
-    assert accounts.get("/api/v1/auth/registration").json() == {"mode": "invite"}
+    assert accounts.get("/api/v1/auth/registration").json()["mode"] == "invite"
     assert sign_up(accounts).status_code == 403                                           # 没有邀请码
     assert "不正确" in sign_up(accounts, invite_code="guess").json()["detail"]
     assert sign_up(accounts, invite_code="FRIENDS2026").status_code == 201                  # 不区分大小写
@@ -102,7 +102,7 @@ def test_registration_can_require_an_invite_code_with_a_limited_number_of_uses(a
 def test_registration_can_be_closed(accounts, monkeypatch):
     sign_up(accounts)
     monkeypatch.setenv("FELLOWQUANT_REGISTRATION", "closed")
-    assert accounts.get("/api/v1/auth/registration").json() == {"mode": "closed"}
+    assert accounts.get("/api/v1/auth/registration").json()["mode"] == "closed"
     assert sign_up(accounts, email="b@example.test").status_code == 403
     assert log_in(accounts).status_code == 200                                              # 已有账户照常登录
 
