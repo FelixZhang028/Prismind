@@ -310,6 +310,13 @@ def init_db() -> None:
                 note       TEXT    NOT NULL DEFAULT '',
                 created_at TEXT    NOT NULL
             );
+            -- 管理员加的昵称违禁词（内置的写在 app/quant/nicknames.py 里）；word_key 是统一写法后的，用来去重
+            CREATE TABLE IF NOT EXISTS nickname_banned_words (
+                word       TEXT    PRIMARY KEY,
+                word_key   TEXT    NOT NULL UNIQUE,
+                created_by TEXT    NOT NULL DEFAULT '',
+                created_at TEXT    NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS redeem_uses (
                 code    TEXT    NOT NULL,
                 user_id INTEGER NOT NULL,

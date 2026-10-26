@@ -51,7 +51,6 @@ const form = reactive({
 // 忘记密码流程状态（两步：1 验证身份 → 2 重置密码）
 const forgot = reactive({
   step: 1,
-  name: '',
   email: '',
   code: '',
   generatedCode: '',
@@ -96,7 +95,7 @@ const heading = computed(
     ({
       login: { title: '欢迎回来', sub: '登录以进入你的量化工作台' },
       register: { title: '创建账户', sub: '几分钟后就能开始第一次研究' },
-      forgot: { title: '忘记密码', sub: '验证账号身份后即可重置密码' },
+      forgot: { title: '忘记密码', sub: '填注册邮箱，收到验证码后就能重置密码' },
     })[mode.value]
 )
 
@@ -121,7 +120,7 @@ function validate() {
   Object.keys(errors).forEach((k) => delete errors[k])
   if (!isLogin.value && registration.value === 'closed') errors.form = '暂时不开放注册'
   if (!isLogin.value && registration.value === 'invite' && !form.invite.trim()) errors.invite = '请输入邀请码'
-  if (!isLogin.value && !form.name.trim()) errors.name = '请输入用户名'
+  if (!isLogin.value && !form.name.trim()) errors.name = '请输入昵称'
   if (!form.email.trim()) {
     errors.email = '请输入邮箱'
   } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
@@ -173,7 +172,6 @@ async function onSubmit() {
 function validateForgot() {
   Object.keys(errors).forEach((k) => delete errors[k])
   if (forgot.step === 1) {
-    if (!forgot.name.trim()) errors.name = '请输入账号名'
     if (!forgot.email.trim()) {
       errors.email = '请输入邮箱'
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(forgot.email)) {
@@ -193,12 +191,11 @@ async function onForgotSubmit() {
   submitting.value = true
   try {
     if (forgot.step === 1) {
-      const data = await forgotRequest({ name: forgot.name.trim(), email: forgot.email })
+      const data = await forgotRequest({ email: forgot.email })
       forgot.generatedCode = data.message
       forgot.step = 2
     } else {
       await forgotReset({
-        name: forgot.name.trim(),
         email: forgot.email,
         code: forgot.code.trim(),
         new_password: forgot.password,
@@ -208,8 +205,7 @@ async function onForgotSubmit() {
     }
   } catch (e) {
     const msg = e && e.message ? e.message : '请求失败，请稍后重试'
-    if (/账号名/.test(msg)) errors.name = msg
-    else if (/邮箱/.test(msg)) errors.email = msg
+    if (/邮箱/.test(msg)) errors.email = msg
     else if (/验证码/.test(msg)) errors.code = msg
     else if (/密码/.test(msg)) errors.password = msg
     else errors.form = msg
@@ -362,7 +358,7 @@ const features = [
               <!-- 登录 / 注册表单 -->
               <form v-if="!isForgot" class="mt-6 space-y-4" novalidate @submit.prevent="onSubmit">
             <div v-if="!isLogin">
-              <label class="mb-1.5 block text-xs font-medium text-slate-400">用户名</label>
+              <label class="mb-1.5 block text-xs font-medium text-slate-400">昵称</label>
               <div class="relative">
                 <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -371,7 +367,7 @@ const features = [
                   v-model="form.name"
                   type="text"
                   autocomplete="name"
-                  placeholder="你的称呼"
+                  placeholder="你的称呼，以后可以改"
                   class="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 pl-10 pr-3 text-sm text-white placeholder-slate-500 outline-none transition focus:border-indigo-400/50 focus:bg-white/10 focus:ring-2 focus:ring-indigo-500/30"
                   :class="{ 'border-rose-400/50 focus:ring-rose-500/20': errors.name }"
                 />
@@ -538,26 +534,8 @@ const features = [
 
             <!-- 忘记密码表单（两步：验证身份 → 重置密码） -->
             <form v-else class="mt-6 space-y-4" novalidate @submit.prevent="onForgotSubmit">
-              <!-- 第一步：账号名 + 邮箱 -->
+              <!-- 第一步：注册邮箱（昵称可以改，所以只看邮箱） -->
               <template v-if="forgot.step === 1">
-                <div>
-                  <label class="mb-1.5 block text-xs font-medium text-slate-400">账号名</label>
-                  <div class="relative">
-                    <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                    <input
-                      v-model="forgot.name"
-                      type="text"
-                      autocomplete="username"
-                      placeholder="注册时的账号名"
-                      class="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 pl-10 pr-3 text-sm text-white placeholder-slate-500 outline-none transition focus:border-indigo-400/50 focus:bg-white/10 focus:ring-2 focus:ring-indigo-500/30"
-                      :class="{ 'border-rose-400/50 focus:ring-rose-500/20': errors.name }"
-                    />
-                  </div>
-                  <p v-if="errors.name" class="mt-1 text-xs text-rose-300">{{ errors.name }}</p>
-                </div>
-
                 <div>
                   <label class="mb-1.5 block text-xs font-medium text-slate-400">注册邮箱</label>
                   <div class="relative">

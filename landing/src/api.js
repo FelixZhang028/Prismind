@@ -84,11 +84,12 @@ export async function restoreSession() {
   }
   return { status: 'unavailable', user: null, error: new Error('登录状态正在变化，请重试') }
 }
-export function forgotRequest({ name, email }) {
-  return request('/api/v1/auth/forgot/request', { method: 'POST', body: { name, email } })
+// 找回密码只看邮箱：昵称可以改，用户不一定记得现在的昵称。
+export function forgotRequest({ email }) {
+  return request('/api/v1/auth/forgot/request', { method: 'POST', body: { email } })
 }
-export function forgotReset({ name, email, code, new_password }) {
-  return request('/api/v1/auth/forgot/reset', { method: 'POST', body: { name, email, code, new_password } })
+export function forgotReset({ email, code, new_password }) {
+  return request('/api/v1/auth/forgot/reset', { method: 'POST', body: { email, code, new_password } })
 }
 // 退出登录：先在本机清掉，再通知后端让这个账户的令牌全部作废（失败也不影响本机退出）。
 export function logout() {
@@ -102,6 +103,12 @@ export async function changePassword({ old_password, new_password }) {
   const data = await request('/api/v1/auth/password', { method: 'POST', body: { old_password, new_password }, auth: true })
   if (data?.token) setSession(data.token)
   return data
+}
+// 改自己的昵称：存到本机的用户信息里，顶栏和侧栏马上显示新的名字。
+export async function changeName(name) {
+  const user = await request('/api/v1/auth/name', { method: 'POST', body: { name }, auth: true })
+  localStorage.setItem(USER_KEY, JSON.stringify(user))
+  return user
 }
 export async function deleteAccount({ password }) {
   const data = await request('/api/v1/auth/delete', { method: 'POST', body: { password }, auth: true })

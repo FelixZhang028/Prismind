@@ -4,6 +4,7 @@ import { SITE_BASE, adminAiUsage, adminStats, adminUsers, dailyUpdateStatus, sys
 import { bytes } from '../format.js'
 import { barHeights, tokensText } from '../settings.js'
 import AuditPanel from './AuditPanel.vue'
+import BannedWordsPanel from './BannedWordsPanel.vue'
 import DataPanel from './DataPanel.vue'
 import InvitesPanel from './InvitesPanel.vue'
 import PointsPanel from './PointsPanel.vue'
@@ -17,6 +18,7 @@ const tabs = [
   { key: 'overview', label: '概览' },
   { key: 'users', label: '用户' },
   { key: 'invites', label: '注册与邀请码' },
+  { key: 'words', label: '违禁词' },
   { key: 'points', label: '积分与兑换码' },
   { key: 'data', label: '数据更新' },
   { key: 'settings', label: '系统设置' },
@@ -222,6 +224,7 @@ const marketText = computed(() => {
 
     <UsersPanel v-else-if="tab === 'users'" :users="users" @changed="load" @notify="notify" />
     <InvitesPanel v-else-if="tab === 'invites'" @changed="load" @notify="notify" />
+    <BannedWordsPanel v-else-if="tab === 'words'" @changed="load" @notify="notify" />
     <PointsPanel v-else-if="tab === 'points'" :users="users" @changed="load" @notify="notify" />
     <DataPanel v-else-if="tab === 'data'" :site-base="SITE_BASE" @notify="notify" />
     <SettingsPanel v-else-if="tab === 'settings'" @notify="notify" />

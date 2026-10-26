@@ -323,7 +323,7 @@ function doLogout() {
             </nav>
             <Suspense>
               <keep-alive :max="8">
-                <component :is="views[activeKey] || views[overviewKey]" :user="user" :notify="notify" :route-context="routeContext" :research-mode="activeKey" />
+                <component :is="views[activeKey] || views[overviewKey]" :user="user" :notify="notify" :route-context="routeContext" :research-mode="activeKey" v-on="activeKey === 'account' ? { renamed: (next) => { user = next } } : {}" />
               </keep-alive>
               <template #fallback>
                 <div class="flex items-center justify-center py-20">

@@ -6,8 +6,9 @@
 - POST /login             登录校验 → 返回签名令牌
 - POST /logout            退出登录：这个账户在所有设备上的令牌一起作废
 - POST /password          修改密码（要旧密码）；其他设备上的登录随之作废
+- POST /name              修改自己的昵称（每天最多 5 次，不能有违禁词）
 - POST /delete            注销账户：删除这个账户和它的全部数据
-- POST /forgot/request    忘记密码：校验账号名+邮箱 → 发送验证码到邮箱
+- POST /forgot/request    忘记密码：填注册邮箱 → 发送验证码到邮箱
 - POST /forgot/reset      忘记密码：校验验证码 → 重置密码
 - GET  /me                凭令牌获取当前用户信息（功能台鉴权守卫调用）
 
@@ -25,7 +26,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from ..database import get_conn
-from ..quant import mailer, points, rate_limit, registration
+from ..quant import mailer, nicknames, points, rate_limit, registration
 from ..security import (
     create_token,
     decode_token,
@@ -52,13 +53,14 @@ LOGIN_FAILURES_PER_EMAIL = (5, 15 * 60)  # 同一账户 15 分钟内输错 5 次
 REGISTER_PER_IP = (5, 60 * 60)        # 同一地址每小时最多注册 5 个账户
 FORGOT_PER_IP = (10, 60 * 60)
 FORGOT_PER_EMAIL = (3, 60 * 60)
+RENAME_PER_USER = (5, 24 * 60 * 60)   # 每个账户一天最多改 5 次昵称
 # 最后访问时间最多每 5 分钟写一次，不必每个请求都写数据库。
 SEEN_EVERY = timedelta(minutes=5)
 DISABLED_MESSAGE = "这个账户已被停用，如有疑问请联系管理员。"
 
 
 class RegisterIn(BaseModel):
-    name: str = Field(..., min_length=1, max_length=40, description="用户名")
+    name: str = Field(..., min_length=1, max_length=200, description="昵称（整理空格后最多 40 个字）")
     email: str = Field(..., max_length=254, description="邮箱")
     password: str = Field(..., min_length=PASSWORD_MIN, max_length=PASSWORD_MAX, description="密码 8 到 128 位")
     invite_code: str = Field("", max_length=64, description="邀请码（需要时）")
@@ -72,6 +74,10 @@ class LoginIn(BaseModel):
 class PasswordIn(BaseModel):
     old_password: str = Field(..., max_length=PASSWORD_MAX)
     new_password: str = Field(..., min_length=PASSWORD_MIN, max_length=PASSWORD_MAX)
+
+
+class NameIn(BaseModel):
+    name: str = Field(..., max_length=200, description="新昵称（整理空格后最多 40 个字）")
 
 
 class DeleteIn(BaseModel):
@@ -146,8 +152,10 @@ def registration_mode():
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def register(body: RegisterIn, request: Request):
-    if not body.name.strip():
-        raise HTTPException(status_code=400, detail="用户名不能为空")
+    try:
+        name = nicknames.check(body.name)
+    except nicknames.NicknameError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
     if not _EMAIL_RE.match(body.email.strip()):
         raise HTTPException(status_code=400, detail="邮箱格式不正确")
     if registration.mode() == "closed":
@@ -163,7 +171,7 @@ def register(body: RegisterIn, request: Request):
             registration.claim(conn, body.invite_code)
             cur = conn.execute(
                 "INSERT INTO users (name, email, password_hash, salt, created_at) VALUES (?,?,?,?,?)",
-                (body.name.strip(), body.email.strip().lower(), pwd_hash, salt, now),
+                (name, body.email.strip().lower(), pwd_hash, salt, now),
             )
             uid = cur.lastrowid
             points.ensure_signup(conn, uid)               # 注册赠送的积分，和账户一起生效
@@ -231,6 +239,22 @@ def change_password(body: PasswordIn, current: dict = Depends(get_current_user))
     return {"message": "密码已修改，其他设备需要重新登录", "token": create_token(row["id"], row["name"], row["token_version"] + 1)}
 
 
+@router.post("/name", response_model=UserOut, summary="修改自己的昵称")
+def change_name(body: NameIn, current: dict = Depends(get_current_user)):
+    # 管理员可以用“官方”这类词；普通用户不行，免得冒充平台。
+    try:
+        name = nicknames.check(body.name, allow_banned=current["is_admin"])
+    except nicknames.NicknameError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    if name == current["name"]:
+        return current
+    if not current["is_admin"]:
+        rate_limit.check(f"rename:{current['id']}", *RENAME_PER_USER, "今天改昵称的次数用完了")
+    with get_conn() as conn:
+        conn.execute("UPDATE users SET name = ? WHERE id = ?", (name, current["id"]))
+    return {**current, "name": name}
+
+
 @router.post("/delete", summary="注销账户：删除这个账户和它的全部数据")
 def delete_account(body: DeleteIn, current: dict = Depends(get_current_user)):
     from ..quant.accounts import delete_account as remove
@@ -245,24 +269,25 @@ def delete_account(body: DeleteIn, current: dict = Depends(get_current_user)):
     return {"message": "账户和全部数据已删除"}
 
 
+# 找回密码只看邮箱：昵称可以改（管理员也能改），用户不一定记得现在的昵称。验证码只发到注册邮箱，
+# 不知道邮箱密码的人拿不到。``name`` 留着是为了兼容旧页面，不再使用。
 class ForgotRequestIn(BaseModel):
-    name: str = Field(..., min_length=1, max_length=40, description="账号名")
+    name: str = Field("", max_length=200, description="不再使用")
     email: str = Field(..., max_length=254, description="邮箱")
 
 
 class ForgotResetIn(BaseModel):
-    name: str = Field(..., min_length=1, max_length=40, description="账号名")
+    name: str = Field("", max_length=200, description="不再使用")
     email: str = Field(..., max_length=254, description="邮箱")
     code: str = Field(..., min_length=4, max_length=8, description="验证码")
     new_password: str = Field(..., min_length=PASSWORD_MIN, max_length=PASSWORD_MAX, description="新密码 8 到 128 位")
 
 
-def _find_user_by_name_email(name: str, email: str):
-    """按账号名 + 邮箱查找用户（邮箱不区分大小写）。"""
+def _find_user_by_email(email: str):
+    """按邮箱查找可以登录的用户（不区分大小写）。"""
     with get_conn() as conn:
         return conn.execute(
-            "SELECT id, name, email FROM users WHERE email = ? AND name = ? COLLATE NOCASE AND is_active = 1",
-            (email.lower(), name.strip()),
+            "SELECT id, name, email FROM users WHERE email = ? AND is_active = 1", (email.strip().lower(),)
         ).fetchone()
 
 
@@ -275,8 +300,8 @@ def forgot_request(body: ForgotRequestIn, request: Request):
         raise HTTPException(status_code=400, detail="邮箱格式不正确")
     rate_limit.check(f"forgot-ip:{rate_limit.client_ip(request)}", *FORGOT_PER_IP, "获取验证码太频繁")
     rate_limit.check(f"forgot-email:{body.email.strip().lower()}", *FORGOT_PER_EMAIL, "获取验证码太频繁")
-    row = _find_user_by_name_email(body.name, body.email.strip())
-    message = {"message": "如果账号信息匹配，验证码将发送至注册邮箱", "expires_in": RESET_CODE_TTL}
+    row = _find_user_by_email(body.email)
+    message = {"message": "如果这个邮箱注册过，验证码会发到这个邮箱", "expires_in": RESET_CODE_TTL}
     if not row:
         return message
     previous = _RESET_CODES.get(row["id"])
@@ -296,9 +321,9 @@ def forgot_request(body: ForgotRequestIn, request: Request):
 def forgot_reset(body: ForgotResetIn, request: Request):
     """忘记密码第二步：校验验证码并重置密码。"""
     rate_limit.check(f"forgot-ip:{rate_limit.client_ip(request)}", *FORGOT_PER_IP, "尝试太频繁")
-    row = _find_user_by_name_email(body.name, body.email)
+    row = _find_user_by_email(body.email)
     if not row:
-        raise HTTPException(status_code=400, detail="账号名与邮箱不匹配，请核对后重试")
+        raise HTTPException(status_code=400, detail="请先获取验证码")
     entry = _RESET_CODES.get(row["id"])
     if not entry:
         raise HTTPException(status_code=400, detail="请先获取验证码")

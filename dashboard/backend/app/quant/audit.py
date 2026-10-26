@@ -16,6 +16,7 @@ from ..database import get_conn
 KINDS = {
     "settings": "系统设置",
     "user": "用户",
+    "nickname": "昵称违禁词",
     "registration": "注册与邀请码",
     "points": "积分与兑换码",
     "data": "数据任务",
