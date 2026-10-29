@@ -26,7 +26,7 @@
 """
 import shutil
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -253,6 +253,43 @@ def _latest_backup() -> dict:
     return {"enabled": backup.enabled(), "latest": folders[-1] if folders else None, "count": len(folders), "keep": backup.keep()}
 
 
+FIRST_RESULT_DAYS = 30   # 统计最近多少天注册的新用户
+
+
+def _first_results(conn, now: datetime | None = None) -> dict:
+    """最近 30 天注册的用户里，有多少人跑出了第一个结果（事件研究、完成的回测或 AI 研究员分析），
+    一小时内做到的有多少，从注册到第一个结果的时间中位数（分钟）。只用系统里本来就有的记录。"""
+
+    now = now or datetime.now(timezone.utc)
+    since = (now - timedelta(days=FIRST_RESULT_DAYS)).isoformat()
+    rows = conn.execute(
+        """SELECT u.created_at AS joined, MIN(f.at) AS first FROM users u LEFT JOIN (
+               SELECT user_id, at FROM user_milestones
+               UNION ALL SELECT user_id, created_at FROM backtests WHERE status = '完成'
+               UNION ALL SELECT user_id, created_at FROM stock_briefs
+           ) f ON f.user_id = u.id
+           WHERE u.created_at >= ? AND u.is_admin = 0 GROUP BY u.id""", (since,)).fetchall()
+    minutes = []
+    for row in rows:
+        if not row["first"]:
+            continue
+        try:
+            joined, first = datetime.fromisoformat(row["joined"]), datetime.fromisoformat(row["first"])
+        except ValueError:
+            continue
+        if joined.tzinfo is None:
+            joined = joined.replace(tzinfo=timezone.utc)
+        if first.tzinfo is None:
+            first = first.replace(tzinfo=timezone.utc)
+        minutes.append(max((first - joined).total_seconds() / 60, 0))
+    minutes.sort()
+    middle = len(minutes) // 2
+    median = None if not minutes else (minutes[middle] if len(minutes) % 2 else (minutes[middle - 1] + minutes[middle]) / 2)
+    return {"days": FIRST_RESULT_DAYS, "new_users": len(rows), "with_result": len(minutes),
+            "within_hour": sum(1 for m in minutes if m <= 60),
+            "median_minutes": None if median is None else round(median, 1)}
+
+
 @router.get("/stats", dependencies=[Depends(require_admin)])
 def admin_stats():
     today, since = platform_ai._today(), _china_day_start()
@@ -273,6 +310,7 @@ def admin_stats():
             "SELECT kind, SUM(count) AS total FROM ai_usage WHERE day = ? GROUP BY kind", (today,))}
         total_row = conn.execute("SELECT count FROM ai_usage_total WHERE day = ?", (today,)).fetchone()
         disabled = _count(conn, "SELECT COUNT(*) FROM users WHERE is_active = 0")
+        first_results = _first_results(conn)
     words = {kind: word for kind, (_variable, _default, word) in platform_ai.LIMITS.items()}
     ai = {
         "day": today,
@@ -285,6 +323,7 @@ def admin_stats():
     return {
         "users": users,
         "research": research,
+        "first_results": first_results,
         "ai": ai,
         "registration": {"mode": registration.mode(), "invites": invites},
         "backup": _latest_backup(),

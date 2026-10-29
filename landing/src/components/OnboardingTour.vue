@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
+import { TRY_QUESTIONS, tryHref } from '../tryQuestions.js'
 
 const props = defineProps({
   user: { type: Object, default: null },
@@ -53,9 +54,16 @@ const steps = [
   {
     icon: '💡',
     title: '更多能力',
-    text: '每一次回测都保存在「研究记录」，可以重新打开结果、对比或继续研究。「参数验证」用真实回测比较候选参数并做样本外验证；审计位于回测结果，成交核查位于高级工具。顶栏 ? 可重新打开引导。',
+    text: '每一次回测都保存在「研究记录」，可以重新打开结果、对比或继续研究。「参数验证」用真实回测比较候选参数并做样本外验证；审计位于回测结果，成交核查位于高级工具。',
     view: null,
     viewLabel: '',
+  },
+  {
+    icon: '🔍',
+    title: '现在试一个例子',
+    text: '点“试一试”，用全市场十年的数据算一算“大跌之后会反弹吗？”，几秒钟出结果。看完可以改条件再算，也可以去写一条策略、跑回测。顶栏的 ? 可以重新打开这份引导。',
+    href: tryHref(TRY_QUESTIONS[0]),
+    viewLabel: '试一试',
   },
 ]
 
@@ -72,10 +80,10 @@ function prev() {
   if (current.value > 0) current.value -= 1
 }
 
-function goto(view) {
+function goto(target) {
   emit('close')
-  // 通过 URL 参数让外壳切换视图（保持与落地页导航一致的机制）
-  window.location.href = `/app.html?view=${view}`
+  // 通过 URL 参数让外壳切换视图（保持与落地页导航一致的机制）；最后一步直接带上例子的条件
+  window.location.href = target.href || `/app.html?view=${target.view}`
 }
 </script>
 
@@ -104,7 +112,7 @@ function goto(view) {
           <button
             class="rounded-full border border-white/10 px-4 py-2 text-sm text-slate-400 transition hover:bg-white/5 hover:text-slate-200"
             @click="emit('close')"
-          >跳过引导</button>
+          >{{ step.href ? '先不用' : '跳过引导' }}</button>
 
           <div class="flex items-center gap-2">
             <button
@@ -115,9 +123,15 @@ function goto(view) {
             <button
               v-if="step.view"
               class="rounded-full border border-indigo-400/30 bg-indigo-500/10 px-4 py-2 text-sm text-indigo-200 transition hover:bg-indigo-500/20"
-              @click="goto(step.view)"
+              @click="goto(step)"
             >{{ step.viewLabel }}</button>
             <button
+              v-if="step.href"
+              class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5"
+              @click="goto(step)"
+            >{{ step.viewLabel }}</button>
+            <button
+              v-else
               class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5"
               @click="next"
             >{{ current === steps.length - 1 ? '开始使用' : '下一步' }}</button>

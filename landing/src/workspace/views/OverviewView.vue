@@ -198,7 +198,7 @@ const link = 'text-xs text-indigo-300 hover:text-indigo-200'
             <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10"><div class="h-full rounded-full bg-indigo-400" :style="{ width: `${(progress.done / progress.total) * 100}%` }" /></div>
             <ol class="mt-4 space-y-2">
               <li v-for="(step, i) in home.steps" :key="step.key">
-                <button type="button" class="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left text-sm transition hover:bg-white/5" @click="go(step.view)">
+                <button type="button" class="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left text-sm transition hover:bg-white/5" @click="go(step.view, step.context)">
                   <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px]"
                     :class="step.done ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-200' : 'border-white/20 text-slate-400'">{{ step.done ? '✓' : i + 1 }}</span>
                   <span :class="step.done ? 'text-slate-500 line-through' : 'text-slate-200'">{{ step.label }}</span>

@@ -4,7 +4,10 @@ import DynamicBackground from './DynamicBackground.vue'
 import LegalDialog from './LegalDialog.vue'
 import ThemeToggle from './ThemeToggle.vue'
 import { getToken, login, register, registrationMode, setSession, forgotRequest, forgotReset, restoreSession, signupCode } from '../api.js'
+import { nextFrom } from '../authNext.js'
 
+// 登录或注册以后去哪：从功能台某一页跳来登录的，回到那一页；否则去功能台首页
+const nextPage = nextFrom(window.location.search)
 const checkingSession = ref(Boolean(getToken()))
 const sessionIssue = ref('')
 async function resumeSession() {
@@ -12,7 +15,7 @@ async function resumeSession() {
   sessionIssue.value = ''
   const session = await restoreSession()
   if (session.status === 'authenticated') {
-    window.location.replace('/app.html')
+    window.location.replace(nextPage)
     return
   }
   if (session.status === 'unavailable') {
@@ -181,14 +184,14 @@ async function onSubmit() {
       setSession(data.token, data.user)
       done.value = true
       // 登录成功，跳转功能台
-      setTimeout(() => (window.location.href = '/app.html'), 500)
+      setTimeout(() => (window.location.href = nextPage), 500)
     } else {
       await register({ name: form.name, email: form.email, password: form.password, invite_code: form.invite.trim(), email_code: form.code.trim() })
       // 注册成功，自动登录并跳转功能台
       const data = await login({ email: form.email, password: form.password })
       setSession(data.token, data.user)
       done.value = true
-      setTimeout(() => (window.location.href = '/app.html'), 600)
+      setTimeout(() => (window.location.href = nextPage), 600)
     }
   } catch (e) {
     // 后端字段级错误（如 409 邮箱已注册 / 401 凭据错误）映射到表单
