@@ -4,7 +4,7 @@ import { getBacktestBenchmark, getBacktestCatalog, getBacktest, getPreferences, 
 import { REBALANCE_OPTIONS, backtestDefaults } from '../preferences.js'
 import { openResearch } from '../researchNavigation.js'
 import { setFocus } from '../chatFocus.js'
-import { backtestId, runTime, strategyName, validityLabel } from '../runRecords.js'
+import { backtestId, countText, runTime, runningText, strategyName, validityLabel } from '../runRecords.js'
 import BacktestAiReview from '../ui/BacktestAiReview.vue'
 import RiskSettings from '../ui/RiskSettings.vue'
 import MetricCard from '../ui/MetricCard.vue'
@@ -57,6 +57,7 @@ const form = reactive({
 })
 
 const running = ref(false)
+const runSeconds = ref(0) // 这次回测已经等了多少秒，按钮旁提示用
 const runError = ref('')
 
 // ---------- 回测结果 ----------
@@ -229,6 +230,9 @@ async function onSubmit() {
   if (form.from_date >= form.to_date) return props.notify('开始日期需早于结束日期')
   running.value = true
   runError.value = ''
+  runSeconds.value = 0
+  const started = Date.now()
+  const timer = setInterval(() => { runSeconds.value = (Date.now() - started) / 1000 }, 1000)
   try {
     const data = await submitBacktest({
       strategy: form.strategy.trim(),
@@ -248,6 +252,7 @@ async function onSubmit() {
     runError.value = e.message || '回测失败'
     props.notify(e.message || '回测失败')
   } finally {
+    clearInterval(timer)
     running.value = false
   }
 }
@@ -342,7 +347,8 @@ onActivated(async () => {
         <div class="p-3 pt-0"><RiskSettings ref="riskEditor" :notify="notify" /></div>
       </details>
       <p v-if="runError" class="mt-4 text-sm text-rose-300">{{ runError }}</p>
-      <div class="mt-5 flex justify-end">
+      <div class="mt-5 flex flex-wrap items-center justify-end gap-3">
+        <p v-if="running" class="text-xs text-slate-400" role="status">{{ runningText(runSeconds) }}</p>
         <button
           @click="onSubmit"
           :disabled="running || catalogLoading || !selectedStrategy || !riskEditor?.ready"
@@ -462,8 +468,8 @@ onActivated(async () => {
         <!-- 交易与成本 -->
         <div v-else-if="activeTab === '交易与成本'" class="space-y-5">
           <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard label="订单数" :value="fmtNum(result.orders)" />
-            <MetricCard label="成交笔数" :value="fmtNum(result.fills)" />
+            <MetricCard label="订单数" :value="countText(result.orders)" />
+            <MetricCard label="成交笔数" :value="countText(result.fills)" />
             <MetricCard label="胜率" :value="fmtPct(result.win_rate)" :tone="num(result.win_rate) === null ? '' : num(result.win_rate) >= 50 ? 'text-emerald-300' : 'text-rose-300'" />
             <MetricCard label="总交易成本" :value="fmtMoney(totalCost)" />
           </section>

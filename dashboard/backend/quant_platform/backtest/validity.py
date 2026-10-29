@@ -227,10 +227,9 @@ def assess_backtest_validity(
             ValidityIssue(
                 "UNKNOWN_MARKET_STATUS",
                 IssueSeverity.WARNING,
-                f"回测区间内有 {unknown_market_rows:,} 行行情缺少可验证的交易状态"
+                f"回测区间内有 {unknown_market_rows:,} 行行情缺少可以核对的交易状态"
                 f"（涉及 {unknown_market_symbols:,} 只股票，多为新上市初期或数据缺口）。"
-                "这类行情不会被动进入模拟：所有落在其上的订单都会被拒绝执行；"
-                "只有在伴随拒单时绩效才不可用，见 UNKNOWN_STATUS_ORDERS。",
+                "落在这些行情上的订单一律不成交；只要没有订单因此被拒，收益指标就不受影响。",
             )
         )
     if unknown_order_count > 0:
@@ -248,7 +247,7 @@ def assess_backtest_validity(
                 "MISSING_ADJ_FACTOR",
                 IssueSeverity.WARNING,
                 f"有 {missing_adj_factor_rows:,} 次持仓估值或成交缺少复权因子，"
-                "已按比率 1 回退为未复权口径，除权日附近的净值可能失真。",
+                "这些地方按没有复权处理，分红送股前后的净值可能不准。",
             )
         )
 

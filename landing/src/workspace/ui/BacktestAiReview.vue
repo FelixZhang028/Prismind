@@ -42,7 +42,8 @@ async function run() {
 </script>
 
 <template>
-  <section v-if="state" class="rounded-xl border border-white/10 bg-white/5 p-4" aria-label="AI 评估">
+  <!-- 平台没配决策模型、这次回测也没评估过：整块不显示，免得结果页上留一句“不能用” -->
+  <section v-if="state && (state.available || review)" class="rounded-xl border border-white/10 bg-white/5 p-4" aria-label="AI 评估">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <h3 class="text-sm font-semibold text-white">AI 评估</h3>
@@ -52,8 +53,7 @@ async function run() {
         class="rounded-full border border-indigo-400/40 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-200 transition hover:bg-indigo-500/20 disabled:opacity-60"
         @click="run">{{ running ? '评估中…' : useLabel(state.usage, '让 AI 评估这次回测') }}</button>
     </div>
-    <p v-if="!review && !state.available" class="mt-3 text-sm text-amber-200">平台还没有配置决策模型，暂时不能评估。</p>
-    <p v-else-if="!review && left" class="mt-2 text-xs text-slate-500">{{ left }}；评估过的回测再打开不会重复计数。</p>
+    <p v-if="!review && left" class="mt-2 text-xs text-slate-500">{{ left }}；评估过的回测再打开不会重复计数。</p>
 
     <template v-if="review">
       <div class="mt-4 rounded-xl border border-indigo-400/20 bg-indigo-500/5 p-4">

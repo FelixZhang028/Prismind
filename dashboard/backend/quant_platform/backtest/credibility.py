@@ -203,8 +203,8 @@ def _lookahead_findings(
         findings.append(
             CredibilityFinding(
                 "fail",
-                f"有 {unknown_orders:,} 笔订单因交易状态未知被拒绝——防线没有放行不可"
-                "验证的成交，但模拟组合的构成已经受到数据缺口影响。",
+                f"有 {unknown_orders:,} 笔订单因为不知道当天能不能交易而没有成交：这避免了虚假成交，"
+                "但模拟组合的持仓也因此和原计划不一样。",
             )
         )
     missing_adj = int(validity.get("missing_adj_factor_rows") or 0)
@@ -212,8 +212,8 @@ def _lookahead_findings(
         findings.append(
             CredibilityFinding(
                 "warn",
-                f"有 {missing_adj:,} 次估值或成交缺少复权因子，已回退为未复权口径，"
-                "除权日附近的净值可能失真。", code="MISSING_ADJ_FACTOR",
+                f"有 {missing_adj:,} 次估值或成交缺少复权因子，这些地方按没有复权处理，"
+                "分红送股前后的净值可能不准。", code="MISSING_ADJ_FACTOR",
             )
         )
     policy = execution.get("unknown_status_policy")
@@ -221,8 +221,8 @@ def _lookahead_findings(
         findings.append(
             CredibilityFinding(
                 "info",
-                "未知状态拒单防线启用：缺行情、停牌状态未知、涨跌停未知的订单一律"
-                "拒绝，不存在用未知数据虚构成交的路径。",
+                "缺行情、不知道是否停牌、不知道是否涨跌停的订单一律不成交，"
+                "不会拿不确定的数据假装成交。",
             )
         )
     elif policy:
@@ -330,18 +330,18 @@ def _capacity_findings(
         findings.append(
             CredibilityFinding(
                 "warn",
-                f"有 {rejects:,} 笔订单被容量约束拒绝或削减——回测已计入流动性上限，"
-                "策略可承载的资金规模已接近该约束。",
+                f"有 {rejects:,} 笔订单因为成交量不够被拒绝或减少（回测已经算进去了）。"
+                "这说明按这个资金规模，市场已经接不住全部订单。",
             )
         )
     participation = _number(execution, "max_participation")
     impact = _number(execution, "impact_coefficient")
     if participation is not None:
         message = (
-            f"参与率上限 {participation:.1%}：单日订单量超过前一日成交量该比例的部分会被削减。"
+            f"每只股票一天最多买卖前一天成交量的 {participation:.1%}，超出的部分不成交。"
         )
         if impact is not None:
-            message += f"市场冲击按 sqrt(成交占比)×{impact:g} 计入成交价。"
+            message += f"买卖量占成交量越大，成交价越不利（冲击成本按占比的平方根乘以 {impact:g} 计算）。"
         findings.append(CredibilityFinding("info", message))
     if not findings:
         findings.append(CredibilityFinding("warn", "执行配置未记录容量参数，无法核对容量约束。"))

@@ -92,13 +92,13 @@ const selectionMetrics = computed(() => {
   const s = selection.value
   if (!s) return []
   return [
-    { label: '本批尝试', value: s.trial_count != null ? String(s.trial_count) : '未知', sub: '网格搜索组合数' },
-    { label: '可计算试验', value: String(s.valid_trials ?? '—'), sub: '具备完整收益数据' },
-    { label: '估计独立试验', value: s.effective_trials != null ? String(s.effective_trials) : '—', sub: '按试验间相关性折算' },
+    { label: '一共试了几组', value: s.trial_count != null ? String(s.trial_count) : '未知', sub: '同一批参数搜索的组合数' },
+    { label: '能计算的', value: String(s.valid_trials ?? '—'), sub: '有完整收益记录的组合' },
+    { label: '相当于独立尝试', value: s.effective_trials != null ? String(s.effective_trials) : '—', sub: '很像的组合合并计算' },
     {
-      label: 'DSR 显著性',
+      label: '收益显著性（DSR）',
       value: s.dsr != null ? `${(Number(s.dsr) * 100).toFixed(1)}%` : '—',
-      sub: '95% 为审计参考门槛',
+      sub: '扣掉挑选的运气后；95% 为参考线',
       tone: s.dsr != null && Number(s.dsr) >= 0.95 ? 'text-emerald-300' : '',
     },
   ]
