@@ -213,7 +213,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
               <div class="fq-row-progress"></div>
             </a>
           </div>
-          <p class="fq-section-desc">{{ c.tryIt.note }}</p>
+          <p class="fq-try-note">{{ c.tryIt.note }}</p>
         </div>
       </section>
 
@@ -791,6 +791,14 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
 .fq-rows {
   display: flex;
   flex-direction: column;
+}
+
+/* “先问一个问题”下面的说明：和问题列表隔开，字小一点 */
+.fq-try-note {
+  margin-top: 32px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--fq-ink-dim);
 }
 
 .fq-row {
