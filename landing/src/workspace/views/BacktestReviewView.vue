@@ -17,6 +17,7 @@ import StatusPill from '../ui/StatusPill.vue'
 import { pendingAuditRun } from '../auditLink.js'
 import { benchmarkCards, benchmarkChoices, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
 import { CURRENT_POOL, marketChoices, marketLabel, marketNote, usableMarket } from '../marketPresentation.js'
+import { paperPrefill } from '../paperPresentation.js'
 
 const props = defineProps({
   routeContext: { type: Object, default: () => ({}) },
@@ -420,6 +421,7 @@ onActivated(async () => {
           <div class="flex flex-wrap gap-3 text-sm text-indigo-300">
             <button @click="openResearch('research', { baseline: `run-${selectedId}` })">参数验证 →</button>
             <button @click="openResearch('market-chart', { run: selectedId })">在K线上查看成交 →</button>
+            <button v-if="paperPrefill(result.effective_config)" @click="openResearch('paper-accounts', { mode: 'new', strategy: result.effective_config.strategy_reference, run: selectedId })">用这套设置开模拟账户 →</button>
           </div>
           <BacktestAiReview :backtest-id="selectedId" :notify="notify" />
           <!-- 和基准比较：有完整的基准行情时显示两条累计收益曲线，否则只显示资金曲线。 -->

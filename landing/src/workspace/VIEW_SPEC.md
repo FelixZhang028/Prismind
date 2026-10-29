@@ -173,11 +173,14 @@ const props = defineProps({
 - 画线：线段、射线、水平线、斐波那契四种。画完自动保存到账户，按股票分开；点一条线选中后可以拖动或删除（右键也可以删除），「清除全部」要点两次。每只股票最多 50 条。
 - `chartDrawings(symbol)` / `saveChartDrawings(symbol,drawings)` → `{ symbol,drawings:[{name:'segment'|'rayLine'|'horizontalStraightLine'|'fibonacciLine',points:[{date,price}]}],max_drawings }`；保存是整体替换。`price` 是不复权价格，前端按当天 `factor` 换算，所以换周期、换复权方式、以后再有分红，线都落在同一根 K 线的同一个位置。
 
-### 模拟交易
-- `paperAccounts()` → `{ accounts:[{account_id,display_name,status,strategy,start_date,initial_cash,top_n,last_date}] }`
-- `createPaperAccount({name,start_date,initial_cash,top_n})` → `{ account_id,display_name,status }`
-- `advancePaperAccount(id,{target_date})` → `{ summary:{equity,total_return,max_drawdown,...},nav:[],target_date }`
-- `paperChecklist(id)` → `{ blocked, items:[{title,detail,passed,severity}] }`
+### 模拟账户（`views/PaperAccountsView.vue`，侧栏 策略研究 → 模拟账户）
+- `paperAccounts()` → `{ items:[{account_id,display_name,status:'WAITING'|'ACTIVE'|'FAILED',status_label,strategy_name,package_id,market,market_label,initial_cash,top_n,rebalance,start_date,last_date,error,total_return,max_drawdown,final_equity}], limit, today }`；`limit` 为 null 表示不限（管理员），其他人默认 3 个。
+- `createPaperAccount({package_id,name,market,initial_cash,top_n,rebalance})` → 账户详情。只能用规则策略；开始日期总是今天（北京时间），不能选。创建时把规则、股票范围（股票池时是当时的名单和过滤条件）、风控设置复制一份锁住。
+- `getPaperAccount(id)` → 列表字段 + `{ describe_text, risk_limits, latest_data_date, result, trades, positions, benchmark, checks:[{title,passed,severity:'ok'|'warning'|'info',detail}] }`。`result` 和回测结果同样的结构。
+- `advancePaperAccount(id)` → 推进到本地行情的最新一天，返回详情。数据任务运行时 409。后台在没有数据任务时每 5 分钟检查一次，把本地行情比账户新的账户推进一遍（`FELLOWQUANT_PAPER_ADVANCE=off` 关闭）。
+- `deletePaperAccount(id)`；行情图表用 `run=paper-<账户编号>` 显示模拟账户的成交。
+- 每次推进都按锁住的设置从开始日期重新算到最新一天，所以结果能重复得到；开始日收盘第一次调仓、下一个交易日开盘成交，至少两个交易日才有结果（之前是“等待第一个交易日”）。只显示已经成交的记录和收盘持仓，不显示下一个交易日要买卖什么。
+- 回测结果页（规则策略）有“用这套设置开模拟账户”，带上股票范围、资金、持股数和调仓频率（`mode=new&strategy=package:…&run=<回测编号>`）。
 
 ### 股票池管理
 - `getUniverse()` → `{ symbols:[],filters:{exclude_st,exclude_suspended,minimum_listing_days,minimum_history_days,minimum_average_amount},description:[{symbol,name,local_rows,start_date,end_date}] }`
