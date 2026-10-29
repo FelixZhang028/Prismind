@@ -267,7 +267,7 @@ function doLogout() {
             >
               <span v-if="isItemActive(item)" class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-blue-400" />
               <svg class="mt-0.5 h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" :d="navIcons[item.key] || ''" /></svg>
-              <span v-if="item.ai" class="flex items-center gap-1.5"><span class="rounded bg-gradient-to-r from-indigo-500 to-violet-500 px-1 text-[10px] font-bold leading-4 text-white">AI</span>{{ item.label.replace(/^AI\s*/, '') }}</span>
+              <span v-if="item.ai" class="flex items-center gap-1.5">{{ item.label.replace(/^AI\s*/, '') }}<span class="rounded bg-gradient-to-r from-indigo-500 to-violet-500 px-1 text-[10px] font-bold leading-4 text-white">AI</span></span>
               <template v-else>{{ item.label }}</template>
               <span v-if="item.tag" class="ml-auto self-center rounded-full border border-emerald-400/30 px-1.5 text-[10px] leading-4 text-emerald-300">{{ item.tag }}</span>
               <span v-if="item.hint" class="sr-only">：{{ item.hint }}</span>
@@ -301,7 +301,7 @@ function doLogout() {
           <button class="rounded-lg p-2 text-slate-400 hover:bg-white/5 lg:hidden" @click="sidebarOpen = !sidebarOpen" aria-label="菜单">
             <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16" /></svg>
           </button>
-          <h1 class="min-w-0 truncate whitespace-nowrap text-lg font-semibold text-white">{{ itemLabel(activeKey) }}</h1>
+          <h1 class="min-w-0 truncate whitespace-nowrap text-lg font-semibold text-white"><template v-if="activeSection?.ai && activeSection.key === activeKey"><span class="flex items-center gap-2">{{ itemLabel(activeKey).replace(/^AI\s*/, '') }}<span class="rounded bg-gradient-to-r from-indigo-500 to-violet-500 px-1 text-[11px] font-bold leading-5 text-white">AI</span></span></template><template v-else>{{ itemLabel(activeKey) }}</template></h1>
           <a href="/" class="hidden rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs text-slate-300 transition hover:border-white/25 hover:text-white sm:inline-flex">返回官网</a>
 
           <!-- 右上角：主题切换 + 新手引导 + 用户头像 + 名字 + 退出 -->

@@ -4,7 +4,7 @@ import { defineAsyncComponent } from 'vue'
 export const overviewKey = 'overview'
 
 // 侧栏按一次量化研究的顺序分组：① 研究 → ② 构建 → ③ 验证 → ④ 跟踪，最后是数据。
-// 名称用专业说法；hint 是一句白话，鼠标停在侧栏这一项上时显示。ai：名字开头的“AI”在侧栏里画成小徽标。
+// 名称用专业说法；hint 是一句白话，鼠标停在侧栏这一项上时显示。ai：名字开头的“AI”在侧栏里画成名字后面的小徽标，名字和其他项对齐。
 export const groups = [
   // 研究：看一类情况（事件研究）、按条件找股票（条件选股）、看一只股票（AI 个股分析）、看行情。
   { label: '研究', en: 'Research', step: 1, items: [
