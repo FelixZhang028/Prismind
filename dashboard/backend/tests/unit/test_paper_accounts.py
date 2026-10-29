@@ -257,3 +257,20 @@ def test_an_all_cash_finish_shows_no_positions_instead_of_older_holdings():
     held = final_positions(frame, as_of="2026-08-07")
     assert [(row["symbol"], row["price"], row["pnl"]) for row in held] == [("600000", 11.0, 100.0)]
     assert len(final_positions(frame)) == 1  # 不知道最后一天时保持原来的做法
+
+
+def test_a_drawdown_line_of_100_percent_is_described_as_no_line():
+    account = {"last_date": "2026-10-27", "package_id": "p", "risk_limits": json.dumps(RiskLimits(max_drawdown=1.0).to_dict()),
+               "package": json.dumps(_package_dict())}
+    checks = paper.account_checks(account, {"max_drawdown": 40.0, "equity": [1] * 80, "metrics_reliable": True},
+                                  today=TODAY, latest=date(2026, 10, 27), current_package=None)
+    risk = next(item for item in checks if item["title"] == "风控")
+    assert "没有设回撤停止线" in risk["detail"] and risk["severity"] == "info"
+
+
+def _package_dict():
+    from datetime import datetime
+    from quant_platform.application.strategy_studio_service import StrategyPackage
+
+    preset = beginner_templates()[0].presets["balanced"]
+    return StrategyPackage("p", "x", preset.definition, preset.top_n, preset.rebalance, "test", datetime(2026, 10, 28)).to_dict()

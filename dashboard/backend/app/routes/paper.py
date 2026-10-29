@@ -338,6 +338,8 @@ def account_checks(account: Any, result: dict[str, Any], *, today: date, latest:
     risk = RiskLimits.from_mapping(json.loads(account["risk_limits"]))
     if not risk.enabled:
         checks.append(_check("风控", False, "创建时风控是关闭的：不限制仓位和回撤。", "info"))
+    elif risk.max_drawdown >= 1:
+        checks.append(_check("风控", False, "没有设回撤停止线（100%）：回撤再大也照常按规则调仓。", "info"))
     else:
         action = "不再买入新股票" if risk.drawdown_action == "stop_new" else \
             f"总仓位降到 {risk.drawdown_target_weight:.0%} 以内"
