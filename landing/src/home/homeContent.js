@@ -11,6 +11,11 @@ export const CONTENT = {
       ctaSecondary: '一句话写规则',
       scrollHint: '滚动探索',
     },
+    tryIt: {
+      title: 'Try · 先问一个问题',
+      desc: '点一个问题，用全市场十年的历史数据算一算，几秒钟出结果。',
+      note: '这些只是历史统计，用来检验一个想法，不针对任何一只股票，也不是买卖建议。第一次使用需要先用邮箱注册。',
+    },
     belief: {
       title: 'Approach · 我们的理念',
       headline: '好的研究，<br />先要经得起检验。',
@@ -73,6 +78,11 @@ export const CONTENT = {
       ctaPrimary: 'Start Researching',
       ctaSecondary: 'Rules in One Sentence',
       scrollHint: 'Scroll to explore',
+    },
+    tryIt: {
+      title: 'Try · Ask a Question',
+      desc: 'Pick a question and see what ten years of whole-market history says, in a few seconds.',
+      note: 'These are historical statistics for testing an idea. They are not about any single stock and are not buy or sell advice. Sign up with your email the first time.',
     },
     belief: {
       title: 'Approach · How We Work',

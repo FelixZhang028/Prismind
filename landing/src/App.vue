@@ -6,6 +6,7 @@ import { useScrollState } from './home/useScrollState'
 import { CONTENT } from './home/homeContent'
 import { useTheme } from './theme'
 import { getToken } from './api.js'
+import { TRY_QUESTIONS, tryHref } from './tryQuestions.js'
 
 const hasSession = ref(Boolean(getToken()))
 const entryHref = computed(() => hasSession.value ? '/app.html' : '/auth.html')
@@ -191,10 +192,35 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
         </div>
       </section>
 
+      <!-- TRY：点一个问题，直接看事件研究的结果（没登录会先去登录，登录后回到这个结果） -->
+      <section id="try" class="fq-section">
+        <div class="fq-section-inner">
+          <h2 class="fq-section-title"><span class="fq-index">01</span>{{ c.tryIt.title }}</h2>
+          <p class="fq-section-desc">{{ c.tryIt.desc }}</p>
+          <div class="fq-rows">
+            <a
+              v-for="(q, i) in TRY_QUESTIONS"
+              :key="q.key"
+              class="fq-row fq-row-link fq-reveal"
+              :href="tryHref(q)"
+              :style="{ transitionDelay: `${(i % 5) * 0.07}s` }"
+            >
+              <div class="fq-row-num">{{ String(i + 1).padStart(2, '0') }}</div>
+              <div class="fq-row-content">
+                <h3>{{ q[lang].question }}</h3>
+                <p class="fq-row-sub">{{ q[lang].hint }}</p>
+              </div>
+              <div class="fq-row-progress"></div>
+            </a>
+          </div>
+          <p class="fq-try-note">{{ c.tryIt.note }}</p>
+        </div>
+      </section>
+
       <!-- BELIEF -->
       <section id="belief" class="fq-section">
         <div class="fq-section-inner fq-narrow">
-          <h2 class="fq-section-title"><span class="fq-index">01</span>{{ c.belief.title }}</h2>
+          <h2 class="fq-section-title"><span class="fq-index">02</span>{{ c.belief.title }}</h2>
           <h3 class="fq-headline fq-reveal" v-html="c.belief.headline"></h3>
           <p class="fq-text fq-reveal">{{ c.belief.p1 }}</p>
           <p class="fq-text fq-reveal">
@@ -206,7 +232,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
       <!-- SERVICES -->
       <section id="services" class="fq-section">
         <div class="fq-section-inner">
-          <h2 class="fq-section-title"><span class="fq-index">02</span>{{ c.services.title }}</h2>
+          <h2 class="fq-section-title"><span class="fq-index">03</span>{{ c.services.title }}</h2>
           <p class="fq-section-desc">{{ c.services.desc }}</p>
           <div class="fq-rows">
             <div
@@ -229,7 +255,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
       <!-- FEATURES -->
       <section id="features" class="fq-section">
         <div class="fq-section-inner">
-          <h2 class="fq-section-title"><span class="fq-index">03</span>{{ c.features.title }}</h2>
+          <h2 class="fq-section-title"><span class="fq-index">04</span>{{ c.features.title }}</h2>
           <p class="fq-section-desc">{{ c.features.desc }}</p>
           <div class="fq-rows">
             <a
@@ -253,7 +279,7 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
       <!-- ABOUT -->
       <section id="about" class="fq-section">
         <div class="fq-section-inner fq-narrow">
-          <h2 class="fq-section-title"><span class="fq-index">04</span>{{ c.about.title }}</h2>
+          <h2 class="fq-section-title"><span class="fq-index">05</span>{{ c.about.title }}</h2>
           <h3 class="fq-headline fq-reveal" v-html="c.about.headline"></h3>
           <p class="fq-text fq-reveal">{{ c.about.p1 }}</p>
           <p class="fq-text fq-reveal">{{ c.about.p2 }}</p>
@@ -765,6 +791,14 @@ onBeforeUnmount(() => cancelAnimationFrame(rafId))
 .fq-rows {
   display: flex;
   flex-direction: column;
+}
+
+/* “先问一个问题”下面的说明：和问题列表隔开，字小一点 */
+.fq-try-note {
+  margin-top: 32px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--fq-ink-dim);
 }
 
 .fq-row {

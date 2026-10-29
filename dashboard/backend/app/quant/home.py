@@ -114,6 +114,10 @@ def pool(table: pd.DataFrame, symbols: list[str], names: dict[str, str]) -> list
 # --------------------------------------------------------------------------- #
 
 
+# 事件研究链接里的条件（格式和前端 eventStudy.js 的 encodePreset 一样）：近 20 个交易日跌了 20% 以上
+FIRST_QUESTION_PRESET = "ret:20::<=:-20"
+
+
 def research(user_id: int) -> dict[str, Any]:
     """Recent backtests, analyses, Q&A and strategies (newest first), counts, and the getting-started steps."""
 
@@ -132,6 +136,8 @@ def research(user_id: int) -> dict[str, Any]:
                   "briefs": count("SELECT COUNT(*) FROM stock_briefs WHERE user_id = ?"),
                   "chats": count("SELECT COUNT(*) FROM ai_chats WHERE user_id = ?")}
         pool_saved = conn.execute("SELECT symbols FROM universe WHERE user_id = ?", (user_id,)).fetchone()
+        tried_event = conn.execute("SELECT 1 FROM user_milestones WHERE user_id = ? AND kind = 'event_study'",
+                                   (user_id,)).fetchone() is not None
     items = []
     for row in backtests:
         result = json.loads(row["result"]) if row["result"] else {}
@@ -152,11 +158,14 @@ def research(user_id: int) -> dict[str, Any]:
                       "view": "backtest-review", "context": {"strategy": f"package:{row['package_id']}"}})
     items.sort(key=lambda item: str(item["at"]), reverse=True)
     pool_set = bool(pool_saved and json.loads(pool_saved["symbols"] or "[]"))
+    # 第一步最快能看到结果：点一下就用事件研究算“大跌之后会反弹吗？”（几秒钟出结果）
     steps = [
-        {"key": "pool", "label": "设置自己的股票池", "done": pool_set, "view": "universe"},
+        {"key": "event", "label": "检验一个说法：大跌之后会反弹吗？", "done": tried_event, "view": "event-study",
+         "context": {"preset": FIRST_QUESTION_PRESET}},
         {"key": "strategy", "label": "保存一个规则策略", "done": counts["strategies"] > 0, "view": "strategy-hub"},
         {"key": "backtest", "label": "跑完第一次回测", "done": counts["backtests"] > 0, "view": "backtest-review"},
         {"key": "brief", "label": "用 AI 研究员分析一只股票", "done": counts["briefs"] > 0, "view": "agent-lab"},
+        {"key": "pool", "label": "设置自己的股票池", "done": pool_set, "view": "universe"},
     ]
     return {"recent": items[:RECENT_ROWS], "counts": counts, "steps": steps}
 

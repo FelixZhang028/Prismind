@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { SITE_BASE, adminAiUsage, adminStats, adminUsers, dailyUpdateStatus, systemStatus } from '../api.js'
-import { bytes } from '../format.js'
+import { bytes, firstResultCard } from '../format.js'
 import { barHeights, tokensText } from '../settings.js'
 import AuditPanel from './AuditPanel.vue'
 import BannedWordsPanel from './BannedWordsPanel.vue'
@@ -72,7 +72,8 @@ const cards = computed(() => {
     { label: '今天活跃', value: number(s.users.active_today), sub: '今天打开过功能台的用户' },
     { label: '回测记录', value: number(s.research.backtests), sub: `今天 ${number(s.research.backtests_today)} 次 · 保存的策略 ${number(s.research.strategies)} 个` },
     { label: 'AI 研究员分析', value: number(s.research.briefs), sub: `今天 ${number(s.research.briefs_today)} 次` },
-  ]
+    firstResultCard(s.first_results),
+  ].filter(Boolean)
 })
 
 const aiShare = computed(() => {
@@ -132,7 +133,7 @@ const marketText = computed(() => {
     <p v-if="error" role="alert" class="mb-6 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">{{ error }}</p>
 
     <main v-if="tab === 'overview'" class="space-y-6">
-      <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4" aria-label="概况">
+      <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-5" aria-label="概况">
         <div v-for="c in cards" :key="c.label" class="glass glass-sheen rounded-2xl p-5">
           <p class="text-xs text-slate-400">{{ c.label }}</p>
           <p class="mt-2 text-3xl font-bold text-white">{{ c.value }}</p>

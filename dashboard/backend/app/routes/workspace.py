@@ -1954,9 +1954,13 @@ def event_study_run(body: EventStudyIn, user: dict = Depends(get_current_user)):
     pool = [to_canonical(code) for code in _load_universe_symbols(user["id"])]
     try:
         with computing(user):
-            return clean(event_study.run(market_repository(), request, pool=pool, names=security_names()))
+            result = clean(event_study.run(market_repository(), request, pool=pool, names=security_names()))
     except event_study.EventStudyError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
+    with get_conn() as conn:   # 只记第一次：首页“开始使用”打勾、管理后台统计新用户多久跑出第一个结果
+        conn.execute("INSERT OR IGNORE INTO user_milestones (user_id, kind, at) VALUES (?, 'event_study', ?)",
+                     (user["id"], _now()))
+    return result
 
 
 @router.get("/data-center/closed-loop", summary="全市场数据闭环落地状态（只读，不访问外网）")

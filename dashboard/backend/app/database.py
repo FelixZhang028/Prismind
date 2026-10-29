@@ -246,6 +246,15 @@ def init_db() -> None:
                 updated_at TEXT    NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+            -- 每个用户第一次做成某件事的时间（目前只记第一次跑出事件研究结果）；
+            -- 回测和 AI 研究员本来就有记录，不在这里重复。管理后台用它算“新用户多久跑出第一个结果”
+            CREATE TABLE IF NOT EXISTS user_milestones (
+                user_id INTEGER NOT NULL,
+                kind    TEXT    NOT NULL,
+                at      TEXT    NOT NULL,
+                PRIMARY KEY (user_id, kind),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
             -- 管理员在页面上改的平台设置，例如注册方式（registration = open / invite / closed）
             CREATE TABLE IF NOT EXISTS site_settings (
                 key   TEXT PRIMARY KEY,

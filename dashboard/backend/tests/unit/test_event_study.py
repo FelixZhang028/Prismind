@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app import database
 from app.routes import workspace
 from app.routes.auth import get_current_user
 from quant_platform.data.repositories.parquet_repository import ParquetMarketDataRepository
@@ -145,7 +146,11 @@ def test_the_pool_scope_and_bad_requests(repository):
         es.run(repository, {"conditions": [FALL], "scope": "pool"}, pool=[], names={})
 
 
-def test_the_routes(repository, monkeypatch):
+def test_the_routes(repository, monkeypatch, tmp_path):
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))   # 跑出结果会记一笔“第一次”，写在临时数据库里
+    database.init_db()
+    with database.get_conn() as conn:
+        conn.execute("INSERT INTO users (id, name, email, password_hash, salt, created_at) VALUES (1, 'u', 'u@example.test', 'h', 's', 'now')")
     monkeypatch.setattr(workspace, "market_repository", lambda: repository)
     monkeypatch.setattr(workspace, "security_names", lambda: {})
     monkeypatch.setattr(workspace, "_load_universe_symbols", lambda user_id: ["600000"])
@@ -163,5 +168,10 @@ def test_the_routes(repository, monkeypatch):
         assert all(es.clean_condition(c) for c in preset["conditions"])
     body = client.post("/api/v1/event-study", json={"conditions": [FALL], "scope": "pool"}).json()
     assert body["events"] == 1 and body["conditions"] == ["近 20 个交易日涨跌幅 ≤ -20%"]
+    with database.get_conn() as conn:
+        first = conn.execute("SELECT at FROM user_milestones WHERE user_id = 1 AND kind = 'event_study'").fetchone()["at"]
+    client.post("/api/v1/event-study", json={"conditions": [FALL], "scope": "pool"})
+    with database.get_conn() as conn:                                # 只记第一次
+        assert [r["at"] for r in conn.execute("SELECT at FROM user_milestones")] == [first]
     assert client.post("/api/v1/event-study", json={"conditions": [{"type": "nope"}]}).status_code == 422
     assert client.post("/api/v1/event-study", json={"conditions": [FALL], "industry": "银行"}).status_code == 422

@@ -10,6 +10,7 @@ import { getLocalUser, getPoints, logout, restoreSession } from '../api.js'
 import '../workspace/workspace.css'
 import { researchContext, researchUrl } from '../workspace/researchNavigation.js'
 import { backtestId } from '../workspace/runRecords.js'
+import { loginUrl } from '../authNext.js'
 
 const user = ref(getLocalUser())
 const loading = ref(true)
@@ -145,7 +146,7 @@ async function verifySession() {
   sessionError.value = ''
   const session = await restoreSession()
   if (session.status === 'anonymous') {
-    window.location.href = '/auth.html'
+    window.location.href = loginUrl(window.location)   // 登录以后回到这一页（例如首页“一键试试”的链接）
     return
   }
   if (session.status !== 'authenticated') {
@@ -163,7 +164,8 @@ async function verifySession() {
   loading.value = false
   refreshPoints()
   // 首次进入工作台自动弹出新手引导（可在顶栏 ? 图标重新打开）
-  if (!localStorage.getItem('zt_tour_done')) tourOpen.value = true
+  // 从首页“一键试试”点进来的（链接里带着事件研究的条件）：先让人看结果，不弹引导，下次进来再弹
+  if (!localStorage.getItem('zt_tour_done') && !routeContext.value.preset) tourOpen.value = true
 }
 onMounted(verifySession)
 

@@ -105,6 +105,17 @@ def test_the_home_page_is_one_request_with_only_my_research(client):
     assert [item["kind"] for item in body["recent"]] == ["chat", "brief", "backtest"]           # 从新到旧，只有自己的
     assert body["recent"][2]["detail"] == "总收益 +12.50% · 最大回撤 8.10%" and body["recent"][2]["context"] == {"run": 5}
     assert body["counts"] == {"strategies": 0, "backtests": 1, "briefs": 1, "chats": 1}
-    assert [step["done"] for step in body["steps"]] == [False, False, True, True]
+    assert [step["key"] for step in body["steps"]] == ["event", "strategy", "backtest", "brief", "pool"]
+    assert [step["done"] for step in body["steps"]] == [False, False, True, True, False]
+    assert body["steps"][0]["view"] == "event-study" and body["steps"][0]["context"] == {"preset": "ret:20::<=:-20"}
     assert set(body["daily"]) == {"enabled", "time", "state", "text", "data_date"} and body["daily"]["data_date"] == DAY.date().isoformat()
     assert body["ai"]["available"] is False and body["ai"]["usage"]["chat"]["used"] == 0
+
+
+def test_the_first_event_study_ticks_the_first_step(client):
+    with database.get_conn() as conn:
+        conn.execute("INSERT INTO user_milestones (user_id, kind, at) VALUES (2, 'event_study', '2026-10-05T00:00:00')")
+    assert client.get("/api/v1/home").json()["steps"][0]["done"] is False          # 别人做过不算
+    with database.get_conn() as conn:
+        conn.execute("INSERT INTO user_milestones (user_id, kind, at) VALUES (1, 'event_study', '2026-10-05T00:00:00')")
+    assert client.get("/api/v1/home").json()["steps"][0]["done"] is True
