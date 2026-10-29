@@ -48,7 +48,7 @@ async function save() {
   try {
     const data = await savePreferences({ ...form, initial_capital: Number(form.initial_capital), max_positions: Number(form.max_positions) })
     Object.assign(form, data.preferences)
-    props.notify('已保存，下次打开回测和个股分析时生效')
+    props.notify('已保存，下次打开回测和 AI 个股分析时生效')
   } catch (e) {
     formError.value = e.message || '保存失败'
   } finally {
@@ -126,7 +126,7 @@ const pill = (active) => active ? 'border-indigo-400/50 bg-indigo-500/15 text-wh
       </div>
     </SectionCard>
 
-    <SectionCard title="研究默认值" hint="打开回测和个股分析时自动填好，每次仍可以临时修改；保存在账户里，换电脑也在">
+    <SectionCard title="研究默认值" hint="打开回测和 AI 个股分析时自动填好，每次仍可以临时修改；保存在账户里，换电脑也在">
       <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="save">
         <label class="text-xs text-slate-400">回测初始资金（元）<input v-model="form.initial_capital" type="number" min="10000" max="100000000" step="10000" :class="inputClass" /></label>
         <label class="text-xs text-slate-400">最多持仓（只）<input v-model="form.max_positions" type="number" min="1" max="50" step="1" :class="inputClass" /></label>
@@ -138,7 +138,7 @@ const pill = (active) => active ? 'border-indigo-400/50 bg-indigo-500/15 text-wh
         </label>
         <label class="flex items-center gap-2 text-sm text-slate-300 sm:col-span-2">
           <input v-model="form.use_experience" type="checkbox" class="h-4 w-4 rounded border-white/20 bg-white/5 accent-indigo-500" />
-          个股分析时 AI 默认参考我的研究经验
+          AI 个股分析时默认参考我的研究经验
         </label>
         <p class="text-xs text-slate-500 sm:col-span-2">所选策略自带持仓数和调仓频率时，以策略为准。</p>
         <p v-if="formError" role="alert" class="text-sm text-rose-300 sm:col-span-2">{{ formError }}</p>

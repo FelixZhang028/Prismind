@@ -123,7 +123,7 @@ def _ai_failure(exc: Exception) -> str:
 # --------------------------------------------------------------------------- #
 
 
-@router.get("/status", summary="个股分析：模型是否可用、今天还剩几次")
+@router.get("/status", summary="AI 个股分析：模型是否可用、今天还剩几次")
 def agent_status(user: dict = Depends(get_current_user)):
     model = platform_ai.platform_model(kind="brief")
     decision = platform_ai.decision_client()
@@ -173,7 +173,7 @@ def prior_delete(entry_id: str, user: dict = Depends(get_current_user)):
 
 
 # --------------------------------------------------------------------------- #
-# 个股分析
+# AI 个股分析
 # --------------------------------------------------------------------------- #
 
 

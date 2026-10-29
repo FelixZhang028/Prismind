@@ -210,7 +210,7 @@ const link = 'text-xs text-indigo-300 hover:text-indigo-200'
           <section v-else :class="card" aria-label="我的研究">
             <h2 class="text-sm font-semibold text-white">我的研究</h2>
             <dl class="mt-3 grid grid-cols-2 gap-3 text-sm">
-              <button v-for="item in [['strategies', '保存的策略', 'strategy-hub'], ['backtests', '完成的回测', 'run-library'], ['briefs', '个股分析', 'agent-lab'], ['chats', 'AI 问答对话', '']]"
+              <button v-for="item in [['strategies', '保存的策略', 'strategy-hub'], ['backtests', '完成的回测', 'run-library'], ['briefs', 'AI 个股分析', 'agent-lab'], ['chats', 'AI 问答对话', '']]"
                 :key="item[0]" type="button" class="rounded-xl border border-white/10 bg-white/5 p-3 text-left hover:bg-white/10" @click="item[2] ? go(item[2]) : openChat()">
                 <dt class="text-xs text-slate-400">{{ item[1] }}</dt><dd class="mt-1 text-lg font-bold text-white">{{ home.counts[item[0]] }}</dd>
               </button>

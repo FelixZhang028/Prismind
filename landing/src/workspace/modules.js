@@ -4,13 +4,13 @@ import { defineAsyncComponent } from 'vue'
 export const overviewKey = 'overview'
 
 // 侧栏按一次量化研究的顺序分组：① 研究 → ② 构建 → ③ 验证 → ④ 跟踪，最后是数据。
-// 名称用专业说法；hint 是一句白话，鼠标停在侧栏这一项上时显示。
+// 名称用专业说法；hint 是一句白话，鼠标停在侧栏这一项上时显示。ai：名字开头的“AI”在侧栏里画成小徽标。
 export const groups = [
-  // 研究：看一类情况（事件研究）、按条件找股票（条件选股）、看一只股票（个股分析）、看行情。
+  // 研究：看一类情况（事件研究）、按条件找股票（条件选股）、看一只股票（AI 个股分析）、看行情。
   { label: '研究', en: 'Research', step: 1, items: [
     { key: 'event-study', label: '事件研究', hint: '某种情况出现以后，股票之后通常怎么走' },
     { key: 'stock-screen', label: '条件选股', hint: '按自己设的条件，从全市场筛出今天符合的股票' },
-    { key: 'agent-lab', label: '个股分析', hint: '用平台数据整理一只股票，AI 解读每条都注明依据' },
+    { key: 'agent-lab', label: 'AI 个股分析', ai: true, hint: '用平台数据整理一只股票，AI 解读每条都注明依据' },
     { key: 'market-chart', label: '行情图表', hint: 'K 线、均线、成交量和技术指标' },
   ] },
   { label: '构建', en: 'Build', step: 2, items: [
@@ -37,7 +37,7 @@ export const groups = [
 
 // 完整路由注册表保留页内入口，兼容官网、新手引导及已有直达链接。
 const utilityItems = [
-  // 文档问答与决策辅助暂不放进侧栏，旧链接仍能打开。研究经验在个股分析页面里管理。
+  // 文档问答与决策辅助暂不放进侧栏，旧链接仍能打开。研究经验在 AI 个股分析页面里管理。
   { key: 'knowledge-base', label: '投研知识库', parent: 'agent-lab' },
   { key: 'decision-center', label: '决策辅助', parent: 'agent-lab' },
   { key: 'data-management', label: '数据检查', parent: 'data-update', admin: true },

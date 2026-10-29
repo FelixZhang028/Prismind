@@ -267,7 +267,8 @@ function doLogout() {
             >
               <span v-if="isItemActive(item)" class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-blue-400" />
               <svg class="mt-0.5 h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" :d="navIcons[item.key] || ''" /></svg>
-              {{ item.label }}
+              <span v-if="item.ai" class="flex items-center gap-1.5"><span class="rounded bg-gradient-to-r from-indigo-500 to-violet-500 px-1 text-[10px] font-bold leading-4 text-white">AI</span>{{ item.label.replace(/^AI\s*/, '') }}</span>
+              <template v-else>{{ item.label }}</template>
               <span v-if="item.tag" class="ml-auto self-center rounded-full border border-emerald-400/30 px-1.5 text-[10px] leading-4 text-emerald-300">{{ item.tag }}</span>
               <span v-if="item.hint" class="sr-only">：{{ item.hint }}</span>
             </button>

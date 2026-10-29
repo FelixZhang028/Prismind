@@ -7,7 +7,8 @@ test('侧栏按研究顺序分组：① 研究 → ② 构建 → ③ 验证 →
     [1, '研究', 'Research'], [2, '构建', 'Build'], [3, '验证', 'Validate'], [4, '跟踪', 'Track'], [null, '数据', 'Data'],
   ])
   assert.equal(groups[0].items[0].key, 'event-study')                 // 和首页“一键试试”一致，最快出结果
-  assert.equal(itemLabel('agent-lab'), '个股分析')
+  assert.equal(itemLabel('agent-lab'), 'AI 个股分析')
+  assert.ok(groups[0].items.find((i) => i.key === 'agent-lab').ai)   // 侧栏里“AI”画成小徽标
 })
 
 test('侧栏每一项都有一句白话说明', () => {
