@@ -236,12 +236,18 @@ onActivated(async () => {
         <p v-if="note" class="text-sm" :class="current.status === 'FAILED' ? 'text-rose-300' : 'text-slate-300'">{{ note }}</p>
         <p v-if="current.describe_text" class="text-xs text-slate-400">锁住的规则：{{ current.describe_text }}</p>
 
-        <div class="flex flex-wrap gap-3">
-          <button :disabled="advancing" class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70" @click="onAdvance">
-            {{ advancing ? '推进中…' : '马上推进' }}
-          </button>
-          <button v-if="current.result?.run_id" class="rounded-full border border-white/10 px-4 py-2 text-sm text-slate-200 hover:bg-white/5" @click="openResearch('market-chart', { run: `paper-${current.account_id}` })">在K线上查看成交</button>
-          <button class="rounded-full border border-rose-400/30 px-4 py-2 text-sm text-rose-300 hover:bg-rose-500/10" @click="onDelete">删除</button>
+        <div>
+          <div class="flex flex-wrap gap-3">
+            <button :disabled="advancing" class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70" aria-describedby="paper-advance-help" @click="onAdvance">
+              {{ advancing ? '推进中…' : '马上推进' }}
+            </button>
+            <button v-if="current.result?.run_id" class="rounded-full border border-white/10 px-4 py-2 text-sm text-slate-200 hover:bg-white/5" @click="openResearch('market-chart', { run: `paper-${current.account_id}` })">在K线上查看成交</button>
+            <button class="rounded-full border border-rose-400/30 px-4 py-2 text-sm text-rose-300 hover:bg-rose-500/10" @click="onDelete">删除</button>
+          </div>
+          <!-- 后台本来就会自动推进，这里说明按钮只是“不用等” -->
+          <p id="paper-advance-help" class="mt-2 text-xs text-slate-400">
+            「马上推进」：后台每 5 分钟会自动检查新行情并推进。点它就不用等，现在就重算到本地行情的最新一天；设置不会变，也不会算到还没有数据的日子。推进失败时，补好数据后可以点它重试。
+          </p>
         </div>
 
         <!-- 检查 -->
