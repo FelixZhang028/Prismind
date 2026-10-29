@@ -16,9 +16,9 @@ test('四张卡片说明基准收益、超额收益、Beta 和 Alpha，正负号
   ])
   assert.equal(cards[0].sub, '同期最大回撤 10.49%')
   assert.equal(cards[2].sub, '基准涨跌 1%，策略平均跟着变动 0.57%')
-  assert.equal(cards[1].tone, 'text-emerald-300')
+  assert.equal(cards[1].tone, 'text-rose-300') // 涨红跌绿
   const losing = benchmarkCards({ ...benchmark, excess_return: -3.05, alpha: -7.92 })
-  assert.deepEqual([losing[1].value, losing[1].tone, losing[3].value, losing[3].tone], ['-3.05%', 'text-rose-300', '-7.92%', 'text-rose-300'])
+  assert.deepEqual([losing[1].value, losing[1].tone, losing[3].value, losing[3].tone], ['-3.05%', 'text-emerald-300', '-7.92%', 'text-emerald-300'])
 })
 
 test('算不出来的指标显示占位符，不显示成 0', () => {

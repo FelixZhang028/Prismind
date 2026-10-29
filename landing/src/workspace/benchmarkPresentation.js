@@ -1,10 +1,12 @@
 // 回测结果和基准（默认沪深 300）的对比：把接口返回的数字整理成页面上的卡片、曲线和说明。
 const finite = (value) => value !== null && value !== undefined && Number.isFinite(Number(value))
 const signedPercent = (value) => (finite(value) ? `${Number(value) > 0 ? '+' : ''}${Number(value).toFixed(2)}%` : '—')
-const tone = (value) => (!finite(value) || Number(value) === 0 ? '' : Number(value) > 0 ? 'text-emerald-300' : 'text-rose-300')
+// A 股习惯：涨（正数）红、跌（负数）绿。
+const tone = (value) => (!finite(value) || Number(value) === 0 ? '' : Number(value) > 0 ? 'text-rose-300' : 'text-emerald-300')
 
-export const STRATEGY_COLOR = '#818cf8'
-export const BENCHMARK_COLOR = '#94a3b8'
+// 颜色跟着深浅主题变（定义在 style.css）；基准画成虚线，不只靠颜色区分。
+export const STRATEGY_COLOR = 'var(--fq-chart-strategy)'
+export const BENCHMARK_COLOR = 'var(--fq-chart-benchmark)'
 
 // 四张卡片：基准自己涨了多少、策略比它多多少、策略跟随基准的程度、去掉跟随部分后剩下的收益。
 export function benchmarkCards(benchmark) {
@@ -30,7 +32,7 @@ export function benchmarkSeries(benchmark) {
   const last = (points) => signedPercent(points[points.length - 1])
   return [
     { label: '本策略', color: STRATEGY_COLOR, points: benchmark.strategy_curve, end: last(benchmark.strategy_curve) },
-    { label: benchmark.name, color: BENCHMARK_COLOR, points: benchmark.benchmark_curve, end: last(benchmark.benchmark_curve) },
+    { label: benchmark.name, color: BENCHMARK_COLOR, dashed: true, points: benchmark.benchmark_curve, end: last(benchmark.benchmark_curve) },
   ]
 }
 

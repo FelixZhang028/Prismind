@@ -17,7 +17,7 @@ import StatusPill from '../ui/StatusPill.vue'
 import { pendingAuditRun } from '../auditLink.js'
 import { benchmarkCards, benchmarkChoices, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
 import { CURRENT_POOL, marketChoices, marketLabel, marketNote, usableMarket } from '../marketPresentation.js'
-import { paperPrefill } from '../paperPresentation.js'
+import { paperPrefill, returnTone } from '../paperPresentation.js'
 
 const props = defineProps({
   routeContext: { type: Object, default: () => ({}) },
@@ -119,7 +119,7 @@ const metrics = computed(() => {
   const annual = num(result.value.annual_return)
   return [
     { label: '最终权益', value: fmtMoney(finalEquity.value), tone: '' },
-    { label: '年化收益', value: fmtPct(annual), tone: annual === null ? '' : annual >= 0 ? 'text-emerald-300' : 'text-rose-300' },
+    { label: '年化收益', value: fmtPct(annual), tone: annual === null || annual === 0 ? '' : annual > 0 ? 'text-rose-300' : 'text-emerald-300' }, // 涨红跌绿
     { label: '夏普比率', value: fmtNum(result.value.sharpe), tone: '' },
     { label: '索提诺比率', value: fmtNum(result.value.sortino), tone: '' },
     { label: '卡玛比率', value: fmtNum(result.value.calmar), tone: '' },
@@ -158,7 +158,7 @@ const comparisonSeries = computed(() => benchmarkSeries(benchmark.value))
 const comparisonNote = computed(() => benchmarkNote(benchmark.value))
 
 const equitySeries = computed(() => [
-  { label: '资金曲线', color: '#818cf8', points: Array.isArray(result.value.equity) ? result.value.equity : [] },
+  { label: '资金曲线', color: 'var(--fq-chart-strategy)', points: Array.isArray(result.value.equity) ? result.value.equity : [] },
 ])
 
 // 交易与成本 / 持仓分析
@@ -404,9 +404,9 @@ onActivated(async () => {
             <MetricCard
               label="累计收益"
               :value="fmtPct(result.total_return)"
-              :tone="num(result.total_return) === null ? '' : num(result.total_return) >= 0 ? 'text-emerald-300' : 'text-rose-300'"
+              :tone="num(result.total_return) === null || num(result.total_return) === 0 ? '' : num(result.total_return) > 0 ? 'text-rose-300' : 'text-emerald-300'"
             />
-            <MetricCard label="最大回撤" :value="fmtPct(result.max_drawdown)" sub="资金曲线从峰值到谷底的最大跌幅" tone="text-rose-300" />
+            <MetricCard label="最大回撤" :value="fmtPct(result.max_drawdown)" sub="资金曲线从峰值到谷底的最大跌幅" tone="text-emerald-300" />
             <MetricCard label="可信度评级" :value="gradeValue" :sub="gradeSub" :tone="gradeTone" />
           </section>
           <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-5">
@@ -443,17 +443,17 @@ onActivated(async () => {
               <div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-400">
                 <span>累计收益</span>
                 <span v-for="line in comparisonSeries" :key="line.label" class="inline-flex items-center gap-1.5">
-                  <span class="inline-block h-0.5 w-4" :style="{ backgroundColor: line.color }" />{{ line.label }} {{ line.end }}
+                  <span class="inline-block w-4 border-t-2" :style="{ borderColor: line.color, borderTopStyle: line.dashed ? 'dashed' : 'solid' }" />{{ line.label }} {{ line.end }}
                 </span>
               </div>
-              <LineChart class="mt-2" :series="comparisonSeries" :height="220" :fill="false" />
+              <LineChart class="mt-2" :series="comparisonSeries" :dates="result.nav_dates || []" unit="percent" :baseline="0" :height="260" :fill="false" />
             </div>
             <p class="text-xs text-slate-400">{{ comparisonNote }}</p>
           </section>
           <template v-else>
             <div class="rounded-xl border border-white/10 bg-white/5 p-4">
               <p class="text-xs text-slate-400">资金曲线</p>
-              <LineChart :series="equitySeries" :height="220" />
+              <LineChart class="mt-2" :series="equitySeries" :dates="result.nav_dates || []" unit="money" :baseline="Number(result.effective_config?.initial_capital) || null" :height="260" />
             </div>
             <p v-if="comparisonNote" class="text-xs text-slate-400">{{ comparisonNote }}</p>
           </template>
@@ -477,7 +477,9 @@ onActivated(async () => {
         <div v-else-if="activeTab === '持仓分析'">
           <p class="mb-3 text-xs text-slate-400">当前持仓</p>
           <EmptyState v-if="!(current.positions || []).length" text="暂无持仓" />
-          <DataTable v-else :columns="positionCols" :rows="current.positions" empty="暂无持仓" />
+          <DataTable v-else :columns="positionCols" :rows="current.positions" empty="暂无持仓">
+            <template #cell-pnl="{ value }"><span :class="returnTone(value)">{{ value }}</span></template>
+          </DataTable>
         </div>
       </div>
     </SectionCard>

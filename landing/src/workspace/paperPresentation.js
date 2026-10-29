@@ -67,5 +67,6 @@ export function returnText(value) {
 
 export function returnTone(value) {
   if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return 'text-slate-400'
-  return Number(value) >= 0 ? 'text-emerald-300' : 'text-rose-300'
+  // A 股习惯：涨红跌绿
+  return Number(value) > 0 ? 'text-rose-300' : Number(value) < 0 ? 'text-emerald-300' : 'text-slate-300'
 }

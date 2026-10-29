@@ -39,7 +39,9 @@ test('收益带正负号，没有结果时显示占位符', () => {
   assert.equal(returnText(-2), '-2.00%')
   assert.equal(returnText(null), '—')
   assert.equal(returnTone(null), 'text-slate-400')
-  assert.equal(returnTone(-1), 'text-rose-300')
+  assert.equal(returnTone(-1), 'text-emerald-300') // 涨红跌绿
+  assert.equal(returnTone(1), 'text-rose-300')
+  assert.equal(returnTone(0), 'text-slate-300')
   assert.equal(checkTone('ok'), 'text-emerald-300')
   assert.equal(checkTone('warning'), 'text-amber-300')
   assert.equal(checkMark('info'), '·')

@@ -13,7 +13,7 @@ defineProps({
     <p class="text-xs text-slate-400">{{ label }}</p>
     <p class="mt-2 text-2xl font-bold text-white" :class="tone">{{ value }}</p>
     <p v-if="sub || up !== null" class="mt-2 flex items-center gap-1.5 text-xs">
-      <span v-if="up !== null" :class="up ? 'text-emerald-300' : 'text-rose-300'">{{ up ? '↑' : '↓' }}</span>
+      <span v-if="up !== null" :class="up ? 'text-rose-300' : 'text-emerald-300'">{{ up ? '↑' : '↓' }}</span>
       <span class="text-slate-500">{{ sub }}</span>
     </p>
   </div>

@@ -68,7 +68,7 @@ function fmtPct(v, digits = 2) {
 }
 function signTone(v) {
   if (typeof v !== 'number' || !isFinite(v)) return { up: null, tone: '' }
-  return v >= 0 ? { up: true, tone: 'text-emerald-300' } : { up: false, tone: 'text-rose-300' }
+  return v >= 0 ? { up: true, tone: 'text-rose-300' } : { up: false, tone: 'text-emerald-300' } // 正数红、负数绿
 }
 function dateStr(d) {
   const m = String(d.getMonth() + 1).padStart(2, '0')

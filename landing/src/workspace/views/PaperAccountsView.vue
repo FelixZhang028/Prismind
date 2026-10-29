@@ -129,7 +129,7 @@ const note = computed(() => statusNote(current.value))
 const comparisonCards = computed(() => benchmarkCards(current.value?.benchmark))
 const comparisonSeries = computed(() => benchmarkSeries(current.value?.benchmark))
 const comparisonNote = computed(() => benchmarkNote(current.value?.benchmark))
-const equitySeries = computed(() => [{ label: '资金曲线', color: '#818cf8', points: Array.isArray(result.value.equity) ? result.value.equity : [] }])
+const equitySeries = computed(() => [{ label: '资金曲线', color: 'var(--fq-chart-strategy)', points: Array.isArray(result.value.equity) ? result.value.equity : [] }])
 const tradingDays = computed(() => (Array.isArray(result.value.equity) ? result.value.equity.length : 0))
 const money = (v) => (v === null || v === undefined || Number.isNaN(Number(v)) ? '—' : `¥${Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`)
 const pct = (v) => (v === null || v === undefined || Number.isNaN(Number(v)) ? '—' : `${Number(v).toFixed(2)}%`)
@@ -255,7 +255,7 @@ onActivated(async () => {
         <template v-if="current.result?.run_id">
           <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard label="累计收益" :value="pct(result.total_return)" :tone="returnTone(result.total_return)" />
-            <MetricCard label="最大回撤" :value="pct(result.max_drawdown)" tone="text-rose-300" />
+            <MetricCard label="最大回撤" :value="pct(result.max_drawdown)" tone="text-emerald-300" />
             <MetricCard label="当前权益" :value="money(result.final_equity)" :sub="`截至 ${current.last_date}`" />
             <MetricCard label="运行交易日" :value="String(tradingDays)" :sub="`交易成本 ${money(result.total_cost)}`" />
           </section>
@@ -268,17 +268,17 @@ onActivated(async () => {
               <div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-400">
                 <span>累计收益</span>
                 <span v-for="line in comparisonSeries" :key="line.label" class="inline-flex items-center gap-1.5">
-                  <span class="inline-block h-0.5 w-4" :style="{ backgroundColor: line.color }" />{{ line.label }} {{ line.end }}
+                  <span class="inline-block w-4 border-t-2" :style="{ borderColor: line.color, borderTopStyle: line.dashed ? 'dashed' : 'solid' }" />{{ line.label }} {{ line.end }}
                 </span>
               </div>
-              <LineChart class="mt-2" :series="comparisonSeries" :height="220" :fill="false" />
+              <LineChart class="mt-2" :series="comparisonSeries" :dates="result.nav_dates || []" unit="percent" :baseline="0" :height="260" :fill="false" />
             </div>
             <p class="text-xs text-slate-400">{{ comparisonNote }}</p>
           </section>
           <template v-else>
             <div class="rounded-xl border border-white/10 bg-white/5 p-4">
               <p class="text-xs text-slate-400">资金曲线</p>
-              <LineChart :series="equitySeries" :height="220" />
+              <LineChart class="mt-2" :series="equitySeries" :dates="result.nav_dates || []" unit="money" :baseline="Number(result.effective_config?.initial_capital) || null" :height="260" />
             </div>
             <p v-if="comparisonNote" class="text-xs text-slate-400">{{ comparisonNote }}</p>
           </template>
@@ -289,7 +289,9 @@ onActivated(async () => {
           </div>
           <div v-if="tab === '持仓'">
             <p class="mb-3 text-xs text-slate-400">{{ current.last_date }} 收盘时的持仓</p>
-            <DataTable :columns="positionCols" :rows="current.positions || []" empty="收盘时没有持仓" />
+            <DataTable :columns="positionCols" :rows="current.positions || []" empty="收盘时没有持仓">
+              <template #cell-pnl="{ value }"><span :class="returnTone(value)">{{ value }}</span></template>
+            </DataTable>
           </div>
           <div v-else>
             <p class="mb-3 text-xs text-slate-400">已经成交的记录（共 {{ current.trades.length }} 笔，最近的在上面）</p>
