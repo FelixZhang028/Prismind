@@ -51,6 +51,11 @@ const form = reactive({ package_id: '', name: '', market: CURRENT_POOL, initial_
 // 指数：每个调仓日只在当天的成分股里选（回测页的“开始日期不能早于…”这里用不到，开始日期总是今天）。
 const formMarketNote = computed(() => (form.market === CURRENT_POOL ? '' : '每个调仓日只在当天的指数成分股里选股。'))
 const creating = ref(false)
+const createSection = ref(null)
+// 把新建表单滚到眼前：从别的页面带着策略过来、或点了空列表里的按钮时。
+function showCreate() {
+  createSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 const packageOptions = computed(() => [
   { value: '', label: packages.value.length ? '请选择策略' : '还没有规则策略' },
   ...packages.value.map((item) => ({ value: item.package_id, label: item.name })),
@@ -80,6 +85,7 @@ async function applyPrefill() {
     form.package_id = reference.slice('package:'.length)
     choosePackage()
   }
+  showCreate()
   if (!props.routeContext.run) return
   try {
     const backtest = await getBacktest(String(props.routeContext.run).replace(/^run-/, ''))
@@ -296,7 +302,11 @@ onActivated(async () => {
     <!-- 列表 -->
     <SectionCard title="我的模拟账户" :hint="limit === null ? '数量不限' : `每人最多 ${limit} 个，还能建 ${left} 个`">
       <div v-if="listLoading && !accounts.length" class="text-sm text-slate-400">加载中…</div>
-      <EmptyState v-else-if="!accounts.length" text="还没有模拟账户。在下面选一个规则策略，就能从今天开始跟踪。" />
+      <div v-else-if="!accounts.length" class="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-400">
+        <p>还没有模拟账户。选一个规则策略，就能从今天开始跟踪。</p>
+        <button class="mt-4 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5"
+          @click="packages.length ? showCreate() : openResearch('strategy-studio')">{{ packages.length ? '新建模拟账户' : '先新建一个规则策略' }}</button>
+      </div>
       <div v-else class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <button v-for="item in accounts" :key="item.account_id" type="button"
           class="rounded-xl border bg-white/5 p-4 text-left transition hover:bg-white/10"
@@ -316,8 +326,12 @@ onActivated(async () => {
     </SectionCard>
 
     <!-- 新建 -->
+    <div ref="createSection">
     <SectionCard title="新建模拟账户" :hint="`开始日期：今天（${today || '—'}），不能选以前的日期`">
-      <EmptyState v-if="!packages.length" text="模拟账户使用规则策略。先去「我的策略」新建一个规则策略。" />
+      <div v-if="!packages.length" class="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-400">
+        <p>模拟账户使用规则策略，你还没有规则策略。可以从模板开始，一两分钟就能建好；保存后点「开模拟账户」会回到这里。</p>
+        <button class="mt-4 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5" @click="openResearch('strategy-studio')">去新建规则策略</button>
+      </div>
       <template v-else>
         <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <FormField label="规则策略" type="select" v-model="form.package_id" :options="packageOptions" @update:model-value="choosePackage" />
@@ -340,5 +354,6 @@ onActivated(async () => {
         </div>
       </template>
     </SectionCard>
+    </div>
   </div>
 </template>
