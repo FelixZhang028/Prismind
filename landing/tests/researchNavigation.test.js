@@ -20,7 +20,7 @@ test('市场研究：AI研究员、条件选股、事件研究、行情图表；
 
 test('策略研究四个主入口与两项回测步骤，旧链接仍然可达', () => {
   const group = groups.find((g) => g.label === '策略研究')
-  assert.deepEqual(group.items.map((i) => i.label), ['我的策略', '因子研究', '回测与验证', '研究记录'])
+  assert.deepEqual(group.items.map((i) => i.label), ['我的策略', '因子研究', '回测与验证', '模拟账户', '研究记录'])
   assert.deepEqual(group.items[2].children.map((i) => i.label), ['策略回测', '参数验证'])
   assert.ok(allItems.some((i) => i.key === 'strategy-studio'))
   assert.equal(navigationItem('strategy-studio').key, 'strategy-hub')
@@ -42,10 +42,10 @@ test('带策略和历史记录的链接刷新后仍能恢复，普通导航清�
   const url = researchUrl('http://localhost/app.html?view=overview&theme=dark&run=9', {
     view: 'backtest-review', strategy: 'package:alpha', run: 12, mode: 'reuse', ignored: 'value',
   })
-  assert.deepEqual(researchContext(url), { strategy: 'package:alpha', run: '12', baseline: '', mode: 'reuse', symbol: '', brief: '', preset: '' })
+  assert.deepEqual(researchContext(url), { strategy: 'package:alpha', run: '12', baseline: '', mode: 'reuse', symbol: '', brief: '', preset: '', account: '' })
   assert.equal(url.searchParams.get('ignored'), null)
   assert.equal(url.searchParams.get('theme'), 'dark')
-  assert.deepEqual(researchContext(researchUrl(url, 'factor-lab')), { strategy: '', run: '', baseline: '', mode: '', symbol: '', brief: '', preset: '' })
+  assert.deepEqual(researchContext(researchUrl(url, 'factor-lab')), { strategy: '', run: '', baseline: '', mode: '', symbol: '', brief: '', preset: '', account: '' })
 })
 test('行情图表的股票代码写入链接，离开该页后清除', () => {
   const url = researchUrl('http://localhost/app.html?view=data-management', { view: 'market-chart', symbol: '000001' })

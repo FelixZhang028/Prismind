@@ -151,6 +151,23 @@ export function getBacktest(id) {
   return request(`/api/v1/backtests/${id}`, { auth: true })
 }
 
+// ---- 模拟账户 ----
+export function paperAccounts() {
+  return request('/api/v1/paper-accounts', { auth: true })
+}
+export function createPaperAccount(payload) {
+  return request('/api/v1/paper-accounts', { method: 'POST', body: payload, auth: true })
+}
+export function getPaperAccount(id) {
+  return request(`/api/v1/paper-accounts/${encodeURIComponent(id)}`, { auth: true })
+}
+export function advancePaperAccount(id) {
+  return request(`/api/v1/paper-accounts/${encodeURIComponent(id)}/advance`, { method: 'POST', auth: true })
+}
+export function deletePaperAccount(id) {
+  return request(`/api/v1/paper-accounts/${encodeURIComponent(id)}`, { method: 'DELETE', auth: true })
+}
+
 // ---- 策略包（策略创作中心 / 自然语言 / 零代码工作台）----
 export function listPackages() {
   return request('/api/v1/packages', { auth: true })

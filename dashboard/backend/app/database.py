@@ -17,6 +17,7 @@
 - point_makeup_cards 补签卡
 - screen_briefs 条件选股的 AI 解读（同一组条件、同一天再看不重复扣次数）
 - signup_emails 领过注册赠送积分的邮箱的“指纹”（注销账户时不删，同一个邮箱只送一次）
+- paper_accounts 模拟账户（锁定的策略和设置、推进到哪一天、最近一次结果）
 
 使用 Python 标准库 sqlite3，无需额外依赖。
 数据库文件：backend/data/app.db
@@ -41,6 +42,33 @@ def get_conn() -> sqlite3.Connection:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# 模拟账户：创建时把策略规则、股票范围和风控复制一份锁住（package / universe / risk_limits 都是 JSON），
+# 之后每次推进都按这份设置从 start_date 重新算到最新一天；result 是最近一次成功推进的结果。
+PAPER_ACCOUNTS_TABLE = """
+    CREATE TABLE IF NOT EXISTS paper_accounts (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id        INTEGER NOT NULL,
+        account_id     TEXT    NOT NULL UNIQUE,
+        display_name   TEXT    NOT NULL,
+        status         TEXT    NOT NULL DEFAULT 'WAITING',   -- WAITING / ACTIVE / FAILED
+        package_id     TEXT    NOT NULL,
+        package        TEXT    NOT NULL,
+        market         TEXT    NOT NULL,
+        universe       TEXT    NOT NULL,
+        risk_limits    TEXT    NOT NULL,
+        initial_cash   REAL    NOT NULL,
+        start_date     TEXT    NOT NULL,
+        last_date      TEXT,
+        attempted_date TEXT,
+        result         TEXT,
+        error          TEXT,
+        created_at     TEXT    NOT NULL,
+        updated_at     TEXT    NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+"""
 
 
 def init_db() -> None:
@@ -121,21 +149,6 @@ def init_db() -> None:
                 minimum_history_days    INTEGER NOT NULL DEFAULT 120,
                 minimum_average_amount  REAL    NOT NULL DEFAULT 0,
                 updated_at              TEXT    NOT NULL,
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-            );
-            CREATE TABLE IF NOT EXISTS paper_accounts (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id      INTEGER NOT NULL,
-                account_id   TEXT    NOT NULL,
-                display_name TEXT    NOT NULL,
-                status       TEXT    NOT NULL DEFAULT '已创建',
-                strategy     TEXT    NOT NULL,
-                start_date   TEXT    NOT NULL,
-                initial_cash REAL    NOT NULL,
-                top_n        INTEGER NOT NULL,
-                last_date    TEXT,
-                created_at   TEXT    NOT NULL,
-                UNIQUE(user_id, account_id),
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS data_manifests (
@@ -344,6 +357,14 @@ def init_db() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN last_seen_at TEXT")
         if "makeup" not in {row["name"] for row in conn.execute("PRAGMA table_info(point_checkins)")}:
             conn.execute("ALTER TABLE point_checkins ADD COLUMN makeup INTEGER NOT NULL DEFAULT 0")
+        # 以前建过一张没有任何代码写入的模拟账户表：空的直接换成现在的结构，万一有数据就改名留着。
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(paper_accounts)")}
+        if columns and "package" not in columns:
+            if conn.execute("SELECT COUNT(*) FROM paper_accounts").fetchone()[0]:
+                conn.execute("ALTER TABLE paper_accounts RENAME TO paper_accounts_legacy")
+            else:
+                conn.execute("DROP TABLE paper_accounts")
+        conn.execute(PAPER_ACCOUNTS_TABLE)
         # 这张表以前没有：已经领过注册积分的账户补记一下，注销后再用同一个邮箱注册就不再送。
         gifted = conn.execute(
             "SELECT u.email, MIN(l.created_at) AS created_at FROM users u JOIN point_ledger l ON l.user_id = u.id AND l.kind = 'signup' GROUP BY u.id"

@@ -11,11 +11,15 @@
   color-scheme: light;
   --fq-ink-rgb: 246 247 249;   /* 页面底色（浅） */
   --fq-panel-rgb: 255 255 255; /* 面板底色（浅） */
+  --fq-chart-strategy: #4f46e5; /* 收益曲线：策略（靛蓝） */
+  --fq-chart-benchmark: #64748b; /* 收益曲线：基准（中性灰，虚线） */
 }
 :root[data-theme='dark'] {
   color-scheme: dark;
   --fq-ink-rgb: 6 7 12;   /* 页面底色（深） */
   --fq-panel-rgb: 11 13 22; /* 面板底色（深） */
+  --fq-chart-strategy: #7c83fb;
+  --fq-chart-benchmark: #64748b;
 }
 
 /* 主题感知强调文本：用于半透明品牌渐变底上的激活态文字

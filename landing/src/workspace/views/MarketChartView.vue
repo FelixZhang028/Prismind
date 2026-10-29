@@ -17,8 +17,8 @@ const props = defineProps({
   routeContext: { type: Object, default: () => ({}) },
 })
 
-// 链接里的回测编号可能是 12 或 run-12，统一成接口使用的 run-12。
-const runReference = (value) => (value ? `run-${String(value).replace(/^run-/, '')}` : '')
+// 链接里的回测编号可能是 12 或 run-12，统一成接口使用的 run-12；模拟账户是 paper-<账户编号>，原样使用。
+const runReference = (value) => (!value ? '' : String(value).startsWith('paper-') ? String(value) : `run-${String(value).replace(/^run-/, '')}`)
 
 // ---------- 股票列表 ----------
 const SCOPES = [{ key: 'all', label: '全部股票' }, { key: 'universe', label: '股票池' }]

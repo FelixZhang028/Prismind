@@ -74,7 +74,7 @@ function fmtRatio(v) {
 function pctClass(v) {
   const n = Number(v)
   if (Number.isNaN(n)) return ''
-  return n >= 0 ? 'text-emerald-300' : 'text-rose-300'
+  return n >= 0 ? 'text-rose-300' : 'text-emerald-300' // 涨红跌绿
 }
 
 async function loadRuns(kw = '') {

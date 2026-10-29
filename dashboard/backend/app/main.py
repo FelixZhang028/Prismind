@@ -35,6 +35,8 @@ from .routes.admin import router as admin_router
 from .routes.agent_lab import router as agent_lab_router
 from .routes.auth import router as auth_router
 from .routes.backtests import router as backtests_router
+from .routes.paper import PaperAdvancer
+from .routes.paper import router as paper_router
 from .routes.points import router as points_router
 from .routes.settings import router as settings_router
 from .routes.workspace import _data_jobs
@@ -71,10 +73,12 @@ async def lifespan(_app: FastAPI):
     fundamentals = FundamentalsScheduler(_data_jobs())
     backups = BackupScheduler()
     warmer = FactorProfileWarmer()      # 预先算好最新交易日的全市场因子值（AI 研究员的因子画像）
+    paper = PaperAdvancer(_data_jobs())  # 数据更新完以后把模拟账户推进到最新一天（FELLOWQUANT_PAPER_ADVANCE=off 关闭）
     scheduler.start()
     fundamentals.start()
     backups.start()
     warmer.start()
+    paper.start()
     try:
         yield
     finally:
@@ -82,6 +86,7 @@ async def lifespan(_app: FastAPI):
         fundamentals.stop()
         backups.stop()
         warmer.stop()
+        paper.stop()
 
 
 app = FastAPI(
@@ -192,6 +197,7 @@ app.include_router(workspace_router)
 app.include_router(agent_lab_router)
 app.include_router(settings_router)
 app.include_router(points_router)
+app.include_router(paper_router)
 
 
 @app.get("/api/health", summary="健康检查")

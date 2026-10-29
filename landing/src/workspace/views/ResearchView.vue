@@ -360,10 +360,10 @@ onActivated(loadBaselines)
             label="样本外累计收益"
             :value="fmtNum(wfResult.summary.out_of_sample_cumulative_return, true)"
             :up="toNum(wfResult.summary.out_of_sample_cumulative_return) >= 0"
-            :tone="toNum(wfResult.summary.out_of_sample_cumulative_return) >= 0 ? 'text-emerald-300' : 'text-rose-300'"
+            :tone="toNum(wfResult.summary.out_of_sample_cumulative_return) >= 0 ? 'text-rose-300' : 'text-emerald-300'"
           />
-          <MetricCard label="正收益窗口比例" :value="fmtNum(wfResult.summary.positive_window_ratio, true)" up tone="text-emerald-300" />
-          <MetricCard label="最差窗口回撤" :value="fmtNum(wfResult.summary.worst_window_drawdown, true)" :up="false" tone="text-rose-300" />
+          <MetricCard label="正收益窗口比例" :value="fmtNum(wfResult.summary.positive_window_ratio, true)" />
+          <MetricCard label="最差窗口回撤" :value="fmtNum(wfResult.summary.worst_window_drawdown, true)" :up="false" tone="text-emerald-300" />
           <MetricCard label="窗口平均夏普" :value="fmtNum(wfResult.summary.average_window_sharpe)" />
         </div>
 
@@ -376,7 +376,7 @@ onActivated(loadBaselines)
             <span class="text-xs text-slate-400">{{ fmtParams(row.selected_parameters) }}</span>
           </template>
           <template #cell-test_cumulative_return="{ row }">
-            <span :class="toNum(row.test_cumulative_return) >= 0 ? 'text-emerald-300' : 'text-rose-300'">{{ fmtNum(row.test_cumulative_return, true) }}</span>
+            <span :class="toNum(row.test_cumulative_return) >= 0 ? 'text-rose-300' : 'text-emerald-300'">{{ fmtNum(row.test_cumulative_return, true) }}</span>
           </template>
           <template #cell-test_max_drawdown="{ row }">
             <span class="text-rose-300">{{ fmtNum(row.test_max_drawdown, true) }}</span>

@@ -1252,8 +1252,19 @@ def run_compare(body: dict[str, Any], user: dict = Depends(get_current_user)):
 
 
 def _audit_run_row(run_ref: str, user: dict):
-    """run-<id> -> 该用户的一条回测记录（含引擎持久化目录）。"""
+    """run-<id> -> 该用户的一条回测记录（含引擎持久化目录）；paper-<账户编号> -> 模拟账户最近一次结果。"""
 
+    if str(run_ref).startswith("paper-"):
+        with get_conn() as conn:
+            account = conn.execute(
+                "SELECT display_name, start_date, last_date, result, updated_at FROM paper_accounts WHERE account_id = ? AND user_id = ?",
+                (str(run_ref).removeprefix("paper-"), user["id"]),
+            ).fetchone()
+        if not account or not account["result"]:
+            raise HTTPException(status_code=404, detail="模拟账户不存在或还没有结果")
+        row = {"id": run_ref, "strategy": f"模拟账户 {account['display_name']}", "from_date": account["start_date"],
+               "to_date": account["last_date"], "status": "完成", "result": account["result"], "created_at": account["updated_at"]}
+        return row, with_run_evidence(json.loads(account["result"]))
     prefix, _, raw_id = str(run_ref).rpartition("-")
     if prefix != "run" or not raw_id.isdigit():
         raise HTTPException(status_code=400, detail="回测记录编号无效")

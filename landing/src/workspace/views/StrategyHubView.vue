@@ -82,6 +82,7 @@ onActivated(loadAssets)
             <div class="min-w-0"><h3 class="font-semibold text-white">{{ asset.name }} <span class="ml-2 rounded-full border border-indigo-400/30 px-2 py-0.5 text-xs text-indigo-300">{{ ruleSourceLabel(asset.source) }}</span></h3><p class="mt-2 text-sm text-slate-400">默认持股 {{ asset.top_n }} 只 · {{ freqLabel(asset.rebalance) }}调仓</p></div>
             <div class="flex flex-wrap gap-2">
               <button class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2 text-sm text-white transition hover:-translate-y-0.5" @click="openResearch('backtest-review', { strategy: asset.reference })">去回测</button>
+              <button class="rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-300 hover:bg-white/5" @click="openResearch('paper-accounts', { mode: 'new', strategy: asset.reference })">开模拟账户</button>
               <button class="rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-300 hover:bg-white/5 disabled:opacity-50" :disabled="busy === asset.reference" @click="copy(asset)">复制</button>
               <button class="rounded-lg border border-rose-400/20 px-3 py-2 text-sm text-rose-300 hover:bg-rose-400/10" @click="confirming = confirming === asset.reference ? '' : asset.reference">删除</button>
             </div>

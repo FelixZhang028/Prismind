@@ -75,7 +75,7 @@ def backtest_run_to_result(run: BacktestRun, names: dict[str, str] | None = None
         "run_kind": getattr(run, "config_snapshot", {}).get("app", {}).get("backtest", {}).get("run_kind", "single"),
         "output_dir": str(run.output_dir),
         "trades": fills_to_trades(run.result.fills),
-        "positions": final_positions(run.result.positions, names=names),
+        "positions": final_positions(run.result.positions, names=names, as_of=nav_dates[-1] if nav_dates else None),
     }
 
 
@@ -108,9 +108,12 @@ def fills_to_trades(fills: pd.DataFrame) -> list[dict[str, Any]]:
 
 
 def final_positions(
-    positions: pd.DataFrame, names: dict[str, str] | None = None
+    positions: pd.DataFrame, names: dict[str, str] | None = None, as_of: str | None = None
 ) -> list[dict[str, Any]]:
-    """持仓帧最后一日的持仓快照 -> 前端持仓分析表。"""
+    """持仓帧最后一日的持仓快照 -> 前端持仓分析表。
+
+    持仓帧只记有持仓的日子：``as_of``（回测的最后一个交易日）那天没有记录，说明收盘时全是现金，返回空表，
+    不能把更早那天的持仓当成最后的持仓。"""
 
     names = names or {}
     if positions.empty or "trade_date" not in positions.columns:
@@ -118,6 +121,8 @@ def final_positions(
     frame = positions.copy()
     frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce")
     last_day = frame["trade_date"].max()
+    if as_of is not None and last_day != pd.Timestamp(as_of):
+        return []
     snapshot = frame[frame["trade_date"].eq(last_day)]
     rows: list[dict[str, Any]] = []
     for record in snapshot.to_dict(orient="records"):

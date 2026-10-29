@@ -54,6 +54,7 @@ Prismind (镜思) is a research workbench for China's A-share market, built with
 | My strategies | Rule-based strategies from a template, a one-sentence description, or a form |
 | Factor research | Factor library, single-factor evaluation, combined research |
 | Backtest and validation | Backtests, parameter optimization, out-of-sample validation, trade verification; optimization and walk-forward validation are simulated previews for now |
+| Paper accounts | Lock one rule strategy and its settings from the day you create it; each trading day after the data update it moves forward automatically. See equity against the CSI 300, holdings and fills (3 per user) |
 | Research records | Past research results and comparisons |
 | Data | Data overview, data updates, stock pool |
 | System | Account (nickname, password, delete account), points and daily check-in, settings (defaults, export all your data) |

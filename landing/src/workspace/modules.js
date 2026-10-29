@@ -19,6 +19,7 @@ export const groups = [
       { key: 'backtest-review', label: '策略回测' },
       { key: 'research', label: '参数验证' },
     ] },
+    { key: 'paper-accounts', label: '模拟账户' },
     { key: 'run-library', label: '研究记录' },
   ] },
   // 数据由平台统一更新：所有人看数据说明、查股票、管自己的股票池；数据运维只有管理员看得到。
@@ -86,7 +87,7 @@ export function itemLabel(key) {
 const wideViews = new Set([
   'market-chart', 'event-study', 'stock-screen',
   'factor-lab', 'backtest-review', 'research', 'audit-report',
-  'strategy-forensics', 'strategy-studio', 'run-library',
+  'strategy-forensics', 'strategy-studio', 'run-library', 'paper-accounts',
 ])
 const compactViews = new Set(['account', 'settings', 'points'])
 
@@ -112,6 +113,7 @@ export const views = {
   'strategy-forensics': defineAsyncComponent(() => import('./views/StrategyForensicsView.vue')),
   research: defineAsyncComponent(() => import('./views/ResearchView.vue')),
   'run-library': defineAsyncComponent(() => import('./views/RunLibraryView.vue')),
+  'paper-accounts': defineAsyncComponent(() => import('./views/PaperAccountsView.vue')),
   'data-guide': defineAsyncComponent(() => import('./views/DataGuideView.vue')),
   'market-lookup': defineAsyncComponent(() => import('./views/MarketLookupView.vue')),
   'data-update': defineAsyncComponent(() => import('./views/DataUpdateView.vue')),
