@@ -40,3 +40,18 @@ export function recordsSummary(total, stats) {
   if (stats?.legacy_unverified) parts.push(`旧版未验证 ${stats.legacy_unverified}`)
   return `共 ${total} 条：${parts.join('，')}。`
 }
+
+// 订单数、成交笔数这类“个数”：整数加千分位，不带小数。
+export function countText(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  const n = Number(value)
+  return Number.isFinite(n) ? Math.round(n).toLocaleString('zh-CN') : '—'
+}
+
+// 回测运行中按钮旁的提示：已经等了多久、通常要多久。
+export function runningText(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0))
+  if (s < 3) return '正在读取行情和准备数据…'
+  const spent = s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, '0')} 秒`
+  return `已运行 ${spent}。通常需要 1 分钟左右，区间长或股票多时会更久，请不要关闭页面。`
+}

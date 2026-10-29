@@ -277,17 +277,17 @@ def analyze_search(
             continue
         passed = significance.dsr >= DSR_CONFIDENCE
         message = (
-            f"本结果来自 {expected_trials} 次尝试，估计独立试验 {effective} 次；"
-            f"DSR 显著性 {significance.dsr:.1%}，"
+            f"这个结果是从 {expected_trials} 次尝试里挑出来的，相当于 {effective} 次互不相关的尝试；"
+            f"扣掉“挑选”带来的运气成分后，收益显著性（DSR）为 {significance.dsr:.1%}，"
             + (
-                "达到 95% 参考门槛，仍需样本外验证。"
+                "达到 95% 的参考线，但仍需要用没参与挑选的数据验证。"
                 if passed
-                else "未达到 95% 参考门槛，请用未参与选参的数据验证。"
+                else "没有达到 95% 的参考线，请用没参与挑选的数据验证。"
             )
         )
         if abs(float(sample.autocorr(lag=1))) > 1.96 / math.sqrt(len(sample)):
             passed = False
-            message += "收益存在明显一阶自相关，未作时序相关修正，DSR 仅作近似参考。"
+            message += "另外，相邻几天的收益明显相关，这个显著性只能作近似参考。"
         results.append(
             replace(
                 base,
