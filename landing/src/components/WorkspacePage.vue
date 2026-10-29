@@ -373,7 +373,7 @@ function doLogout() {
     <div v-if="sidebarOpen && !loading" class="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm lg:hidden" @click="sidebarOpen = false" />
 
     <OnboardingTour v-if="tourOpen && !loading" :user="user" @close="closeTour" />
-    <!-- 右下角的 AI 问答：每个页面都能用；新手引导出现时先隐藏 -->
-    <AiChatWidget v-if="user && !loading" :view="activeKey" :label="itemLabel(activeKey)" :hidden="tourOpen" />
+    <!-- 右下角的 AI 问答：每个页面都能用；新手引导出现时、手机上展开侧栏时先隐藏 -->
+    <AiChatWidget v-if="user && !loading" :view="activeKey" :label="itemLabel(activeKey)" :hidden="tourOpen || sidebarOpen" />
   </div>
 </template>
