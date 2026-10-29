@@ -220,7 +220,7 @@ onActivated(async () => {
     <!-- 详情 -->
     <SectionCard v-if="routeContext.account" :title="current?.display_name || '模拟账户'" hint="创建时锁住的规则和设置 · 每个交易日自动推进">
       <template #actions>
-        <button class="text-sm text-indigo-300 hover:text-indigo-200" @click="openResearch('paper-accounts')">← 全部模拟账户</button>
+        <button class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5" @click="openResearch('paper-accounts')">← 全部模拟账户</button>
       </template>
       <EmptyState v-if="missing" text="没有找到这个模拟账户，可能已经删除。" />
       <div v-else-if="!current" class="text-sm text-slate-400">加载中…</div>
