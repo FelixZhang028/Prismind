@@ -114,6 +114,8 @@ async function onCreate() {
 // ---------- 详情 ----------
 const current = ref(null)
 const detailLoading = ref(false)
+// 只有读失败时才说“没有找到”；还没读完时显示“加载中”。
+const missing = ref(false)
 const advancing = ref(false)
 const tab = ref('持仓')
 const result = computed(() => current.value?.result || {})
@@ -149,6 +151,7 @@ const trades = computed(() => [...(current.value?.trades || [])].reverse())
 
 async function loadDetail() {
   const id = props.routeContext.account
+  missing.value = false
   if (!id) { current.value = null; return }
   if (current.value?.account_id !== id) current.value = null
   detailLoading.value = true
@@ -156,6 +159,7 @@ async function loadDetail() {
     current.value = await getPaperAccount(id)
   } catch (e) {
     current.value = null
+    missing.value = true
     props.notify(e.message || '读取模拟账户失败')
   } finally {
     detailLoading.value = false
@@ -212,8 +216,8 @@ onActivated(async () => {
       <template #actions>
         <button class="text-sm text-indigo-300 hover:text-indigo-200" @click="openResearch('paper-accounts')">← 全部模拟账户</button>
       </template>
-      <div v-if="detailLoading && !current" class="text-sm text-slate-400">加载中…</div>
-      <EmptyState v-else-if="!current" text="没有找到这个模拟账户，可能已经删除。" />
+      <EmptyState v-if="missing" text="没有找到这个模拟账户，可能已经删除。" />
+      <div v-else-if="!current" class="text-sm text-slate-400">加载中…</div>
       <div v-else class="space-y-5">
         <div class="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
           <span class="inline-flex rounded-full border px-2.5 py-0.5 text-xs" :class="statusTone(current.status)">{{ statusLabel(current.status) }}</span>
