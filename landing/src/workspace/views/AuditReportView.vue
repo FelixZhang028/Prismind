@@ -293,7 +293,7 @@ onActivated(consumePending)
     <!-- 无记录 -->
     <SectionCard v-if="!loading && !runs.length" title="暂无可审计的回测记录">
       <p class="rounded-xl bg-white/5 px-3 py-2 text-sm text-slate-400">
-        请先在「回测与验证」中运行一次回测，再回到本页查看可信度评级与证据链。
+        请先在「策略回测」中运行一次回测，再回到本页查看可信度评级与证据链。
       </p>
     </SectionCard>
 

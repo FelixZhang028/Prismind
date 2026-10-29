@@ -219,7 +219,7 @@ function moveTone(value) {
   <div class="space-y-6">
     <div class="glass glass-sheen relative overflow-hidden rounded-2xl p-6">
       <div class="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-violet-500/20 blur-3xl" />
-      <h2 class="text-xl font-bold text-white">AI研究员</h2>
+      <h2 class="text-xl font-bold text-white">个股分析</h2>
       <p class="mt-1 text-sm text-slate-400">输入一只股票，先看本地数据整理出的走势、估值和风险，再看 AI 根据这些数据写的解读。</p>
       <p class="mt-1 text-xs text-slate-500">分析依据本地数据生成，仅供研究参考。</p>
       <button type="button" class="relative mt-3 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-4 py-1.5 text-sm text-indigo-200 transition hover:bg-indigo-500/20"

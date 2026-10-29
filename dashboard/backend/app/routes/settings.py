@@ -28,7 +28,7 @@ class Preferences(BaseModel):
     max_positions: int = Field(10, ge=1, le=50, description="最多持有几只")
     rebalance: Literal["daily", "weekly", "monthly"] = Field("weekly", description="调仓频率")
     period_years: int = Field(1, ge=1, le=10, description="默认回测最近几年")
-    use_experience: bool = Field(True, description="AI 研究员默认参考我的研究经验")
+    use_experience: bool = Field(True, description="个股分析时 AI 默认参考我的研究经验")
 
 
 DEFAULTS = Preferences().model_dump()

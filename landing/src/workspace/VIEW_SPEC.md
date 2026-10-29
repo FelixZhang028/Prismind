@@ -36,15 +36,16 @@ const props = defineProps({
 - 所有 API 调用包在 try/catch，失败用 `props.notify(e.message || '加载失败')`，可同时用局部 ref 存错误文本展示。
 - 页面无需鉴权重定向（外壳已处理）。不要 import vue-router。
 - 官网登录入口根据当前浏览器会话切换，登录页通过 `restoreSession` 验证已有会话后自动进入工作台；工作台仅在明确 401 时清除会话，网络或服务错误保留会话并展示重试，不能将任意请求失败视为退出登录。
-- 设置页（`views/SettingsView.vue`）：外观（主题跟随系统 / 浅色 / 深色，重新打开新手引导）；研究默认值（回测初始资金、最多持仓、调仓频率、最近几年的区间，AI 研究员是否默认参考研究经验，`getPreferences/savePreferences`，保存在账户里；回测页第一次打开时填入，所选策略自带持仓和调仓时以策略为准）；今天各类 AI 的剩余次数（`todayUsage`）；我的数据（股票池和风控摘要、导出我的数据 `exportMyData`，一个 JSON 文件，不含密码）；账户（去个人中心）；关于（版本、法律页面、联系邮箱、问题反馈）。管理员另外看到管理后台入口和知识库配置。
+- 设置页（`views/SettingsView.vue`）：外观（主题跟随系统 / 浅色 / 深色，重新打开新手引导）；研究默认值（回测初始资金、最多持仓、调仓频率、最近几年的区间，个股分析是否默认参考研究经验，`getPreferences/savePreferences`，保存在账户里；回测页第一次打开时填入，所选策略自带持仓和调仓时以策略为准）；今天各类 AI 的剩余次数（`todayUsage`）；我的数据（股票池和风控摘要、导出我的数据 `exportMyData`，一个 JSON 文件，不含密码）；账户（去个人中心）；关于（版本、法律页面、联系邮箱、问题反馈）。管理员另外看到管理后台入口和知识库配置。
 - 个人中心：修改密码（`changePassword`，要原密码，改完其他设备的登录失效，这台设备拿到新令牌）、退出登录（`logout` 通知后端，所有设备的登录都失效）、注销账户（`deleteAccount`，输入密码确认，删除账户和全部研究数据；管理员不显示）。注册页按 `registrationMode()` 显示邀请码输入框或“暂时不开放注册”。
 - 中文文案。无外部图片/字体。
 - 加载状态可用 `ref(false)` 控制，展示「加载中…」或按钮 disabled。
 
 ## 二、设计语言（必须一致）
 
+- 侧栏（2026-10-29，`modules.js` 的 `groups`）按一次量化研究的顺序分组，组名前有编号、后面是浅色英文：① 研究 Research（事件研究、条件选股、个股分析、行情图表）→ ② 构建 Build（我的策略、因子研究）→ ③ 验证 Validate（策略回测、可信度审计、参数验证、研究记录）→ ④ 跟踪 Track（模拟账户），最后是数据 Data（股票查询、股票池、数据说明，管理员另有数据运维）。名称用专业说法；每项的 `hint` 是一句白话，鼠标停在侧栏这一项上时显示在侧栏右边（大屏），读屏软件读得到；手机上靠每个页面顶部的说明。可信度审计带“特色”小标签，从侧栏打开时自己选一次回测。个人中心、积分与打卡、设置在右上角的头像菜单里（`accountMenu`），菜单最后是退出登录；这些页面不占侧栏，直达链接照旧有效。
 - 工作台外壳铺满窗口；内容在侧栏右侧居中，并保留现有内边距。普通页最大 1280px，复杂研究页 1440px，账户/设置页 960px，由 `modules.js` 的 `contentLayout` 和 `workspace.css` 统一管理。小屏自动缩至可用宽度。
-- 侧栏的「数据」分组：所有人看到数据说明（`views/DataGuideView.vue`、`dataGuide.js`：有哪些数据、从哪里来、多久更新、回测怎么用、有什么局限，只读）、股票查询（`views/MarketLookupView.vue`，即行情查询）和股票池管理；数据运维（原数据更新页）只有管理员看得到，数据检查（原数据概览）和 XTick 从数据运维进入（`modules.js` 的 `admin: true`、`adminViews`、`viewFor`、`visibleGroups`）。普通用户打开旧链接（`data-update`、`data-management`、`xtick-data`）时落到数据说明，地址栏一起改。数据都由平台统一更新：给普通用户的提示一律写“平台还没有这类数据，管理员更新后就能用”，按钮去数据说明，不叫用户自己下载。
+- 侧栏的「数据」分组：所有人看到数据说明（`views/DataGuideView.vue`、`dataGuide.js`：有哪些数据、从哪里来、多久更新、回测怎么用、有什么局限，只读）、股票查询（`views/MarketLookupView.vue`，即行情查询）和股票池（股票池管理）；数据运维（原数据更新页）只有管理员看得到，数据检查（原数据概览）和 XTick 从数据运维进入（`modules.js` 的 `admin: true`、`adminViews`、`viewFor`、`visibleGroups`）。普通用户打开旧链接（`data-update`、`data-management`、`xtick-data`）时落到数据说明，地址栏一起改。数据都由平台统一更新：给普通用户的提示一律写“平台还没有这类数据，管理员更新后就能用”，按钮去数据说明，不叫用户自己下载。
 - 管理员的数据页：XTick 从数据检查的「数据源与高级工具」进入，保留原直达链接；风险管理属于回测与验证。概览标题及三个玻璃按钮置顶，其下「数据详情与版本说明」常驻展开，再展示股票池状态摘要。本地行情查询默认展示全部已下载股票，支持名称/代码搜索、当前股票池范围、后端分页与单股详情/更新/加入股票池；不能把历史覆盖率当作最新行情状态。日常更新参数直接展示，仅高级更新折叠；股票池高级筛选紧随名称搜索，删除操作位于每行末尾。
 - 字号由 `../workspace.css` 限定在 `.workspace-shell` 内：正文/表格 15px，导航/输入 16px，标签/说明 14px，小注释至少 13px，区块标题 18px。下面的 `text-sm` / `text-xs` 工具类在工作台内遵循此映射，不影响官网。
 - 卡片：`glass rounded-2xl p-5`（悬浮高光可加 `glass-sheen`）。
@@ -98,7 +99,7 @@ const props = defineProps({
 - `createCustomFactor({name,display_name,description,field,operator,window,window2,direction})` → `{ created:{...} }`
 - `deleteCustomFactor(name)`
 
-### AI 研究员
+### 个股分析（原 个股分析）
 - `aiStatus()` → `{ ai:{available,model},decision:{available,model},usage:{brief:{limit,used,remaining},question:{...},review:{...}},experience_count,latest_date }`；管理员的 `limit`、`remaining` 为 null（不限次数）
 - `decideBrief(id)` → 根据已经保存的数据调用 Jev；分析记录增加 `odds:{choice,probabilities,confidence,model}|null`。不依赖文本模型，成功计入评估额度，失败退还额度；已有结果直接返回。文字解读继续保存于 `brief`。
 - 新报告 `odds.report_version=2`，增加 `summary,as_of,dimensions:[{key,title,status,assessment,confidence,probabilities,interpretation,evidence}],supports,concerns,coverage,followups,risk`。五个维度按实际数据可用性提问，缺项单独显示，不与中性混淆。`decideBrief(id,{upgrade:true})` 主动补全旧记录；补全失败保留原报告，已经是新版时不重复计费。页面使用 `JevStockReport.vue`，旧版保留概率图和升级入口。
@@ -112,7 +113,7 @@ const props = defineProps({
 - 主栏目为「行情图表」「我的策略」「因子研究」「回测与验证」「研究记录」。创建入口只有「新建规则策略」一个；旧直达链接继续有效，`nl-strategy` 落到新建规则策略页。Python 策略已停用（服务器不运行用户写的代码），旧链接 `custom-strategy` 落到我的策略，研究记录里旧的 `user:` 引用回测时提示已停用。
 - 新建规则策略是一页一张表单：从模板开始、用一句话描述、自己填，三种方式都把规则填进同一张可编辑的表单（每个条件可选周期，可与数值或另一个指标比较，最多 10 条）。页面实时显示后端读出的“这个策略的意思”，保存的就是表单里的规则。`mode=template|describe|blank` 选择开始方式，旧的 `mode=builder` 等同 `blank`。
 - 我的策略列出规则策略，支持名称搜索、规则策略复制、行内确认删除。创建页只负责保存，保存后「去回测」进入统一配置页，不自动执行。
-- 回测与验证分为策略回测、参数验证两页；参数验证在同一页先做参数优化、再做样本外验证，共用基准回测与候选参数。风控设置只在回测表单里折叠出现这一处（独立的风险管理页已删除），未保存修改会阻止运行。回测结果的概览包含全部收益与风险指标。完整审计附于结果，外部成交核查位于高级工具。旧链接 `walk-forward`、`risk-management` 分别落到参数验证页和策略回测页。
+- 策略回测、参数验证是侧栏的两项（2026-10-29 起不再有页内切换条，从回测结果的“参数验证 →”进入时带上这次回测）；参数验证在同一页先做参数优化、再做样本外验证，共用基准回测与候选参数。风控设置只在回测表单里折叠出现这一处（独立的风险管理页已删除），未保存修改会阻止运行。回测结果的概览包含全部收益与风险指标。完整审计附于结果，外部成交核查位于高级工具。旧链接 `walk-forward`、`risk-management` 分别落到参数验证页和策略回测页。
 - 模板的规则在表单里可见、可改，副本保持规则一致。统一回测记录保存策略引用与实际执行配置。
 - 因子研究默认三个栏目：因子库、单因子评估、组合研究。组合页完成选因子、权重/区间配置和评估；原合成评估作为高级方式保留。
 - 因子库表格（`ui/FactorLibraryTable.vue`、`factorPresentation.js`）一行一个因子，只有 6 列：因子（中文名，下面一行小字是代码，非内置的带来源标签）、类型、说明、方向（正向绿色 / 反向红色；正向表示因子值越大越好，反向表示越小越好）、最小历史（“25 天”）、详情。说明只显示一行，太长的截断，鼠标停留看全文；Alpha101 的说明和名字一样，这一列改为显示一行公式，统一的提示（按原公式计算、A 股有效性需要自己评估）只在表格上方写一次。完整公式在详情侧栏里，自动换行，可以复制。每页 20 个；手机上改成卡片。
@@ -139,7 +140,7 @@ const props = defineProps({
 ### 数据管理
 - 每天自动更新（2026-10-16）：行情数据所有用户共用一份，由平台在每个交易日 18:30（`FELLOWQUANT_DAILY_UPDATE_TIME`）以后自动更新全市场（后台任务 `datasets:['daily']`，见 `quant_platform/application/daily_update.py`）：先确认当天是交易日、行情已发布，再更新股票列表、全部在市股票的日线（每批 200 只，走和手动更新相同的复权对齐；新上市股票下载全部历史）、分红送转缺口、指数行情、指数成分股、行业分类和历史股票池。一步失败不影响后面的步骤，同一天重新运行时跳过已经完成的步骤和批次；行情没发布或没完成时 30 分钟后再试，最多 4 次，23:30 以后不再启动。`dailyUpdateStatus()` → `{enabled,time,state,text,last:{trade_date,status,market,finished_at,summary,errors,trigger},progress,data:{latest_date,stocks_on_latest,listed}}`（`job_id` 只给管理员）；`runDailyUpdate()` 管理员现在运行。页面：数据更新页顶部「每天自动更新」卡片（`ui/DailyUpdateCard.vue`，文字在 `dailyUpdate.js`）。
 - 只有管理员能下载数据和操作后台任务：`dataUpdate`、`updateLocalStock`、`dataJobs`、`startDataJob`、`stopDataJob`、`dataJobLog`、`runDailyUpdate`、XTick 凭证与查询，其他用户返回 403。普通用户的数据更新页只显示自动更新状态和各类数据的覆盖情况（不显示下载按钮、高级更新和任务记录），本地行情查询不显示「更新行情」，XTick 页只显示说明。
-- 耗时计算的限制（2026-10-16，`app/quant/compute.py`）：回测、策略包回测、参数优化、滚动验证、因子评估、多因子合成、组合研究、成交核查、AI 研究员整理数据，每人同一时间一件，全站同时最多 `FELLOWQUANT_COMPUTE_SLOTS` 件，满了返回 429（“你有一个计算正在进行……”/“服务器正忙……”），页面照常显示这段提示；一件最多 `FELLOWQUANT_COMPUTE_TIMEOUT` 秒，回测每个交易日、因子评估每个因子之后检查时间，超时返回 422 并提示缩小范围（`quant_platform/core/deadline.py`）。因子评估、合成、组合研究的结果按 用户 + 请求 + 本地数据版本（行情文件的大小和修改时间）记住最近 64 份，命中时不占计算名额。
+- 耗时计算的限制（2026-10-16，`app/quant/compute.py`）：回测、策略包回测、参数优化、滚动验证、因子评估、多因子合成、组合研究、成交核查、个股分析整理数据，每人同一时间一件，全站同时最多 `FELLOWQUANT_COMPUTE_SLOTS` 件，满了返回 429（“你有一个计算正在进行……”/“服务器正忙……”），页面照常显示这段提示；一件最多 `FELLOWQUANT_COMPUTE_TIMEOUT` 秒，回测每个交易日、因子评估每个因子之后检查时间，超时返回 422 并提示缩小范围（`quant_platform/core/deadline.py`）。因子评估、合成、组合研究的结果按 用户 + 请求 + 本地数据版本（行情文件的大小和修改时间）记住最近 64 份，命中时不占计算名额。
 - 行情表写入是原子的（`write_parquet_atomic`：先写同目录下以 `.` 开头的临时文件再整份替换，Windows 上旧文件正被读取时稍等再换），进程在写入中途被结束不会损坏文件。后台数据任务用 `launch_detached` 启动，脱离启动脚本的 Windows 作业对象（作业设置了 BREAKAWAY_OK），关闭启动窗口后继续运行；不允许脱离时按原来的方式启动。
 - 所有后台任务（日线以外的阶段）有卡住保护：15 分钟没有进展就结束进程，由守护进程从断点续传（以前只有全市场日线有）。
 - `dataOverview()` → `{ security_count,configured_symbol_count,coverage_ratio,market_rows,unknown_status_rows,last_market_source,benchmark_symbol,per_symbol:[{symbol,coverage,start_date,end_date,rows}] }`
@@ -173,7 +174,7 @@ const props = defineProps({
 - 画线：线段、射线、水平线、斐波那契四种。画完自动保存到账户，按股票分开；点一条线选中后可以拖动或删除（右键也可以删除），「清除全部」要点两次。每只股票最多 50 条。
 - `chartDrawings(symbol)` / `saveChartDrawings(symbol,drawings)` → `{ symbol,drawings:[{name:'segment'|'rayLine'|'horizontalStraightLine'|'fibonacciLine',points:[{date,price}]}],max_drawings }`；保存是整体替换。`price` 是不复权价格，前端按当天 `factor` 换算，所以换周期、换复权方式、以后再有分红，线都落在同一根 K 线的同一个位置。
 
-### 模拟账户（`views/PaperAccountsView.vue`，侧栏 策略研究 → 模拟账户）
+### 模拟账户（`views/PaperAccountsView.vue`，侧栏 ④ 跟踪 → 模拟账户）
 - `paperAccounts()` → `{ items:[{account_id,display_name,status:'WAITING'|'ACTIVE'|'FAILED',status_label,strategy_name,package_id,market,market_label,initial_cash,top_n,rebalance,start_date,last_date,error,total_return,max_drawdown,final_equity}], limit, today }`；`limit` 为 null 表示不限（管理员），其他人默认 3 个。
 - `createPaperAccount({package_id,name,market,initial_cash,top_n,rebalance})` → 账户详情。只能用规则策略；开始日期总是今天（北京时间），不能选。创建时把规则、股票范围（股票池时是当时的名单和过滤条件）、风控设置复制一份锁住。
 - `getPaperAccount(id)` → 列表字段 + `{ describe_text, risk_limits, latest_data_date, result, trades, positions, benchmark, checks:[{title,passed,severity:'ok'|'warning'|'info',detail}] }`。`result` 和回测结果同样的结构。
@@ -189,15 +190,15 @@ const props = defineProps({
 - `universeSaveFilters(payload)` → `{ saved:true }`
 
 ### AI 智能投研导航与页面
-- 侧栏只有 AI研究员。投研知识库（文档问答）和决策辅助暂不放进侧栏，旧链接仍能打开；研究经验在 AI研究员页面底部“我的研究经验”里管理，旧 `prior-knowledge` 链接进入 AI研究员。
-- AI研究员只有股票（输入代码或名称，从下拉列表选，支持上下键和回车）、分析日期（留空为本地最近的交易日）和“参考我的研究经验”。分析分两步并显示进度：先整理本地数据（几秒，马上显示），再等 AI 解读。页面下方“以前的分析”列出每次分析的倾向和之后实际涨跌（到本地最新行情，和同期沪深300比较），可以打开或删除。模型由平台统一提供（服务器环境变量），页面不填密钥；每人每天有分析和追问次数，管理员不限。
+- 侧栏只有 个股分析。投研知识库（文档问答）和决策辅助暂不放进侧栏，旧链接仍能打开；研究经验在 个股分析页面底部“我的研究经验”里管理，旧 `prior-knowledge` 链接进入 个股分析。
+- 个股分析只有股票（输入代码或名称，从下拉列表选，支持上下键和回车）、分析日期（留空为本地最近的交易日）和“参考我的研究经验”。分析分两步并显示进度：先整理本地数据（几秒，马上显示），再等 AI 解读。页面下方“以前的分析”列出每次分析的倾向和之后实际涨跌（到本地最新行情，和同期沪深300比较），可以打开或删除。模型由平台统一提供（服务器环境变量），页面不填密钥；每人每天有分析和追问次数，管理员不限。
 - 每次分析先从本地数据整理出当天已知的数据（价格走势按复权价、成交、全市场与同行业比较、估值、财报、行业、指数、分红），不需要 AI、不限次数；当天只更新了一部分股票时不做全市场比较并说明原因；本地没有的数据列在“本地缺少的数据”。
 - 数据报告（`ui/StockDataReport.vue`、`researchReport.js`，后端 `ai_research/report.py`）不用 AI，和数据一起保存：每节一句话的数据小结（固定句式，只描述）；需要留意的清单（ST、上市不满一年、停牌、跌停、成交额过小、亏损、利润大降、负债率高于同行、距一年高点跌超 40%、利润增长连续下降，每条写明规则，默认只显示需要留意和数据不足的）；和上次分析同一只股票对比关键数字；近一年价格和 20/60 日均线，图上标出分红送转、财报公布、指数调入调出、行业和 ST 变化；估值在自身历史里的位置（20%/50%/80% 分位线）；最近 8 份财报的营收、利润同比、毛利率、净利率、净资产收益率、负债率和走向；同行业里市值最接近的几家和行业中位数；内置因子当天在全市场和同行业里的位置（按类别分组，正向/反向）。全市场因子值每天预先算好（`app/quant/factor_profiles.py`），更早的日期在后台现算，期间显示“正在计算”和刷新按钮。原来的全部数据收进“全部数据”，默认折叠。
 - 有模型时显示 AI 解读：倾向（“利好较多/大致相当/风险较多”，只描述当前数据里利好和风险哪边更多，不预测价格；以前保存的偏多/中性/偏空显示时换成这三个说法；不用红绿色，旁边写“对当前数据的归纳，不是买卖建议”；Jev 只显示归纳和模型的把握，不显示三者的概率）、信心、一段话和三组要点（支持的因素、风险、接下来留意），每条要点下面列出它引用的本地数据。没有依据、数字和数据对不上、或给出买卖建议（买入、仓位、目标价等）、说价格方向（看涨、偏多等）的要点会被去掉并写明条数。不显示交易提案、目标价、止损和模拟成交。
 - 分析编号写进链接（`brief=`），刷新或后退可以打开同一次分析；有 AI 解读时可以继续追问，追问只用这次的数据。
 - 文档问答（WeKnora）是整个平台共用的服务，只有管理员能在设置页配置（`weknoraSettings()` 返回 `can_configure`）；普通用户看不到服务地址和配置面板。没有配置时说明“知识库服务还没有配置，暂时不能使用”，不显示问答和检索，也不再给演示回答。
 - 决策辅助（不在侧栏）的三个标签为方案比较、条件判断、等级评分，使用平台的决策模型并计入每天的“AI 评估”次数；没有配置时说明“平台还没有配置决策模型”，不再给演示结果。设置页不再配置 Jev。
-- AI研究员先整理数据，再独立调用 Jev 判断倾向，最后按文本模型是否可用生成文字解读。Jev 的概率单独显示在“Jev 数据判断”卡片；和文字解读的倾向不同时说明“两个模型看法不同”。没有文本模型时仍可显示 Jev 结果，并在历史分析中显示倾向。
+- 个股分析先整理数据，再独立调用 Jev 判断倾向，最后按文本模型是否可用生成文字解读。Jev 的概率单独显示在“Jev 数据判断”卡片；和文字解读的倾向不同时说明“两个模型看法不同”。没有文本模型时仍可显示 Jev 结果，并在历史分析中显示倾向。
 - 回测结果页的“AI 评估”：点按钮后由决策模型根据这次回测自己的数字（区间、收益、回撤、交易、成本、和基准比较、有效性警告）估计风险等级（五级及各级概率）和在新数据上做不到的可能；“AI 看到的数据”列出发给模型的全部内容。每次回测只评估一次并保存，再打开不重复计数。
 - `getBacktestReview(id)` / `runBacktestReview(id)` → `{ review:{risk:{level,score,probabilities,confidence},overfit:{probability},model,facts:[],created_at}|null,available,usage }`；`jevStatus()` → `{ available,model,usage }`
 

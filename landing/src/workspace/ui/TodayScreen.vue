@@ -103,7 +103,7 @@ const tone = (change) => (change > 0 ? 'text-rose-300' : change < 0 ? 'text-emer
             </tr>
           </tbody>
         </table>
-        <p class="mt-2 text-xs text-slate-500">“条件 N”一列是这条条件左边和右边的数值，鼠标移上去看是哪条条件。点股票名字在股票查询里打开；“AI 分析”在 AI研究员里打开这只股票，点“开始分析”才会分析。</p>
+        <p class="mt-2 text-xs text-slate-500">“条件 N”一列是这条条件左边和右边的数值，鼠标移上去看是哪条条件。点股票名字在股票查询里打开；“AI 分析”在个股分析里打开这只股票，点“开始分析”才会分析。</p>
       </div>
       <p v-else class="mt-3 text-sm text-slate-400">今天没有股票同时满足这些条件，可以放宽条件或者换成全市场再试。</p>
       <ScreenBrief v-if="result.items.length && lastRequest" :request="lastRequest" :result="result" :stale="stale" />

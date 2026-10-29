@@ -3,9 +3,9 @@ import test from 'node:test'
 import { researchContext, researchUrl, strategyReference } from '../src/workspace/researchNavigation.js'
 import { allItems, groups, navigationItem, resolveView, views } from '../src/workspace/modules.js'
 
-test('市场研究：AI研究员、条件选股、事件研究、行情图表；文档问答、决策辅助的旧链接仍能打开，旧的研究经验链接进入 AI研究员', () => {
-  const group = groups.find((g) => g.label === '市场研究')
-  assert.deepEqual(group.items.map((item) => item.label), ['AI研究员', '条件选股', '事件研究', '行情图表'])
+test('① 研究：事件研究、条件选股、个股分析、行情图表；文档问答、决策辅助的旧链接仍能打开，旧的研究经验链接进入个股分析', () => {
+  const group = groups.find((g) => g.label === '研究')
+  assert.deepEqual(group.items.map((item) => item.label), ['事件研究', '条件选股', '个股分析', '行情图表'])
   assert.ok(views['event-study'] && views['stock-screen'])
   for (const key of ['knowledge-base', 'decision-center']) {
     assert.ok(allItems.some((item) => item.key === key))
@@ -18,10 +18,10 @@ test('市场研究：AI研究员、条件选股、事件研究、行情图表；
   assert.equal(researchContext(researchUrl(url, 'decision-center')).mode, '')
 })
 
-test('策略研究四个主入口与两项回测步骤，旧链接仍然可达', () => {
-  const group = groups.find((g) => g.label === '策略研究')
-  assert.deepEqual(group.items.map((i) => i.label), ['我的策略', '因子研究', '回测与验证', '模拟账户', '研究记录'])
-  assert.deepEqual(group.items[2].children.map((i) => i.label), ['策略回测', '参数验证'])
+test('② 构建、③ 验证、④ 跟踪的入口，旧链接仍然可达', () => {
+  assert.deepEqual(groups.find((g) => g.label === '构建').items.map((i) => i.label), ['我的策略', '因子研究'])
+  assert.deepEqual(groups.find((g) => g.label === '验证').items.map((i) => i.label), ['策略回测', '可信度审计', '参数验证', '研究记录'])
+  assert.deepEqual(groups.find((g) => g.label === '跟踪').items.map((i) => i.label), ['模拟账户'])
   assert.ok(allItems.some((i) => i.key === 'strategy-studio'))
   assert.equal(navigationItem('strategy-studio').key, 'strategy-hub')
   // Python 策略已停用：页面不在了，旧链接落到我的策略。
