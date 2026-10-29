@@ -5,11 +5,10 @@ import LegalDialog from './LegalDialog.vue'
 import OnboardingTour from './OnboardingTour.vue'
 import ThemeToggle from './ThemeToggle.vue'
 import AiChatWidget from '../workspace/ui/AiChatWidget.vue'
-import { adminViews, allItems, contentLayout, itemLabel, navigationItem, overviewKey, resolveView, viewFor, views, visibleGroups } from '../workspace/modules.js'
+import { accountMenu, adminViews, allItems, contentLayout, itemLabel, navigationItem, overviewKey, resolveView, viewFor, views, visibleGroups } from '../workspace/modules.js'
 import { getLocalUser, getPoints, logout, restoreSession } from '../api.js'
 import '../workspace/workspace.css'
 import { researchContext, researchUrl } from '../workspace/researchNavigation.js'
-import { backtestId } from '../workspace/runRecords.js'
 import { loginUrl } from '../authNext.js'
 
 const user = ref(getLocalUser())
@@ -37,11 +36,22 @@ function syncView() {
   routeContext.value = researchContext(new URL(window.location.href))
   activeKey.value = initialViewKey()
 }
-// 在「策略回测」和「参数验证」之间切换时，带上正在看的那次回测。
-function navigateResearchTab(key) {
-  const id = backtestId(routeContext.value.baseline || routeContext.value.run)
-  if (id === null) return navigate(key)
-  navigate(key === 'research' ? { view: key, baseline: `run-${id}` } : { view: key, run: id })
+// 侧栏每一项的白话说明：鼠标停在上面时，在侧栏右边显示一句（侧栏会滚动，所以用 fixed 定位跟着这一项）。
+const hint = ref(null)
+function showHint(event, item) {
+  if (!item.hint) return
+  const box = event.currentTarget.getBoundingClientRect()
+  hint.value = { text: item.hint, top: box.top + box.height / 2, left: box.right + 10 }
+}
+function hideHint() { hint.value = null }
+// 右上角头像菜单：个人中心、积分、设置、退出登录。点菜单外面或按 Esc 关掉。
+const menuOpen = ref(false)
+const menuBox = ref(null)
+function closeMenuOutside(e) { if (menuOpen.value && !menuBox.value?.contains(e.target)) menuOpen.value = false }
+function closeMenuOnEsc(e) { if (e.key === 'Escape') menuOpen.value = false }
+function openFromMenu(key) {
+  menuOpen.value = false
+  navigate(key)
 }
 // 子视图可派发 `fq-navigate` 请求切换视图（如结果页深链审计页），与侧栏导航共用同一路径。
 function onNavigateEvent(e) { navigate(e.detail) }
@@ -70,6 +80,8 @@ onMounted(() => {
   window.addEventListener('fq-open-tour', onOpenTour)
   window.addEventListener('fq-points-changed', onPointsChanged)
   window.addEventListener('scroll', onScroll, { passive: true })
+  document.addEventListener('click', closeMenuOutside)
+  document.addEventListener('keydown', closeMenuOnEsc)
   onScroll()
 })
 onUnmounted(() => {
@@ -78,6 +90,8 @@ onUnmounted(() => {
   window.removeEventListener('fq-open-tour', onOpenTour)
   window.removeEventListener('fq-points-changed', onPointsChanged)
   window.removeEventListener('scroll', onScroll)
+  document.removeEventListener('click', closeMenuOutside)
+  document.removeEventListener('keydown', closeMenuOnEsc)
 })
 
 // 导航线性图标（Heroicons outline 路径），对齐 AlphaQuant 五组用户旅程
@@ -237,19 +251,26 @@ function doLogout() {
           </button>
 
           <template v-for="group in visibleGroups(!!user?.is_admin)" :key="group.label">
-            <!-- 用户旅程分组：研究工作台 / 验证与审计 / 数据 / 系统 -->
-            <p class="px-3 pb-1 pt-4 text-xs font-medium text-slate-500">{{ group.label }}</p>
+            <!-- 一次研究的顺序：① 研究 → ② 构建 → ③ 验证 → ④ 跟踪，最后是数据 -->
+            <p class="flex items-center gap-2 px-3 pb-1 pt-4 text-xs font-medium text-slate-500">
+              <span v-if="group.step" class="flex h-4 w-4 items-center justify-center rounded-full bg-indigo-500/20 text-[10px] font-semibold text-indigo-300">{{ group.step }}</span>
+              {{ group.label }}<span class="font-normal tracking-wide text-slate-600">{{ group.en }}</span>
+            </p>
 
             <button
               v-for="item in group.items"
               :key="item.key"
               @click="navigate(item.key)" :aria-current="isItemActive(item) ? 'page' : undefined"
+              @mouseenter="showHint($event, item)" @mouseleave="hideHint" @focus="showHint($event, item)" @blur="hideHint"
               class="relative flex w-full items-start gap-2 rounded-lg py-2 pl-6 pr-2 text-sm transition whitespace-nowrap"
               :class="isItemActive(item) ? 'bg-white/5 text-fq-strong' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'"
             >
               <span v-if="isItemActive(item)" class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-blue-400" />
               <svg class="mt-0.5 h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" :d="navIcons[item.key] || ''" /></svg>
-              {{ item.label }}
+              <span v-if="item.ai" class="flex items-center gap-1.5">{{ item.label.replace(/^AI\s*/, '') }}<span class="rounded bg-gradient-to-r from-indigo-500 to-violet-500 px-1 text-[10px] font-bold leading-4 text-white">AI</span></span>
+              <template v-else>{{ item.label }}</template>
+              <span v-if="item.tag" class="ml-auto self-center rounded-full border border-emerald-400/30 px-1.5 text-[10px] leading-4 text-emerald-300">{{ item.tag }}</span>
+              <span v-if="item.hint" class="sr-only">：{{ item.hint }}</span>
             </button>
           </template>
         </nav>
@@ -269,6 +290,10 @@ function doLogout() {
           </button>
         </div>
       </aside>
+      <!-- 侧栏某一项的白话说明（只在有鼠标的大屏上显示；手机上每个页面顶部有同样的说明） -->
+      <div v-if="hint" role="tooltip" aria-hidden="true"
+        class="pointer-events-none fixed z-50 hidden max-w-[16rem] -translate-y-1/2 rounded-lg border border-white/10 bg-ink/95 px-3 py-2 text-xs leading-relaxed text-slate-200 shadow-xl shadow-black/40 lg:block"
+        :style="{ top: `${hint.top}px`, left: `${hint.left}px` }">{{ hint.text }}</div>
 
       <div class="min-w-0 flex-1">
         <header class="sticky top-0 z-30 flex h-16 items-center gap-3 px-5 transition-colors duration-300 lg:px-8"
@@ -276,7 +301,7 @@ function doLogout() {
           <button class="rounded-lg p-2 text-slate-400 hover:bg-white/5 lg:hidden" @click="sidebarOpen = !sidebarOpen" aria-label="菜单">
             <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16" /></svg>
           </button>
-          <h1 class="min-w-0 truncate whitespace-nowrap text-lg font-semibold text-white">{{ activeSection?.children ? activeSection.label : itemLabel(activeKey) }}</h1>
+          <h1 class="min-w-0 truncate whitespace-nowrap text-lg font-semibold text-white"><template v-if="activeSection?.ai && activeSection.key === activeKey"><span class="flex items-center gap-2">{{ itemLabel(activeKey).replace(/^AI\s*/, '') }}<span class="rounded bg-gradient-to-r from-indigo-500 to-violet-500 px-1 text-[11px] font-bold leading-5 text-white">AI</span></span></template><template v-else>{{ itemLabel(activeKey) }}</template></h1>
           <a href="/" class="hidden rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs text-slate-300 transition hover:border-white/25 hover:text-white sm:inline-flex">返回官网</a>
 
           <!-- 右上角：主题切换 + 新手引导 + 用户头像 + 名字 + 退出 -->
@@ -289,7 +314,7 @@ function doLogout() {
               <span class="tabular-nums font-medium">{{ pointsBalance }}</span><span class="hidden sm:inline">积分</span>
             </button>
             <ThemeToggle />
-            <!-- 手机上顶栏放不下：新手引导在设置里也能打开，头像在侧栏底部也有 -->
+            <!-- 手机上顶栏放不下：新手引导在设置里也能打开 -->
             <button
               class="hidden h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-sm text-slate-300 transition hover:border-indigo-400/40 hover:text-white sm:flex"
               title="新手引导"
@@ -298,34 +323,39 @@ function doLogout() {
             >
               <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" /><circle cx="12" cy="17" r="0.8" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="10" stroke-width="2" /></svg>
             </button>
-            <button type="button" title="个人中心" :aria-label="`${user?.name || ''} · 打开个人中心`"
-              class="hidden items-center gap-2.5 rounded-full border border-white/10 bg-white/5 py-1 pl-1 pr-3 transition hover:border-indigo-400/40 hover:bg-white/10 sm:flex"
-              @click="navigate('account')">
-              <span class="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-xs font-bold text-ink">{{ (user?.name || 'U').slice(0, 1) }}</span>
-              <span class="hidden max-w-[9rem] truncate text-sm font-medium text-white sm:inline">{{ user?.name }}</span>
-            </button>
-            <button
-              class="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-400 transition hover:border-rose-400/40 hover:bg-rose-400/10 hover:text-rose-300"
-              title="退出登录"
-              aria-label="退出登录"
-              @click="doLogout"
-            >
-              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M18.75 15L21.75 12m0 0l-3-3m3 3H9" /></svg>
-            </button>
+            <!-- 头像菜单：个人中心、积分与打卡、设置、退出登录（手机上也在这里） -->
+            <div ref="menuBox" class="relative">
+              <button type="button" :aria-label="`${user?.name || ''} · 账户菜单`" aria-haspopup="menu" :aria-expanded="menuOpen"
+                class="flex items-center gap-2.5 rounded-full border border-white/10 bg-white/5 py-1 pl-1 pr-1 transition hover:border-indigo-400/40 hover:bg-white/10 sm:pr-3"
+                @click="menuOpen = !menuOpen">
+                <span class="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-xs font-bold text-ink">{{ (user?.name || 'U').slice(0, 1) }}</span>
+                <span class="hidden max-w-[9rem] truncate text-sm font-medium text-white sm:inline">{{ user?.name }}</span>
+                <svg class="hidden h-3.5 w-3.5 text-slate-400 sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6" /></svg>
+              </button>
+              <div v-if="menuOpen" role="menu"
+                class="absolute right-0 top-full z-50 mt-2 w-48 rounded-xl border border-white/10 bg-ink/95 p-1.5 shadow-xl shadow-black/40 backdrop-blur">
+                <button v-for="key in accountMenu" :key="key" type="button" role="menuitem"
+                  class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-300 transition hover:bg-white/5 hover:text-white"
+                  :class="activeKey === key ? 'bg-white/5 text-fq-strong' : ''" @click="openFromMenu(key)">
+                  <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" :d="navIcons[key] || ''" /></svg>
+                  {{ itemLabel(key) }}
+                  <span v-if="key === 'points' && checkinDue" class="ml-auto h-2 w-2 rounded-full bg-amber-400" aria-label="今天还没打卡" />
+                </button>
+                <div class="my-1 border-t border-white/10" />
+                <button type="button" role="menuitem"
+                  class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-rose-300 transition hover:bg-rose-400/10"
+                  @click="menuOpen = false; doLogout()">
+                  <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M18.75 15L21.75 12m0 0l-3-3m3 3H9" /></svg>
+                  退出登录
+                </button>
+              </div>
+            </div>
           </div>
         </header>
 
         <main class="p-5 lg:p-8">
           <div class="workspace-content space-y-6" :class="`workspace-content--${contentLayout(activeKey)}`">
-            <button v-if="['audit-report', 'strategy-forensics'].includes(activeKey)" class="text-sm text-indigo-300 hover:text-indigo-200" @click="navigate({ view: 'backtest-review', run: routeContext.run || '' })">← 返回策略回测</button>
-            <nav v-if="activeSection?.children" :aria-label="`${activeSection.label}功能`" class="flex flex-wrap gap-2 rounded-xl border border-white/10 bg-white/5 p-2">
-              <button v-for="tab in activeSection.children" :key="tab.key" @click="navigateResearchTab(tab.key)"
-                :aria-current="activeKey === tab.key ? 'page' : undefined"
-                class="rounded-lg px-4 py-2 text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400"
-                :class="activeKey === tab.key ? 'bg-indigo-500/20 font-medium text-fq-strong' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'">
-                {{ tab.label }}
-              </button>
-            </nav>
+            <button v-if="activeKey === 'strategy-forensics' || (activeKey === 'audit-report' && routeContext.run)" class="text-sm text-indigo-300 hover:text-indigo-200" @click="navigate({ view: 'backtest-review', run: routeContext.run || '' })">← 返回策略回测</button>
             <Suspense>
               <keep-alive :max="8">
                 <component :is="views[activeKey] || views[overviewKey]" :user="user" :notify="notify" :route-context="routeContext" :research-mode="activeKey" v-on="activeKey === 'account' ? { renamed: (next) => { user = next } } : {}" />
@@ -344,7 +374,7 @@ function doLogout() {
     <div v-if="sidebarOpen && !loading" class="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm lg:hidden" @click="sidebarOpen = false" />
 
     <OnboardingTour v-if="tourOpen && !loading" :user="user" @close="closeTour" />
-    <!-- 右下角的 AI 问答：每个页面都能用；新手引导出现时先隐藏 -->
-    <AiChatWidget v-if="user && !loading" :view="activeKey" :label="itemLabel(activeKey)" :hidden="tourOpen" />
+    <!-- 右下角的 AI 问答：每个页面都能用；新手引导出现时、手机上展开侧栏时先隐藏 -->
+    <AiChatWidget v-if="user && !loading" :view="activeKey" :label="itemLabel(activeKey)" :hidden="tourOpen || sidebarOpen" />
   </div>
 </template>

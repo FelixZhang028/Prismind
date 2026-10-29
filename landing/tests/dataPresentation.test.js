@@ -50,9 +50,9 @@ test('空股票池和无本地行情显示不同下一步', () => {
 
 test('数据菜单：所有人看数据说明、股票查询和股票池；数据运维、数据检查和 XTick 只有管理员能打开', () => {
   const data = groups.find((group) => group.label === '数据')
-  assert.deepEqual(data.items.map((item) => item.key), ['data-guide', 'market-lookup', 'universe', 'data-update'])
-  assert.deepEqual(visibleGroups(false).find((group) => group.label === '数据').items.map((item) => item.key), ['data-guide', 'market-lookup', 'universe'])
-  assert.deepEqual(visibleGroups(true).find((group) => group.label === '数据').items.map((item) => item.key), ['data-guide', 'market-lookup', 'universe', 'data-update'])
+  assert.deepEqual(data.items.map((item) => item.key), ['market-lookup', 'universe', 'data-guide', 'data-update'])
+  assert.deepEqual(visibleGroups(false).find((group) => group.label === '数据').items.map((item) => item.key), ['market-lookup', 'universe', 'data-guide'])
+  assert.deepEqual(visibleGroups(true).find((group) => group.label === '数据').items.map((item) => item.key), ['market-lookup', 'universe', 'data-guide', 'data-update'])
   assert.deepEqual([...adminViews].sort(), ['data-management', 'data-update', 'xtick-data'])
   for (const old of ['data-update', 'data-management', 'xtick-data']) {
     assert.equal(viewFor(old, false), 'data-guide')      // 普通用户的旧链接落到数据说明

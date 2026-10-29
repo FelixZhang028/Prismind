@@ -71,7 +71,7 @@ const cards = computed(() => {
     { label: '注册用户', value: number(s.users.total), sub: `今天新注册 ${number(s.users.new_today)} 人${s.users.disabled ? ` · 已停用 ${number(s.users.disabled)} 人` : ''}` },
     { label: '今天活跃', value: number(s.users.active_today), sub: '今天打开过功能台的用户' },
     { label: '回测记录', value: number(s.research.backtests), sub: `今天 ${number(s.research.backtests_today)} 次 · 保存的策略 ${number(s.research.strategies)} 个` },
-    { label: 'AI 研究员分析', value: number(s.research.briefs), sub: `今天 ${number(s.research.briefs_today)} 次` },
+    { label: 'AI 个股分析', value: number(s.research.briefs), sub: `今天 ${number(s.research.briefs_today)} 次` },
     firstResultCard(s.first_results),
   ].filter(Boolean)
 })

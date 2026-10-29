@@ -81,7 +81,7 @@ onMounted(async () => {
     form.end = options.value.bounds?.end || ''
     const linked = props.routeContext.preset && applyLink(props.routeContext.preset)
     if (!form.conditions.length) applyConditions(options.value.presets?.[0]?.conditions || [defaultCondition(kindOf('ret'))])
-    if (linked) run()                    // 从 AI研究员点过来：直接给结果
+    if (linked) run()                    // 从 AI 个股分析点过来：直接给结果
   } catch (e) { loadError.value = e.message || '加载失败' }
 })
 watch(() => props.routeContext.preset, (text) => { if (text && options.value && applyLink(text)) run() })
@@ -152,7 +152,7 @@ const inline = 'mx-0.5 max-w-full cursor-pointer rounded-md border-0 border-b-2 
       </SectionCard>
 
       <SectionCard title="或者自己写一个" hint="点有下划线的地方可以改；同时满足所有条件的那一天，算出现一次">
-        <p v-if="fromPreset" class="mb-3 text-xs text-indigo-200">已经填好了从 AI研究员 带来的条件，可以再调整。</p>
+        <p v-if="fromPreset" class="mb-3 text-xs text-indigo-200">已经填好了从 AI 个股分析带来的条件，可以再调整。</p>
         <div class="text-base leading-[2.6] text-slate-200">
           <span>当一只股票的</span>
           <template v-for="(condition, i) in form.conditions" :key="i">

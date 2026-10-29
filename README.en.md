@@ -39,9 +39,9 @@ These screenshots show the running application (2026-10-26, demo account), using
 
 ![Market chart](docs/images/market-chart.png)
 
-**AI Researcher: the AI reading for Ping An Bank, with the data each point cites listed under it**
+**AI Stock Analysis: the AI reading for Ping An Bank, with the data each point cites listed under it**
 
-![AI Researcher](docs/images/agent-lab.png)
+![AI Stock Analysis](docs/images/agent-lab.png)
 
 ## 📖 About
 
@@ -49,11 +49,11 @@ Prismind (镜思) is a research workbench for China's A-share market, built with
 
 | Workspace | Capabilities |
 | --- | --- |
-| AI research | AI Researcher organizes one stock's price history, valuation, financial reports and risks from local data, and the AI writes its reading only from that data, with the evidence for each point; the AI chat in the corner answers questions across stocks and shows the data it used |
+| AI research | AI Stock Analysis organizes one stock's price history, valuation, financial reports and risks from local data, and the AI writes its reading only from that data, with the evidence for each point; the AI chat in the corner answers questions across stocks and shows the data it used |
 | Stock screening | Set your own conditions and ranking to find the stocks that match on the latest trading day; the AI can describe what the group has in common and its risk signals; backtest the same conditions over the last 1–5 years |
 | My strategies | Rule-based strategies from a template, a one-sentence description, or a form |
 | Factor research | Factor library, single-factor evaluation, combined research |
-| Backtest and validation | Backtests, parameter optimization, out-of-sample validation, trade verification; optimization and walk-forward validation are simulated previews for now |
+| Backtest and validation | Backtests, credibility audit, parameter optimization and out-of-sample validation (all from real backtests), trade verification |
 | Paper accounts | Lock one rule strategy and its settings from the day you create it; each trading day after the data update it moves forward automatically. See equity against the CSI 300, holdings and fills (3 per user) |
 | Research records | Past research results and comparisons |
 | Data | Data overview, data updates, stock pool |

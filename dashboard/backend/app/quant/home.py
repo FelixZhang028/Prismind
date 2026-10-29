@@ -148,7 +148,7 @@ def research(user_id: int) -> dict[str, Any]:
                       "detail": detail, "at": row["created_at"], "view": "backtest-review", "context": {"run": row["id"]},
                       "value": _num(result.get("total_return"), 2) if done else None})
     for row in briefs:
-        items.append({"kind": "brief", "label": "AI 研究员", "title": f"{row['name']}（{to_bare(row['symbol'])}）",
+        items.append({"kind": "brief", "label": "AI 个股分析", "title": f"{row['name']}（{to_bare(row['symbol'])}）",
                       "detail": f"数据截至 {row['trade_date']}", "at": row["created_at"], "view": "agent-lab", "context": {"brief": row["id"]}})
     for row in chats:
         items.append({"kind": "chat", "label": "AI 问答", "title": row["title"], "detail": "", "at": row["updated_at"],
@@ -164,7 +164,7 @@ def research(user_id: int) -> dict[str, Any]:
          "context": {"preset": FIRST_QUESTION_PRESET}},
         {"key": "strategy", "label": "保存一个规则策略", "done": counts["strategies"] > 0, "view": "strategy-hub"},
         {"key": "backtest", "label": "跑完第一次回测", "done": counts["backtests"] > 0, "view": "backtest-review"},
-        {"key": "brief", "label": "用 AI 研究员分析一只股票", "done": counts["briefs"] > 0, "view": "agent-lab"},
+        {"key": "brief", "label": "用 AI 个股分析看一只股票", "done": counts["briefs"] > 0, "view": "agent-lab"},
         {"key": "pool", "label": "设置自己的股票池", "done": pool_set, "view": "universe"},
     ]
     return {"recent": items[:RECENT_ROWS], "counts": counts, "steps": steps}

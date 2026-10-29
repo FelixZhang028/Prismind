@@ -7,7 +7,7 @@ const columns = [
       { label: '数据说明', href: '/app.html?view=data-guide' },
       { label: '零代码策略', href: '/app.html?view=strategy-studio' },
       { label: '因子实验室', href: '/app.html?view=factor-lab' },
-      { label: 'AI研究员', href: '/app.html?view=agent-lab' },
+      { label: 'AI 个股分析', href: '/app.html?view=agent-lab' },
     ],
   },
   {
