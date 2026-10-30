@@ -21,6 +21,8 @@
 - GET  /banned-words          昵称违禁词：内置的和管理员加的
 - POST /banned-words          加违禁词（一次可以加很多个）
 - POST /banned-words/delete   删掉一个管理员加的违禁词
+- GET  /feedback              用户反馈：建议、“有用吗”、离开原因（可以按种类和状态筛选），以及汇总
+- POST /feedback/{id}         把一条反馈标成已读或已处理、写备注
 - GET  /audit                 管理员做过的操作
 - GET  /ai-usage              最近 30 天每天各类 AI 的次数、token 用量、用得最多的用户
 """
@@ -33,7 +35,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from ..database import get_conn
-from ..quant import audit, backup, fundamentals_schedule, mailer, nicknames, platform_ai, points, rate_limit, registration, site_config
+from ..quant import audit, backup, feedback, fundamentals_schedule, mailer, nicknames, platform_ai, points, rate_limit, registration, site_config
 from ..quant.runtime import MARKET_ROOT, RUNTIME_ROOT
 from ..routes.auth import get_current_user, signup_status
 from ..security import verify_password
@@ -311,6 +313,7 @@ def admin_stats():
         total_row = conn.execute("SELECT count FROM ai_usage_total WHERE day = ?", (today,)).fetchone()
         disabled = _count(conn, "SELECT COUNT(*) FROM users WHERE is_active = 0")
         first_results = _first_results(conn)
+        unread_feedback = _count(conn, "SELECT COUNT(*) FROM feedback WHERE kind = 'suggestion' AND status = 'new'")
     words = {kind: word for kind, (_variable, _default, word) in platform_ai.LIMITS.items()}
     ai = {
         "day": today,
@@ -324,6 +327,7 @@ def admin_stats():
         "users": users,
         "research": research,
         "first_results": first_results,
+        "feedback": {"unread": unread_feedback},
         "ai": ai,
         "registration": {"mode": registration.mode(), "invites": invites},
         "backup": _latest_backup(),
@@ -501,6 +505,32 @@ def delete_banned_word(body: WordIn, admin: dict = Depends(require_admin)):
         raise HTTPException(status_code=404, detail="没有这个违禁词")
     audit.record(admin, "nickname.remove", f"删掉了昵称违禁词“{body.word}”", word=body.word)
     return {"word": body.word}
+
+
+class FeedbackUpdateIn(BaseModel):
+    status: Literal["new", "read", "done"] | None = None
+    note: str | None = Field(None, max_length=feedback.NOTE_MAX + 50)
+
+
+@router.get("/feedback", dependencies=[Depends(require_admin)])
+def feedback_list(kind: str = Query("", max_length=20), status_: str = Query("", alias="status", max_length=10),
+                  limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
+    try:
+        result = feedback.listing(kind, status_, limit, offset)
+    except feedback.FeedbackError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {**result, "summary": feedback.summary(), "kinds": feedback.KINDS, "statuses": feedback.STATUSES,
+            "features": feedback.USEFUL_FEATURES}
+
+
+@router.post("/feedback/{feedback_id}", dependencies=[Depends(require_admin)])
+def feedback_update(feedback_id: int, body: FeedbackUpdateIn):
+    try:
+        return feedback.update(feedback_id, body.status, body.note)
+    except feedback.FeedbackError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
 
 
 @router.get("/audit", dependencies=[Depends(require_admin)])

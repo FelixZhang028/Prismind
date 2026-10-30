@@ -9,6 +9,7 @@ import {
   pct, reading, sentenceParts, signedPct, tone, yearChart,
 } from '../eventStudy.js'
 import SectionCard from '../ui/SectionCard.vue'
+import UsefulPrompt from '../ui/UsefulPrompt.vue'
 
 const props = defineProps({
   notify: { type: Function, default: () => {} },
@@ -239,6 +240,8 @@ const inline = 'mx-0.5 max-w-full cursor-pointer rounded-md border-0 border-b-2 
           <li v-for="item in result.coverage" :key="item.label" class="text-xs text-amber-200">“{{ item.label }}”要用到的数据，只覆盖了满足前面条件的股票交易日的 {{ pct(item.share, 0) }}{{ item.since ? `（${item.since} 年起才有）` : '' }}，结果主要来自有数据的那部分。</li>
         </ul>
       </SectionCard>
+      <!-- 第一次出结果时问一句“有用吗” -->
+      <UsefulPrompt v-if="result.events" feature="event-study" :context="{ preset: routeContext.preset || '' }" />
 
       <template v-if="result.events">
         <SectionCard v-if="chart" class="min-w-0" title="出现以后，平均每天走到哪里" hint="从出现那天的收盘价算起，之后每一天的平均累计涨跌；把鼠标放在图上看具体数字">

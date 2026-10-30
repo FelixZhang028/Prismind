@@ -35,6 +35,7 @@ from .routes.admin import router as admin_router
 from .routes.agent_lab import router as agent_lab_router
 from .routes.auth import router as auth_router
 from .routes.backtests import router as backtests_router
+from .routes.feedback import router as feedback_router
 from .routes.paper import PaperAdvancer
 from .routes.paper import router as paper_router
 from .routes.points import router as points_router
@@ -198,6 +199,7 @@ app.include_router(agent_lab_router)
 app.include_router(settings_router)
 app.include_router(points_router)
 app.include_router(paper_router)
+app.include_router(feedback_router)
 
 
 @app.get("/api/health", summary="健康检查")

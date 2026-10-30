@@ -2,6 +2,7 @@
 import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
 import { aiStatus, askBrief, createBrief, decideBrief, deleteBrief, getBrief, getPreferences, listBriefs, readBrief, universeSearch } from '../../api.js'
 import SectionCard from '../ui/SectionCard.vue'
+import UsefulPrompt from '../ui/UsefulPrompt.vue'
 import PriorKnowledgeView from './PriorKnowledgeView.vue'
 import JevStockReport from '../ui/JevStockReport.vue'
 import StockDataReport from '../ui/StockDataReport.vue'
@@ -302,6 +303,8 @@ function moveTone(value) {
           </div>
         </div>
         <p v-if="brief.removed" class="mt-4 text-xs text-slate-500">已去掉 {{ brief.removed }} 条与数据对不上、没有依据、给出买卖建议或说价格方向的内容。</p>
+        <!-- 第一次看到 AI 解读时问一句“有用吗”（放在卡片里面，不打断下面的 v-else-if） -->
+        <UsefulPrompt class="mt-4" feature="agent-lab" :context="{ brief: record?.id || '' }" />
       </SectionCard>
       <div v-else-if="step === 'reading'" class="rounded-xl border border-indigo-400/20 bg-indigo-500/5 p-4 text-sm text-indigo-100">AI 正在根据下面的数据写解读…</div>
       <div v-else-if="record.ai_note" class="rounded-xl border border-amber-400/20 bg-amber-400/5 p-4 text-sm text-amber-100">{{ record.ai_note }}</div>

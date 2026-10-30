@@ -114,8 +114,9 @@ export async function changeName(name) {
   localStorage.setItem(USER_KEY, JSON.stringify(user))
   return user
 }
-export async function deleteAccount({ password }) {
-  const data = await request('/api/v1/auth/delete', { method: 'POST', body: { password }, auth: true })
+// reason / reason_text：选填的离开原因，匿名保存。
+export async function deleteAccount({ password, reason = '', reason_text = '' }) {
+  const data = await request('/api/v1/auth/delete', { method: 'POST', body: { password, reason, reason_text }, auth: true })
   clearSession()
   return data
 }
@@ -245,6 +246,16 @@ export function savePreferences(preferences) {
 }
 export function todayUsage() {
   return request('/api/v1/settings/usage', { auth: true })
+}
+// ---- 用户反馈 ----
+export function submitSuggestion({ text, view = '', contact_ok = false, context = {} }) {
+  return request('/api/v1/feedback/suggestions', { method: 'POST', body: { text, view, contact_ok, context }, auth: true })
+}
+export function usefulAnswered() {
+  return request('/api/v1/feedback/useful', { auth: true })
+}
+export function rateUseful({ feature, rating = null, text = '', context = {} }) {
+  return request('/api/v1/feedback/useful', { method: 'POST', body: { feature, rating, text, context }, auth: true })
 }
 // ---- 积分 ----
 export function getPoints() {

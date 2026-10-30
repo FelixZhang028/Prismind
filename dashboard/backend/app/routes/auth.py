@@ -8,7 +8,7 @@
 - POST /logout            退出登录：这个账户在所有设备上的令牌一起作废
 - POST /password          修改密码（要旧密码）；其他设备上的登录随之作废
 - POST /name              修改自己的昵称（每天最多 5 次，不能有违禁词）
-- POST /delete            注销账户：删除这个账户和它的全部数据
+- POST /delete            注销账户：删除这个账户和它的全部数据（可以附一个匿名的离开原因）
 - POST /forgot/request    忘记密码：填注册邮箱 → 发送验证码到邮箱
 - POST /forgot/reset      忘记密码：校验验证码 → 重置密码
 - GET  /me                凭令牌获取当前用户信息（功能台鉴权守卫调用）
@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from ..database import get_conn
-from ..quant import mailer, nicknames, points, rate_limit, registration
+from ..quant import feedback, mailer, nicknames, points, rate_limit, registration
 from ..security import (
     create_token,
     decode_token,
@@ -98,6 +98,9 @@ class NameIn(BaseModel):
 
 class DeleteIn(BaseModel):
     password: str = Field(..., max_length=PASSWORD_MAX)
+    # 选填的离开原因：匿名保存，账户删了以后还能统计（见 quant/feedback.py）
+    reason: str = Field("", max_length=20)
+    reason_text: str = Field("", max_length=300)
 
 
 class UserOut(BaseModel):
@@ -353,6 +356,10 @@ def delete_account(body: DeleteIn, current: dict = Depends(get_current_user)):
     row = _password_row(current["id"])
     if not verify_password(body.password, row["salt"], row["password_hash"]):
         raise HTTPException(status_code=400, detail="密码不正确")
+    try:
+        feedback.record_leave(body.reason, body.reason_text)
+    except feedback.FeedbackError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     remove(current["id"])
     return {"message": "账户和全部数据已删除"}
 

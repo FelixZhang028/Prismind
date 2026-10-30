@@ -1,11 +1,12 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { SITE_BASE, adminAiUsage, adminStats, adminUsers, dailyUpdateStatus, systemStatus } from '../api.js'
-import { bytes, firstResultCard } from '../format.js'
+import { bytes, feedbackCard, firstResultCard } from '../format.js'
 import { barHeights, tokensText } from '../settings.js'
 import AuditPanel from './AuditPanel.vue'
 import BannedWordsPanel from './BannedWordsPanel.vue'
 import DataPanel from './DataPanel.vue'
+import FeedbackPanel from './FeedbackPanel.vue'
 import InvitesPanel from './InvitesPanel.vue'
 import PointsPanel from './PointsPanel.vue'
 import SettingsPanel from './SettingsPanel.vue'
@@ -17,6 +18,7 @@ const emit = defineEmits(['logout'])
 const tabs = [
   { key: 'overview', label: '概览' },
   { key: 'users', label: '用户' },
+  { key: 'feedback', label: '用户反馈' },
   { key: 'invites', label: '注册与邀请码' },
   { key: 'words', label: '违禁词' },
   { key: 'points', label: '积分与兑换码' },
@@ -73,6 +75,7 @@ const cards = computed(() => {
     { label: '回测记录', value: number(s.research.backtests), sub: `今天 ${number(s.research.backtests_today)} 次 · 保存的策略 ${number(s.research.strategies)} 个` },
     { label: 'AI 个股分析', value: number(s.research.briefs), sub: `今天 ${number(s.research.briefs_today)} 次` },
     firstResultCard(s.first_results),
+    feedbackCard(s.feedback),
   ].filter(Boolean)
 })
 
@@ -133,12 +136,15 @@ const marketText = computed(() => {
     <p v-if="error" role="alert" class="mb-6 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">{{ error }}</p>
 
     <main v-if="tab === 'overview'" class="space-y-6">
-      <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-5" aria-label="概况">
-        <div v-for="c in cards" :key="c.label" class="glass glass-sheen rounded-2xl p-5">
+      <section class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6" aria-label="概况">
+        <!-- 带 tab 的卡片点了跳到对应页签（例如新建议 → 用户反馈） -->
+        <component :is="c.tab ? 'button' : 'div'" v-for="c in cards" :key="c.label" :type="c.tab ? 'button' : undefined"
+          class="glass glass-sheen rounded-2xl p-5 text-left" :class="c.tab ? 'transition hover:border-indigo-400/40' : ''"
+          @click="c.tab && openTab(c.tab)">
           <p class="text-xs text-slate-400">{{ c.label }}</p>
           <p class="mt-2 text-3xl font-bold text-white">{{ c.value }}</p>
           <p class="mt-2 text-xs text-slate-500">{{ c.sub }}</p>
-        </div>
+        </component>
       </section>
 
       <section v-if="stats" class="grid gap-5 lg:grid-cols-2">
@@ -224,6 +230,7 @@ const marketText = computed(() => {
     </main>
 
     <UsersPanel v-else-if="tab === 'users'" :users="users" @changed="load" @notify="notify" />
+    <FeedbackPanel v-else-if="tab === 'feedback'" @changed="load" @notify="notify" />
     <InvitesPanel v-else-if="tab === 'invites'" @changed="load" @notify="notify" />
     <BannedWordsPanel v-else-if="tab === 'words'" @changed="load" @notify="notify" />
     <PointsPanel v-else-if="tab === 'points'" :users="users" @changed="load" @notify="notify" />

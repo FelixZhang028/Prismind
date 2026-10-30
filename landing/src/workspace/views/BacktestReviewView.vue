@@ -6,6 +6,7 @@ import { openResearch } from '../researchNavigation.js'
 import { setFocus } from '../chatFocus.js'
 import { backtestId, countText, runTime, runningText, strategyName, validityLabel } from '../runRecords.js'
 import BacktestAiReview from '../ui/BacktestAiReview.vue'
+import UsefulPrompt from '../ui/UsefulPrompt.vue'
 import RiskSettings from '../ui/RiskSettings.vue'
 import MetricCard from '../ui/MetricCard.vue'
 import SectionCard from '../ui/SectionCard.vue'
@@ -429,6 +430,8 @@ onActivated(async () => {
             <button @click="openResearch('market-chart', { run: selectedId })">在K线上查看成交 →</button>
             <button v-if="paperPrefill(result.effective_config)" @click="openResearch('paper-accounts', { mode: 'new', strategy: result.effective_config.strategy_reference, run: selectedId })">用这套设置开模拟账户 →</button>
           </div>
+          <!-- 第一次看到回测结果时问一句“有用吗” -->
+          <UsefulPrompt feature="backtest-review" :context="{ run: selectedId }" />
           <BacktestAiReview :backtest-id="selectedId" :notify="notify" />
           <!-- 和基准比较：有完整的基准行情时显示两条累计收益曲线，否则只显示资金曲线。 -->
           <h3 v-if="benchmark" class="flex flex-wrap items-center gap-2 text-sm font-semibold text-white">
