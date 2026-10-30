@@ -1,6 +1,7 @@
 <script setup>
 import { nextTick, reactive, ref } from 'vue'
 import { changeName, changePassword, deleteAccount, logout } from '../../api.js'
+import { LEAVE_REASONS, LEAVE_TEXT_MAX } from '../feedback.js'
 
 const props = defineProps({
   user: { type: Object, default: null },
@@ -71,12 +72,15 @@ const confirmingDelete = ref(false)
 const deletePassword = ref('')
 const deleting = ref(false)
 const deleteError = ref('')
+// 选填的离开原因：匿名保存（不记是谁），帮我们改进；不选也能注销。
+const leaveReason = ref('')
+const leaveText = ref('')
 async function removeAccount() {
   deleteError.value = ''
   if (!deletePassword.value) return (deleteError.value = '请输入密码确认')
   deleting.value = true
   try {
-    await deleteAccount({ password: deletePassword.value })
+    await deleteAccount({ password: deletePassword.value, reason: leaveReason.value, reason_text: leaveText.value.trim().slice(0, LEAVE_TEXT_MAX) })
     window.location.href = '/'
   } catch (e) {
     deleteError.value = e.message || '注销失败'
@@ -149,11 +153,22 @@ const inputClass = 'w-full rounded-xl border border-white/10 bg-white/5 px-3 py-
       <p class="mt-2 text-sm text-slate-400">删除这个账户和它的全部数据：策略、回测、研究记录、AI 分析和研究经验。删除后不能恢复。</p>
       <button v-if="!confirmingDelete" type="button" class="mt-4 rounded-full border border-rose-400/30 px-5 py-2 text-sm text-rose-300 hover:bg-rose-400/10" @click="confirmingDelete = true">注销账户</button>
       <form v-else class="mt-4 grid max-w-md gap-3" @submit.prevent="removeAccount">
+        <fieldset class="rounded-xl border border-white/10 p-3">
+          <legend class="px-1 text-xs text-slate-400">为什么离开？（选填，匿名保存，帮我们改进）</legend>
+          <div class="flex flex-wrap gap-2">
+            <label v-for="item in LEAVE_REASONS" :key="item.value"
+              class="cursor-pointer rounded-full border px-3 py-1 text-xs transition"
+              :class="leaveReason === item.value ? 'border-indigo-400/60 bg-indigo-500/15 text-white' : 'border-white/10 text-slate-300 hover:bg-white/5'">
+              <input v-model="leaveReason" type="radio" name="leave-reason" :value="item.value" class="sr-only" />{{ item.label }}
+            </label>
+          </div>
+          <input v-model="leaveText" :maxlength="LEAVE_TEXT_MAX" placeholder="还想说点什么（选填）" aria-label="离开原因的补充" :class="inputClass" class="mt-3" />
+        </fieldset>
         <label class="text-xs text-slate-400">输入密码确认注销<input v-model="deletePassword" type="password" autocomplete="current-password" :class="inputClass" class="mt-1" /></label>
         <p v-if="deleteError" role="alert" class="text-sm text-rose-300">{{ deleteError }}</p>
         <div class="flex flex-wrap gap-3">
           <button type="submit" :disabled="deleting" class="rounded-full bg-rose-500/80 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">{{ deleting ? '删除中…' : '确认删除账户和全部数据' }}</button>
-          <button type="button" class="rounded-full border border-white/10 px-5 py-2 text-sm text-slate-300" @click="confirmingDelete = false; deletePassword = ''">取消</button>
+          <button type="button" class="rounded-full border border-white/10 px-5 py-2 text-sm text-slate-300" @click="confirmingDelete = false; deletePassword = ''; leaveReason = ''; leaveText = ''">取消</button>
         </div>
       </form>
     </section>

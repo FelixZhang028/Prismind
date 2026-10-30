@@ -171,3 +171,12 @@ export function adminAudit(kind = '', limit = 100) {
 export function adminAiUsage(days = 30) {
   return request(`/api/v1/admin/ai-usage?${new URLSearchParams({ days })}`, { auth: true })
 }
+
+// 用户反馈：建议、“有用吗”、离开原因
+export function adminFeedback({ kind = '', status = '', limit = 100, offset = 0 } = {}) {
+  const query = new URLSearchParams({ kind, status, limit: String(limit), offset: String(offset) })
+  return request(`/api/v1/admin/feedback?${query}`, { auth: true })
+}
+export function updateFeedback(id, { status = null, note = null }) {
+  return request(`/api/v1/admin/feedback/${id}`, { method: 'POST', body: { status, note }, auth: true })
+}

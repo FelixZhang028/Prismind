@@ -18,6 +18,8 @@
 - screen_briefs 条件选股的 AI 解读（同一组条件、同一天再看不重复扣次数）
 - signup_emails 领过注册赠送积分的邮箱的“指纹”（注销账户时不删，同一个邮箱只送一次）
 - paper_accounts 模拟账户（锁定的策略和设置、推进到哪一天、最近一次结果）
+- user_milestones 每个用户第一次做成某件事的时间（目前是第一次跑出事件研究结果）
+- feedback       用户反馈：建议、“有用吗”的评价、注销时匿名的离开原因
 
 使用 Python 标准库 sqlite3，无需额外依赖。
 数据库文件：backend/data/app.db
@@ -255,6 +257,24 @@ def init_db() -> None:
                 PRIMARY KEY (user_id, kind),
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+            -- 用户反馈：随时提的建议（suggestion）、第一次出结果后“有用吗”（useful，每人每个功能一条）、
+            -- 注销时选的离开原因（leave，匿名，user_id 为空）。注销账户时这个人的建议和评价一起删除
+            CREATE TABLE IF NOT EXISTS feedback (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind       TEXT    NOT NULL,
+                user_id    INTEGER,
+                view       TEXT    NOT NULL DEFAULT '',
+                context    TEXT    NOT NULL DEFAULT '{}',
+                rating     INTEGER,
+                text       TEXT    NOT NULL DEFAULT '',
+                contact_ok INTEGER NOT NULL DEFAULT 0,
+                status     TEXT    NOT NULL DEFAULT 'new',
+                admin_note TEXT    NOT NULL DEFAULT '',
+                created_at TEXT    NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS feedback_useful_once ON feedback(user_id, view) WHERE kind = 'useful';
+            CREATE INDEX IF NOT EXISTS feedback_by_kind ON feedback(kind, status, created_at);
             -- 管理员在页面上改的平台设置，例如注册方式（registration = open / invite / closed）
             CREATE TABLE IF NOT EXISTS site_settings (
                 key   TEXT PRIMARY KEY,
