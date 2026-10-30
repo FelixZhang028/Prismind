@@ -282,8 +282,15 @@ function doLogout() {
             <p class="text-sm font-semibold text-white">支持镜思 Prismind</p>
             <p class="mt-2 text-[11px] leading-5 text-slate-400">您的<span class="text-indigo-300">意见</span>，都帮助我们持续改进。<br />您的<span class="text-amber-300">Star</span>，都是对我们最大的鼓励。</p>
             <div class="mt-3 flex gap-2">
-              <button type="button" class="flex-1 rounded-lg bg-indigo-500/80 px-2 py-2 text-center text-xs font-medium text-white hover:bg-indigo-500" @click="suggestOpen = true; sidebarOpen = false">提建议</button>
-              <a :href="githubUrl" target="_blank" rel="noopener noreferrer" class="flex-1 rounded-lg border border-white/10 px-2 py-2 text-center text-xs text-amber-300 hover:bg-white/10">☆ Star 项目</a>
+              <!-- 两个按钮同一种样式：浅色底 + 细边框 + 小图标，只用颜色区分（建议用靛蓝，Star 用琥珀） -->
+              <button type="button" class="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-indigo-400/30 bg-indigo-500/10 px-2 py-2 text-xs font-medium text-indigo-200 transition hover:border-indigo-400/50 hover:bg-indigo-500/20" @click="suggestOpen = true; sidebarOpen = false">
+                <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 011.037-.443 48.282 48.282 0 005.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" /></svg>
+                提建议
+              </button>
+              <a :href="githubUrl" target="_blank" rel="noopener noreferrer" class="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-amber-400/30 bg-amber-500/10 px-2 py-2 text-xs font-medium text-amber-200 transition hover:border-amber-400/50 hover:bg-amber-500/20">
+                <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" /></svg>
+                Star 项目
+              </a>
             </div>
           </section>
           <button @click="navigate('account')" class="flex w-full items-center gap-3 rounded-xl p-2 text-left hover:bg-white/5" aria-label="打开个人中心">
