@@ -56,11 +56,12 @@ async function send() {
         可以用注册邮箱联系我
       </label>
       <p v-if="error" role="alert" class="mt-3 text-sm text-rose-300">{{ error }}</p>
-      <div class="mt-5 flex items-center justify-between gap-3">
-        <a :href="githubUrl" target="_blank" rel="noopener noreferrer" class="text-xs text-slate-500 hover:text-slate-300">开发者也可以在 GitHub 提 Issue ↗</a>
-        <div class="flex gap-2">
-          <button type="button" class="rounded-full border border-white/10 px-4 py-2 text-sm text-slate-300 hover:bg-white/5" @click="emit('close')">取消</button>
-          <button type="submit" :disabled="sending" class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white disabled:opacity-60">{{ sending ? '提交中…' : '提交' }}</button>
+      <!-- 手机上按钮在上、GitHub 链接换到下一行，按钮不被挤成竖排 -->
+      <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <a :href="githubUrl" target="_blank" rel="noopener noreferrer" class="order-last w-full text-xs text-slate-500 hover:text-slate-300 sm:order-none sm:w-auto">开发者也可以在 GitHub 提 Issue ↗</a>
+        <div class="ml-auto flex gap-2">
+          <button type="button" class="whitespace-nowrap rounded-full border border-white/10 px-4 py-2 text-sm text-slate-300 hover:bg-white/5" @click="emit('close')">取消</button>
+          <button type="submit" :disabled="sending" class="whitespace-nowrap rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white disabled:opacity-60">{{ sending ? '提交中…' : '提交' }}</button>
         </div>
       </div>
     </form>
