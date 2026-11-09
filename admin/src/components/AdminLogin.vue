@@ -16,8 +16,8 @@ async function onSubmit() {
   }
   loading.value = true
   try {
-    await login(form.email, form.password)
-    emit('logged-in')
+    const data = await login(form.email, form.password)
+    emit('logged-in', data.user)
   } catch (e) {
     error.value = e.message || '登录失败'
   } finally {
@@ -38,7 +38,7 @@ async function onSubmit() {
       </div>
 
       <p class="mt-7 text-2xl font-bold text-white">欢迎回来</p>
-      <p class="mt-1 text-sm text-slate-400">请使用管理员账户登录</p>
+      <p class="mt-1 text-sm text-slate-400">请使用管理员或子管理员账户登录</p>
 
       <div v-if="error" class="mt-5 flex items-center gap-2 rounded-xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">
         <svg class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.3 3.9l-7.3 12.6A2 2 0 004.7 19h14.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" /></svg>
@@ -61,7 +61,7 @@ async function onSubmit() {
       </form>
 
       <div class="mt-6 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-500">
-        管理员账户由部署者通过后端环境变量创建，请使用已配置的管理员邮箱和密码登录。
+        管理员账户由部署者通过后端环境变量创建；子管理员用自己在镜思注册的邮箱和密码登录（由管理员在“用户”里设置）。
       </div>
     </div>
   </div>

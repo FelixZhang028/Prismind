@@ -208,5 +208,8 @@ const pill = (active) => active ? 'border-indigo-400/50 bg-indigo-500/15 text-wh
       </SectionCard>
       <KnowledgeBaseView :user="user" :notify="notify" settings-only />
     </template>
+    <SectionCard v-else-if="user?.is_sub_admin" title="管理后台（子管理员）" hint="可以管理普通用户、生成邀请码、处理违禁词，查看反馈和操作记录">
+      <a href="/admin/" class="text-sm text-indigo-300 hover:text-indigo-200">打开管理后台 →</a>
+    </SectionCard>
   </div>
 </template>

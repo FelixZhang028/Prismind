@@ -2,7 +2,7 @@
 数据库初始化与连接（SQLite）。
 
 表：
-- users          官网注册用户（含 is_admin 标记、最后访问时间）
+- users          官网注册用户（含 is_admin 管理员、is_sub_admin 子管理员标记、最后访问时间）
 - backtests      每个用户的回测任务与结果
 - chart_drawings 每个用户在每只股票 K 线上画的线
 - ai_usage       每个用户每天调用平台 AI 的次数
@@ -384,6 +384,9 @@ def init_db() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
         if "last_seen_at" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN last_seen_at TEXT")
+        # 子管理员：能进管理后台管普通用户，但没有管理员的系统权限和使用特权（见 routes/admin.py）。
+        if "is_sub_admin" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN is_sub_admin INTEGER NOT NULL DEFAULT 0")
         if "makeup" not in {row["name"] for row in conn.execute("PRAGMA table_info(point_checkins)")}:
             conn.execute("ALTER TABLE point_checkins ADD COLUMN makeup INTEGER NOT NULL DEFAULT 0")
         # 以前建过一张没有任何代码写入的模拟账户表：空的直接换成现在的结构，万一有数据就改名留着。

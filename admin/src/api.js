@@ -44,10 +44,10 @@ async function request(path, { method = 'GET', body, auth = false } = {}) {
   return data
 }
 
-// 登录（复用 /auth/login），前端校验 is_admin
+// 登录（复用 /auth/login），前端校验是管理员或子管理员（后端每个接口还会再查）
 export async function login(email, password) {
   const data = await request('/api/v1/auth/login', { method: 'POST', body: { email, password } })
-  if (!data.user || !data.user.is_admin) {
+  if (!data.user || !(data.user.is_admin || data.user.is_sub_admin)) {
     throw new Error('该账户无管理员权限')
   }
   setSession(data.token)
@@ -86,6 +86,10 @@ export function deleteBannedWord(word) {
 }
 export function setUserActive(id, active) {
   return request(`/api/v1/admin/users/${id}/active`, { method: 'POST', body: { active }, auth: true })
+}
+// 设为或取消子管理员（只有管理员能用）
+export function setSubAdmin(id, subAdmin) {
+  return request(`/api/v1/admin/users/${id}/sub-admin`, { method: 'POST', body: { sub_admin: subAdmin }, auth: true })
 }
 
 // 注册方式与邀请码

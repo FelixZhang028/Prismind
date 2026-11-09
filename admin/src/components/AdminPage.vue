@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { SITE_BASE, adminAiUsage, adminStats, adminUsers, dailyUpdateStatus, systemStatus } from '../api.js'
 import { bytes, feedbackCard, firstResultCard } from '../format.js'
+import { visibleTabs } from '../roles.js'
 import { barHeights, tokensText } from '../settings.js'
 import AuditPanel from './AuditPanel.vue'
 import BannedWordsPanel from './BannedWordsPanel.vue'
@@ -14,8 +15,10 @@ import UsersPanel from './UsersPanel.vue'
 
 // 管理后台只显示平台的真实数字，并提供几项管理操作：停用账户、注册方式和邀请码、积分和兑换码、数据更新、
 // 系统设置（AI 密钥、次数、数据更新、邮件服务）和操作记录。
+// subAdmin：现在登录的是子管理员，只显示他能用的页签（后端每个接口也会再查）。
+const props = defineProps({ subAdmin: { type: Boolean, default: false } })
 const emit = defineEmits(['logout'])
-const tabs = [
+const allTabs = [
   { key: 'overview', label: '概览' },
   { key: 'users', label: '用户' },
   { key: 'feedback', label: '用户反馈' },
@@ -26,6 +29,7 @@ const tabs = [
   { key: 'settings', label: '系统设置' },
   { key: 'audit', label: '操作记录' },
 ]
+const tabs = visibleTabs(allTabs, props.subAdmin)
 const initial = window.location.hash.slice(1)
 const tab = ref(tabs.some((t) => t.key === initial) ? initial : 'overview')
 function openTab(key) {
@@ -53,7 +57,10 @@ function notify(message) {
 async function load() {
   loading.value = true
   error.value = ''
-  const [s, u, m, sys, ai] = await Promise.allSettled([adminStats(), adminUsers(), dailyUpdateStatus(), systemStatus(), adminAiUsage(30)])
+  // 数据更新和服务器状态只有管理员能看。
+  const skip = () => Promise.resolve(null)
+  const [s, u, m, sys, ai] = await Promise.allSettled([adminStats(), adminUsers(), props.subAdmin ? skip() : dailyUpdateStatus(),
+    props.subAdmin ? skip() : systemStatus(), adminAiUsage(30)])
   if (s.status === 'fulfilled') stats.value = s.value
   else error.value = s.reason?.message || '统计加载失败'
   if (u.status === 'fulfilled') users.value = u.value
@@ -118,7 +125,7 @@ const marketText = computed(() => {
       <img src="/brand/prismind-icon-small.svg" alt="" aria-hidden="true" class="h-9 w-9 shrink-0 rounded-xl shadow-lg shadow-indigo-500/40" />
       <div class="leading-tight">
         <p class="text-sm font-semibold text-white">Prismind <span class="text-xs font-medium tracking-[0.3em] text-slate-400">镜思</span></p>
-        <p class="text-xs text-slate-500">管理后台</p>
+        <p class="text-xs text-slate-500">管理后台<template v-if="subAdmin"> · 子管理员</template></p>
       </div>
       <div class="ml-auto flex items-center gap-2">
         <button type="button" :disabled="loading" class="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs text-slate-300 hover:text-white disabled:opacity-50" @click="load">{{ loading ? '刷新中…' : '刷新' }}</button>
@@ -154,7 +161,7 @@ const marketText = computed(() => {
           <div v-if="aiShare != null" class="mt-3 h-2 overflow-hidden rounded-full bg-white/10" aria-hidden="true">
             <div class="h-full rounded-full" :class="aiShare >= 90 ? 'bg-rose-400' : aiShare >= 70 ? 'bg-amber-400' : 'bg-indigo-400'" :style="{ width: `${aiShare}%` }" />
           </div>
-          <p class="mt-2 text-xs text-slate-500">全站每天的上限，用完以后当天所有用户暂停 AI 功能；管理员的调用也计入，但不受限制。上限和每人每天的次数可以在<button type="button" class="text-indigo-300 hover:text-indigo-200" @click="openTab('settings')">系统设置</button>里改。</p>
+          <p class="mt-2 text-xs text-slate-500">全站每天的上限，用完以后当天所有用户暂停 AI 功能；管理员的调用也计入，但不受限制。<template v-if="!subAdmin">上限和每人每天的次数可以在<button type="button" class="text-indigo-300 hover:text-indigo-200" @click="openTab('settings')">系统设置</button>里改。</template></p>
           <ul v-if="stats.ai.by_kind.length" class="mt-4 space-y-1.5 text-sm">
             <li v-for="k in stats.ai.by_kind" :key="k.kind" class="flex justify-between text-slate-300"><span>{{ k.label }}</span><span class="text-white">{{ number(k.count) }}</span></li>
           </ul>
@@ -181,7 +188,7 @@ const marketText = computed(() => {
               </tr>
             </tbody>
           </table>
-          <button type="button" class="mt-3 text-xs text-indigo-300 hover:text-indigo-200" @click="openTab('invites')">修改注册方式、生成邀请码 →</button>
+          <button type="button" class="mt-3 text-xs text-indigo-300 hover:text-indigo-200" @click="openTab('invites')">{{ subAdmin ? '生成邀请码 →' : '修改注册方式、生成邀请码 →' }}</button>
         </div>
       </section>
 
@@ -216,7 +223,7 @@ const marketText = computed(() => {
         <p class="mt-3 text-[11px] text-slate-500">token 只在服务商返回了用量时才有记录（决策模型 Jev 不返回），可以用来估算费用。</p>
       </section>
 
-      <section class="glass rounded-2xl p-5" aria-label="数据与备份">
+      <section v-if="!subAdmin" class="glass rounded-2xl p-5" aria-label="数据与备份">
         <h2 class="text-sm font-semibold text-white">数据与备份</h2>
         <p v-if="system?.disk?.warning" role="alert" class="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-200">磁盘只剩 {{ bytes(system.disk.free) }}，空间不够时每日更新和备份会失败。</p>
         <dl class="mt-4 grid gap-4 text-sm sm:grid-cols-4">
@@ -229,9 +236,9 @@ const marketText = computed(() => {
       </section>
     </main>
 
-    <UsersPanel v-else-if="tab === 'users'" :users="users" @changed="load" @notify="notify" />
-    <FeedbackPanel v-else-if="tab === 'feedback'" @changed="load" @notify="notify" />
-    <InvitesPanel v-else-if="tab === 'invites'" @changed="load" @notify="notify" />
+    <UsersPanel v-else-if="tab === 'users'" :users="users" :sub-admin="subAdmin" @changed="load" @notify="notify" />
+    <FeedbackPanel v-else-if="tab === 'feedback'" :readonly="subAdmin" @changed="load" @notify="notify" />
+    <InvitesPanel v-else-if="tab === 'invites'" :can-change-mode="!subAdmin" @changed="load" @notify="notify" />
     <BannedWordsPanel v-else-if="tab === 'words'" @changed="load" @notify="notify" />
     <PointsPanel v-else-if="tab === 'points'" :users="users" @changed="load" @notify="notify" />
     <DataPanel v-else-if="tab === 'data'" :site-base="SITE_BASE" @notify="notify" />

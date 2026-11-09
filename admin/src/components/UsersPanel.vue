@@ -1,9 +1,11 @@
 <script setup>
 import { computed, nextTick, reactive, ref } from 'vue'
-import { renameUser, setUserActive } from '../api.js'
+import { renameUser, setSubAdmin, setUserActive } from '../api.js'
+import { roleLabel, userActions } from '../roles.js'
 
-// 用户列表：看每个人用了多少 AI、做了多少回测，可以改昵称、停用或恢复账户。
-const props = defineProps({ users: { type: Array, default: () => [] } })
+// 用户列表：看每个人用了多少 AI、做了多少回测，可以改昵称、停用或恢复账户；管理员还能设为或取消子管理员。
+// subAdmin：现在登录的是子管理员，只能管普通用户。
+const props = defineProps({ users: { type: Array, default: () => [] }, subAdmin: { type: Boolean, default: false } })
 const emit = defineEmits(['changed', 'notify'])
 
 const keyword = ref('')
@@ -64,6 +66,31 @@ async function saveRename() {
   }
 }
 
+const roleClass = {
+  admin: 'border-violet-400/30 bg-violet-400/10 text-violet-300',
+  sub: 'border-sky-400/30 bg-sky-400/10 text-sky-300',
+  disabled: 'border-rose-400/30 bg-rose-400/10 text-rose-300',
+  user: 'border-slate-400/20 bg-slate-400/10 text-slate-300',
+}
+
+async function toggleSubAdmin(user) {
+  const next = !user.is_sub_admin
+  const question = next
+    ? `把「${user.name}」（${user.email}）设为子管理员？\n\n子管理员可以登录管理后台：改普通用户的昵称、停用或恢复普通用户、生成邀请码、管理违禁词，查看概览、用户反馈和操作记录。\n不能加扣积分、改注册方式、动数据和系统设置，在功能台里还是普通用户。`
+    : `取消「${user.name}」（${user.email}）的子管理员？取消后马上不能再进管理后台，账户本身不受影响。`
+  if (!window.confirm(question)) return
+  busy.value = user.id
+  try {
+    await setSubAdmin(user.id, next)
+    emit('notify', next ? `已把 ${user.name} 设为子管理员` : `已取消 ${user.name} 的子管理员`)
+    emit('changed')
+  } catch (e) {
+    emit('notify', e.message || '操作失败')
+  } finally {
+    busy.value = 0
+  }
+}
+
 async function toggle(user) {
   const next = !user.is_active
   const question = next
@@ -94,7 +121,7 @@ async function toggle(user) {
       </select>
     </div>
     <p v-if="flagged" class="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm text-amber-200">有 {{ flagged }} 个用户的昵称含违禁词（下面标出来了）。系统不会自动改，可以点“改昵称”处理。</p>
-    <p class="mt-2 text-xs text-slate-500">AI 次数包括 AI 解读、追问、AI 问答、生成规则、AI 评估和个股判断；某个人用得特别多时，可以先停用，查清楚再恢复。给用户加或扣积分在“积分与兑换码”里。</p>
+    <p class="mt-2 text-xs text-slate-500">AI 次数包括 AI 解读、追问、AI 问答、生成规则、AI 评估和个股判断；某个人用得特别多时，可以先停用，查清楚再恢复。<template v-if="subAdmin">子管理员只能管理普通用户。</template><template v-else>给用户加或扣积分在“积分与兑换码”里；子管理员可以登录管理后台帮忙管理普通用户，但没有积分、数据和系统设置的权限。</template></p>
     <div class="mt-4 overflow-x-auto">
       <table class="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:px-3 [&_th]:px-3 [&_td:first-child]:pl-0 [&_th:first-child]:pl-0 [&_td:last-child]:pr-0 [&_th:last-child]:pr-0 w-full min-w-[960px] text-left text-sm">
         <thead>
@@ -119,9 +146,7 @@ async function toggle(user) {
               <p class="text-xs text-slate-500">{{ u.email }}</p>
             </td>
             <td class="py-3">
-              <span v-if="u.is_admin" class="rounded-full border border-violet-400/30 bg-violet-400/10 px-2.5 py-0.5 text-xs text-violet-300">管理员</span>
-              <span v-else-if="!u.is_active" class="rounded-full border border-rose-400/30 bg-rose-400/10 px-2.5 py-0.5 text-xs text-rose-300">已停用</span>
-              <span v-else class="rounded-full border border-slate-400/20 bg-slate-400/10 px-2.5 py-0.5 text-xs text-slate-300">用户</span>
+              <span class="rounded-full border px-2.5 py-0.5 text-xs" :class="roleClass[roleLabel(u).tone]">{{ roleLabel(u).text }}</span>
             </td>
             <td class="py-3 text-right font-medium" :class="u.ai_today ? 'text-white' : 'text-slate-500'">{{ u.ai_today }}</td>
             <td class="py-3 text-right text-slate-400">{{ u.ai_total }}</td>
@@ -130,8 +155,13 @@ async function toggle(user) {
             <td class="py-3 text-slate-400">{{ time(u.created_at) }}</td>
             <td class="py-3 text-slate-400">{{ time(u.last_seen_at) }}</td>
             <td class="space-x-2 py-3 text-right">
-              <button type="button" :disabled="busy === u.id" class="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300 transition hover:border-white/25 hover:text-white disabled:opacity-50" @click="startRename(u)">改昵称</button>
-              <button v-if="!u.is_admin" type="button" :disabled="busy === u.id"
+              <span v-if="subAdmin && !userActions(u, true).rename" class="text-xs text-slate-500">—</span>
+              <button v-if="userActions(u, subAdmin).toggleSubAdmin" type="button" :disabled="busy === u.id"
+                class="rounded-full border px-3 py-1 text-xs transition disabled:opacity-50"
+                :class="u.is_sub_admin ? 'border-white/10 text-slate-400 hover:border-white/25 hover:text-white' : 'border-sky-400/30 text-sky-300 hover:bg-sky-400/10'"
+                @click="toggleSubAdmin(u)">{{ u.is_sub_admin ? '取消子管理员' : '设为子管理员' }}</button>
+              <button v-if="userActions(u, subAdmin).rename" type="button" :disabled="busy === u.id" class="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300 transition hover:border-white/25 hover:text-white disabled:opacity-50" @click="startRename(u)">改昵称</button>
+              <button v-if="userActions(u, subAdmin).toggleActive" type="button" :disabled="busy === u.id"
                 class="rounded-full border px-3 py-1 text-xs transition disabled:opacity-50"
                 :class="u.is_active ? 'border-rose-400/30 text-rose-300 hover:bg-rose-400/10' : 'border-emerald-400/30 text-emerald-300 hover:bg-emerald-400/10'"
                 @click="toggle(u)">{{ u.is_active ? '停用' : '恢复' }}</button>
@@ -150,7 +180,7 @@ async function toggle(user) {
           <input ref="nameEl" v-model="renameForm.name" :maxlength="NAME_MAX + 20" class="mt-1 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-indigo-400/40" /></label>
         <label class="mt-3 block text-xs text-slate-400">原因（可以不填，只记在操作记录里）
           <input v-model="renameForm.reason" maxlength="60" placeholder="例如 昵称不合适" class="mt-1 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-400/40" /></label>
-        <p class="mt-2 text-xs text-slate-500">管理员改的昵称不检查违禁词，也不会通知用户。</p>
+        <p class="mt-2 text-xs text-slate-500">{{ subAdmin ? '子管理员改的昵称也要检查违禁词，不会通知用户。' : '管理员改的昵称不检查违禁词，也不会通知用户。' }}</p>
         <p v-if="renameError" class="mt-2 text-xs text-rose-300" role="alert">{{ renameError }}</p>
         <div class="mt-4 flex justify-end gap-2">
           <button type="button" class="rounded-full border border-white/10 px-4 py-1.5 text-sm text-slate-300" @click="renaming = null">取消</button>

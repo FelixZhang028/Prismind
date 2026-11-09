@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { createInvite, registrationSettings, setInviteActive, setRegistrationMode } from '../api.js'
 
 // 注册方式和邀请码：改完立即生效，不用重启后端。.env 里写的邀请码只能在服务器上改。
+// canChangeMode：只有管理员能改注册方式；子管理员只看现在的方式，可以生成和停用邀请码。
+defineProps({ canChangeMode: { type: Boolean, default: true } })
 const emit = defineEmits(['notify', 'changed'])
 const settings = ref(null)
 const error = ref('')
@@ -94,7 +96,7 @@ const inputClass = 'w-full rounded-xl border border-white/10 bg-white/5 px-3 py-
       <h2 class="text-sm font-semibold text-white">注册方式</h2>
       <p v-if="settings.locked" class="mt-2 text-sm text-amber-200">服务器的 .env 里写了 FELLOWQUANT_REGISTRATION=closed，现在固定为暂停注册；要在页面上修改，先在服务器上去掉这一行并重启后端。</p>
       <div class="mt-4 grid gap-3 sm:grid-cols-3">
-        <button v-for="m in modes" :key="m.value" type="button" :disabled="saving || settings.locked"
+        <button v-for="m in modes" :key="m.value" type="button" :disabled="saving || settings.locked || !canChangeMode"
           class="rounded-xl border p-4 text-left transition disabled:cursor-not-allowed"
           :class="settings.mode === m.value ? 'border-indigo-400/50 bg-indigo-500/15' : 'border-white/10 bg-white/5 hover:border-white/25'"
           :aria-pressed="settings.mode === m.value" @click="chooseMode(m.value)">
@@ -102,6 +104,7 @@ const inputClass = 'w-full rounded-xl border border-white/10 bg-white/5 px-3 py-
           <p class="mt-1 text-xs text-slate-400">{{ m.hint }}</p>
         </button>
       </div>
+      <p v-if="!canChangeMode" class="mt-3 text-xs text-slate-500">注册方式只有管理员能改。</p>
       <p v-if="settings.mode === 'invite' && !available" class="mt-3 text-sm text-amber-200">现在没有还能用的邀请码，谁也注册不了。在下面生成一个吧。</p>
       <p v-if="settings.signup && !settings.signup.available && settings.mode === 'open'" class="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm text-amber-200">
         邮件服务还没有配置，开放注册暂时注册不了：注册要先填发到邮箱的验证码。到“系统设置 → 邮件服务”填好并发一封测试邮件就能注册了；凭邀请码注册不受影响。</p>

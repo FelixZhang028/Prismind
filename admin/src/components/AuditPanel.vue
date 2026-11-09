@@ -46,13 +46,13 @@ const time = (iso) => new Date(iso).toLocaleString('zh-CN', { hour12: false })
       </div>
       <button type="button" class="ml-auto text-xs text-indigo-300 hover:text-indigo-200 disabled:opacity-50" :disabled="loading" @click="load">刷新</button>
     </div>
-    <p class="mt-2 text-xs text-slate-500">记录管理员做过的操作：改系统设置（只记改了哪些项，不记密钥）、停用或恢复用户、注册方式和邀请码、数据任务、备份。</p>
+    <p class="mt-2 text-xs text-slate-500">记录管理员和子管理员做过的操作：改系统设置（只记改了哪些项，不记密钥）、停用或恢复用户、设为或取消子管理员、注册方式和邀请码、数据任务、备份。</p>
     <p v-if="error" role="alert" class="mt-4 text-sm text-rose-300">{{ error }}</p>
     <p v-else-if="loading && !items.length" class="mt-4 text-sm text-slate-400" role="status">正在读取…</p>
     <p v-else-if="!items.length" class="mt-4 text-sm text-slate-500">还没有记录。</p>
     <div v-else class="mt-4 overflow-x-auto">
       <table class="w-full min-w-[640px] text-left text-sm">
-        <thead><tr class="text-xs text-slate-500"><th class="pb-2 pr-4 font-medium">时间</th><th class="pb-2 pr-4 font-medium">管理员</th><th class="pb-2 pr-4 font-medium">种类</th><th class="pb-2 font-medium">做了什么</th></tr></thead>
+        <thead><tr class="text-xs text-slate-500"><th class="pb-2 pr-4 font-medium">时间</th><th class="pb-2 pr-4 font-medium">操作人</th><th class="pb-2 pr-4 font-medium">种类</th><th class="pb-2 font-medium">做了什么</th></tr></thead>
         <tbody class="divide-y divide-white/5">
           <tr v-for="row in items" :key="row.id" class="text-slate-300">
             <td class="whitespace-nowrap py-2 pr-4 text-xs text-slate-400">{{ time(row.created_at) }}</td>
