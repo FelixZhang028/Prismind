@@ -1,5 +1,5 @@
 <script setup>
-// 功能台首页：问候和数据状态、市场概况（指数和全市场涨跌分布）、我的股票池、新手任务、
+// 功能台首页：问候和数据状态、开始使用（没做完时在最上面）、市场概况（指数和全市场涨跌分布）、我的股票池、
 // 最近的研究、今天的行业涨跌、数据日历，以及可以收起的快速回测。
 // 数字都来自本地数据和这个账户自己的记录，一个请求拿到（/api/v1/home）。只列数据，不推荐股票。
 import { computed, onActivated, onMounted, reactive, ref } from 'vue'
@@ -29,6 +29,7 @@ onActivated(() => { if (home.value) load() })   // 从别的页面回来时刷�
 
 function go(view, context = {}) { openResearch(view, context) }
 function openChat(detail = {}) { window.dispatchEvent(new CustomEvent('fq-open-chat', { detail })) }
+function openGuide() { window.dispatchEvent(new CustomEvent('fq-open-tour')) }
 function openRecent(item) {
   if (item.kind === 'chat') openChat({ chat: item.context.chat })
   else go(item.view, item.context)
@@ -117,6 +118,28 @@ const link = 'text-xs text-indigo-300 hover:text-indigo-200'
     <p v-else-if="loading" class="text-sm text-slate-400" role="status">正在读取首页的数据…</p>
 
     <template v-if="home">
+      <!-- 开始使用：没做完时放在最上面。第一项几秒钟出结果，后四项是主线，点“去做”到那一页并亮出要点的按钮 -->
+      <section v-if="!progress.finished" :class="card" aria-label="开始使用">
+        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h2 class="text-sm font-semibold text-white">开始使用</h2>
+          <span class="text-xs text-slate-400">已完成 {{ progress.done }}/{{ progress.total }}</span>
+          <button type="button" class="ml-auto" :class="link" @click="openGuide">看一遍新手引导 →</button>
+        </div>
+        <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10"><div class="h-full rounded-full bg-indigo-400 transition-all" :style="{ width: `${(progress.done / progress.total) * 100}%` }" /></div>
+        <ol class="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          <li v-for="(step, i) in home.steps" :key="step.key">
+            <button type="button" class="flex h-full w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left text-sm transition"
+              :class="progress.next?.key === step.key ? 'border-indigo-400/40 bg-indigo-500/10 hover:bg-indigo-500/15' : 'border-white/10 bg-white/5 hover:bg-white/10'"
+              @click="go(step.view, step.context)">
+              <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs"
+                :class="step.done ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-200' : 'border-white/20 text-slate-400'">{{ step.done ? '✓' : i + 1 }}</span>
+              <span class="min-w-0 flex-1" :class="step.done ? 'text-slate-500 line-through' : 'text-slate-200'">{{ step.label }}</span>
+              <span v-if="progress.next?.key === step.key" class="shrink-0 whitespace-nowrap text-xs text-indigo-300">去做 →</span>
+            </button>
+          </li>
+        </ol>
+      </section>
+
       <!-- 市场概况 -->
       <section aria-label="市场概况" class="space-y-3">
         <div class="flex flex-wrap items-baseline gap-2">
@@ -188,26 +211,9 @@ const link = 'text-xs text-indigo-300 hover:text-indigo-200'
           </div>
         </section>
 
-        <!-- 新手任务 / 我的研究 + 数据日历 -->
+        <!-- 我的研究 + 数据日历 -->
         <div class="flex min-w-0 flex-col gap-6">
-          <section v-if="!progress.finished" :class="card" aria-label="新手任务">
-            <div class="flex items-baseline justify-between">
-              <h2 class="text-sm font-semibold text-white">开始使用</h2>
-              <span class="text-xs text-slate-400">已完成 {{ progress.done }}/{{ progress.total }}</span>
-            </div>
-            <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10"><div class="h-full rounded-full bg-indigo-400" :style="{ width: `${(progress.done / progress.total) * 100}%` }" /></div>
-            <ol class="mt-4 space-y-2">
-              <li v-for="(step, i) in home.steps" :key="step.key">
-                <button type="button" class="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left text-sm transition hover:bg-white/5" @click="go(step.view, step.context)">
-                  <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px]"
-                    :class="step.done ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-200' : 'border-white/20 text-slate-400'">{{ step.done ? '✓' : i + 1 }}</span>
-                  <span :class="step.done ? 'text-slate-500 line-through' : 'text-slate-200'">{{ step.label }}</span>
-                  <span v-if="progress.next?.key === step.key" class="ml-auto text-xs text-indigo-300">去做 →</span>
-                </button>
-              </li>
-            </ol>
-          </section>
-          <section v-else :class="card" aria-label="我的研究">
+          <section :class="card" aria-label="我的研究">
             <h2 class="text-sm font-semibold text-white">我的研究</h2>
             <dl class="mt-3 grid grid-cols-2 gap-3 text-sm">
               <button v-for="item in [['strategies', '保存的策略', 'strategy-hub'], ['backtests', '完成的回测', 'run-library'], ['briefs', 'AI 个股分析', 'agent-lab'], ['chats', 'AI 问答对话', '']]"

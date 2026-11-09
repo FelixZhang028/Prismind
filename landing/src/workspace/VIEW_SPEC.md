@@ -35,6 +35,7 @@ const props = defineProps({
 - 必须声明 `props`（user / notify）。用 `props.notify(msg)` 弹提示（如「已保存」「已删除」「操作失败」）。
 - 所有 API 调用包在 try/catch，失败用 `props.notify(e.message || '加载失败')`，可同时用局部 ref 存错误文本展示。
 - 页面无需鉴权重定向（外壳已处理）。不要 import vue-router。
+- 新手引导（`components/GuideTour.vue`，步骤在 `workspace/guideSteps.js`）靠 `data-guide="..."` 找要高亮的元素：改动第一条选股条件（RuleConditions）、开始方式、运行回测、新建模拟账户这几个元素时保留这个属性。
 - 官网登录入口根据当前浏览器会话切换，登录页通过 `restoreSession` 验证已有会话后自动进入工作台；工作台仅在明确 401 时清除会话，网络或服务错误保留会话并展示重试，不能将任意请求失败视为退出登录。
 - 设置页（`views/SettingsView.vue`）：外观（主题跟随系统 / 浅色 / 深色，重新打开新手引导）；研究默认值（回测初始资金、最多持仓、调仓频率、最近几年的区间，AI 个股分析是否默认参考研究经验，`getPreferences/savePreferences`，保存在账户里；回测页第一次打开时填入，所选策略自带持仓和调仓时以策略为准）；今天各类 AI 的剩余次数（`todayUsage`）；我的数据（股票池和风控摘要、导出我的数据 `exportMyData`，一个 JSON 文件，不含密码）；账户（去个人中心）；关于（版本、法律页面、联系邮箱、问题反馈）。管理员另外看到管理后台入口和知识库配置。
 - 个人中心：修改密码（`changePassword`，要原密码，改完其他设备的登录失效，这台设备拿到新令牌）、退出登录（`logout` 通知后端，所有设备的登录都失效）、注销账户（`deleteAccount`，输入密码确认，删除账户和全部研究数据；管理员不显示）。注册页按 `registrationMode()` 显示邀请码输入框或“暂时不开放注册”。

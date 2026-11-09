@@ -416,6 +416,9 @@ def screen_package(body: ScreenIn, user: dict = Depends(get_current_user)):
 
     rate_limit.check(f"screen:{user['id']}", *SCREEN_LIMIT, "筛选太频繁，请稍后再试")
     rule, day, result = _run_screen(body, user)
+    with get_conn() as conn:   # 只记第一次：首页“开始使用”打勾
+        conn.execute("INSERT OR IGNORE INTO user_milestones (user_id, kind, at) VALUES (?, 'stock_screen', ?)",
+                     (user["id"], _now()))
     names = security_names()
     items = [{**item, "symbol": to_bare(item["symbol"]), "name": names.get(item["symbol"], "")}
              for item in result["items"][: body.limit]]
