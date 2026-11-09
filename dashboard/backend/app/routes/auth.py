@@ -109,6 +109,7 @@ class UserOut(BaseModel):
     email: str
     created_at: str
     is_admin: bool = False
+    is_sub_admin: bool = False
 
 
 def _user_to_out(row) -> dict:
@@ -118,6 +119,7 @@ def _user_to_out(row) -> dict:
         "email": row["email"],
         "created_at": row["created_at"],
         "is_admin": bool(row["is_admin"]) if "is_admin" in row.keys() else False,
+        "is_sub_admin": bool(row["is_sub_admin"]) if "is_sub_admin" in row.keys() else False,
     }
 
 
@@ -131,7 +133,7 @@ def get_current_user(authorization: str | None = Header(default=None)) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="令牌无效或已过期")
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id, name, email, created_at, is_admin, is_active, token_version, last_seen_at FROM users WHERE id = ?", (payload["uid"],)
+            "SELECT id, name, email, created_at, is_admin, is_sub_admin, is_active, token_version, last_seen_at FROM users WHERE id = ?", (payload["uid"],)
         ).fetchone()
     if not row:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在")
@@ -287,7 +289,7 @@ def login(body: LoginIn, request: Request):
     rate_limit.check(failures, *LOGIN_FAILURES_PER_EMAIL, "这个账户密码输错次数太多", record=False)
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id, name, email, password_hash, salt, created_at, is_admin, is_active, token_version FROM users WHERE email = ?",
+            "SELECT id, name, email, password_hash, salt, created_at, is_admin, is_sub_admin, is_active, token_version FROM users WHERE email = ?",
             (email,),
         ).fetchone()
     if not row or not verify_password(body.password, row["salt"], row["password_hash"]):

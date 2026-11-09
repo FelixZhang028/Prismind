@@ -4,7 +4,9 @@ import { adminFeedback, updateFeedback } from '../api.js'
 import { number, pageName, time, usefulText } from '../format.js'
 
 // 用户反馈：功能台里提的建议、第一次出结果后的“有用吗”、注销时匿名的离开原因。
-// 上面是最近 30 天的汇总，下面是列表：可以按种类和状态筛选，标成已读、已处理，写一句备注（只有管理员看得到）。
+// 上面是最近 30 天的汇总，下面是列表：可以按种类和状态筛选，标成已读、已处理，写一句备注（只有管理员和子管理员看得到）。
+// readonly：子管理员只能看，不能改状态和备注。
+defineProps({ readonly: { type: Boolean, default: false } })
 const emit = defineEmits(['notify', 'changed'])
 const PAGE = 100
 const kind = ref('suggestion')
@@ -121,12 +123,13 @@ const kindTone = { suggestion: 'text-indigo-200', useful: 'text-violet-200', lea
             <template v-else-if="item.kind === 'leave'">{{ item.reason }}<template v-if="item.text">：</template></template>
             <span class="whitespace-pre-wrap">{{ item.text }}</span>
           </p>
-          <div class="mt-3 flex flex-wrap items-center gap-2">
+          <p v-if="readonly && item.admin_note" class="mt-2 text-xs text-slate-400">备注：{{ item.admin_note }}</p>
+          <div v-if="!readonly" class="mt-3 flex flex-wrap items-center gap-2">
             <button v-if="item.status !== 'read'" type="button" :disabled="saving === item.id" class="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300 hover:bg-white/5" @click="save(item, { status: 'read' })">标为已读</button>
             <button v-if="item.status !== 'done'" type="button" :disabled="saving === item.id" class="rounded-full border border-emerald-400/30 px-3 py-1 text-xs text-emerald-200 hover:bg-emerald-400/10" @click="save(item, { status: 'done' })">标为已处理</button>
             <button v-if="item.status !== 'new'" type="button" :disabled="saving === item.id" class="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-400 hover:bg-white/5" @click="save(item, { status: 'new' })">改回新的</button>
             <form class="flex min-w-[16rem] flex-1 items-center gap-2" @submit.prevent="save(item, { note: notes[item.id] || '' })">
-              <input v-model="notes[item.id]" maxlength="300" placeholder="备注（只有管理员看得到），例如：已在 #95 修复" aria-label="备注"
+              <input v-model="notes[item.id]" maxlength="300" placeholder="备注（只有管理员和子管理员看得到），例如：已在 #95 修复" aria-label="备注"
                 class="flex-1 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-indigo-400/40" />
               <button type="submit" :disabled="saving === item.id || (notes[item.id] || '') === item.admin_note" class="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300 disabled:opacity-40">保存备注</button>
             </form>

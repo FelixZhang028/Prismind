@@ -125,7 +125,7 @@ const inputClass = 'w-full rounded-xl border border-white/10 bg-white/5 px-3 py-
         </div>
         <div class="rounded-xl border border-white/10 bg-white/5 p-4">
           <p class="text-xs text-slate-400">账户类型</p>
-          <p class="mt-1 text-sm text-white">{{ user?.is_admin ? '管理员' : '标准用户' }}</p>
+          <p class="mt-1 text-sm text-white">{{ user?.is_admin ? '管理员' : user?.is_sub_admin ? '子管理员' : '标准用户' }}</p>
         </div>
       </div>
     </section>

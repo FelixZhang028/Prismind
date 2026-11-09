@@ -1,30 +1,36 @@
 """
-管理员接口，挂载在 /api/v1/admin 下（仅 is_admin=1 可访问）。
+管理员接口，挂载在 /api/v1/admin 下。
 
-- GET  /users                 全部用户：最后访问、今天和累计的 AI 次数、回测数、积分、是否停用、昵称里的违禁词
-- POST /users/{id}/active     停用或恢复一个账户（管理员账户不能停用）
-- POST /users/{id}/name       改一个用户的昵称（可以写原因，记进操作记录）
+两种身份能进管理后台（后端每个接口自己检查，前端只是不显示没权限的页面）：
+- 管理员（is_admin）：全部接口。
+- 子管理员（is_sub_admin）：标 [子] 的接口。只能改普通用户的昵称、停用或恢复普通用户（不能动管理员和其他子管理员）；
+  反馈只能看。积分、兑换码、注册方式、数据、备份、系统设置、设置子管理员都不行。在功能台里还是普通用户，没有管理员的特权。
+
+- GET  /users                 [子] 全部用户：最后访问、今天和累计的 AI 次数、回测数、积分、是否停用、昵称里的违禁词
+- POST /users/{id}/active     [子] 停用或恢复一个账户（管理员账户不能停用）
+- POST /users/{id}/name       [子] 改一个用户的昵称（可以写原因，记进操作记录）
 - POST /users/{id}/points     给一个用户加或扣积分（要写原因）
+- POST /users/{id}/sub-admin  设为或取消子管理员
 - GET  /points                积分概况：还有效的积分、最近发放和使用的积分、最近的明细、全部兑换码
 - POST /redeem-codes          生成兑换码（一次可以生成多个）
 - POST /redeem-codes/{code}/active 停用或恢复兑换码
-- GET  /stats                 平台的真实数字：用户、研究、AI 用量、邀请码、注册方式、备份
-- GET  /registration          注册方式和全部邀请码
+- GET  /stats                 [子] 平台的真实数字：用户、研究、AI 用量、邀请码、注册方式、备份
+- GET  /registration          [子] 注册方式和全部邀请码
 - PUT  /registration          改注册方式：open 开放 / invite 凭邀请码 / closed 暂停
-- POST /invites               生成邀请码（可以指定码、次数和备注）
-- POST /invites/{code}/active 停用或恢复页面生成的邀请码
+- POST /invites               [子] 生成邀请码（可以指定码、次数和备注）
+- POST /invites/{code}/active [子] 停用或恢复页面生成的邀请码
 - GET  /system                服务器状态：磁盘空间、数据占用、备份列表、财务数据的自动更新
 - POST /backup                现在手动备份一次
 - GET  /settings              系统设置：AI 模型、AI 次数、数据更新、邮件服务（密钥只显示前后几位）
 - PUT  /settings              保存或清除系统设置（要再输一次管理员密码），立刻生效
 - POST /settings/test         用页面上（可以还没保存）的设置测试文本模型、Jev 或发一封测试邮件
-- GET  /banned-words          昵称违禁词：内置的和管理员加的
-- POST /banned-words          加违禁词（一次可以加很多个）
-- POST /banned-words/delete   删掉一个管理员加的违禁词
-- GET  /feedback              用户反馈：建议、“有用吗”、离开原因（可以按种类和状态筛选），以及汇总
+- GET  /banned-words          [子] 昵称违禁词：内置的和管理员加的
+- POST /banned-words          [子] 加违禁词（一次可以加很多个）
+- POST /banned-words/delete   [子] 删掉一个管理员加的违禁词
+- GET  /feedback              [子] 用户反馈：建议、“有用吗”、离开原因（可以按种类和状态筛选），以及汇总
 - POST /feedback/{id}         把一条反馈标成已读或已处理、写备注
-- GET  /audit                 管理员做过的操作
-- GET  /ai-usage              最近 30 天每天各类 AI 的次数、token 用量、用得最多的用户
+- GET  /audit                 [子] 管理员和子管理员做过的操作
+- GET  /ai-usage              [子] 最近 30 天每天各类 AI 的次数、token 用量、用得最多的用户
 """
 import shutil
 import time
@@ -49,8 +55,27 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+def require_staff(user: dict = Depends(get_current_user)) -> dict:
+    """管理员或子管理员。"""
+
+    if not (user.get("is_admin") or user.get("is_sub_admin")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
+    return user
+
+
+def _check_target(actor: dict, row) -> None:
+    """子管理员只能管普通用户：管理员和子管理员（包括自己）都不行。"""
+
+    if not actor.get("is_admin") and (row["is_admin"] or row["is_sub_admin"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="子管理员只能管理普通用户")
+
+
 class ActiveIn(BaseModel):
     active: bool
+
+
+class SubAdminIn(BaseModel):
+    sub_admin: bool
 
 
 class NameIn(BaseModel):
@@ -91,12 +116,12 @@ class RedeemCodesIn(BaseModel):
     note: str = Field("", max_length=60, description="备注，例如发给谁")
 
 
-@router.get("/users", dependencies=[Depends(require_admin)])
+@router.get("/users", dependencies=[Depends(require_staff)])
 def list_users():
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT u.id, u.name, u.email, u.created_at, u.is_admin, u.is_active, u.last_seen_at,
+            SELECT u.id, u.name, u.email, u.created_at, u.is_admin, u.is_sub_admin, u.is_active, u.last_seen_at,
                    (SELECT COALESCE(SUM(a.count), 0) FROM ai_usage a WHERE a.user_id = u.id AND a.day = ?) AS ai_today,
                    (SELECT COALESCE(SUM(a.count), 0) FROM ai_usage a WHERE a.user_id = u.id) AS ai_total,
                    (SELECT COUNT(*) FROM backtests b WHERE b.user_id = u.id) AS backtests,
@@ -116,6 +141,7 @@ def list_users():
             "created_at": r["created_at"],
             "last_seen_at": r["last_seen_at"],
             "is_admin": bool(r["is_admin"]),
+            "is_sub_admin": bool(r["is_sub_admin"]),
             "is_active": bool(r["is_active"]),
             "ai_today": int(r["ai_today"]),
             "ai_total": int(r["ai_total"]),
@@ -127,13 +153,14 @@ def list_users():
 
 
 @router.post("/users/{uid}/active")
-def set_user_active(uid: int, body: ActiveIn, admin: dict = Depends(require_admin)):
+def set_user_active(uid: int, body: ActiveIn, admin: dict = Depends(require_staff)):
     """停用：不能再登录，已经登录的设备立即失效；恢复：可以重新登录。账户里的数据都不动。"""
 
     with get_conn() as conn:
-        row = conn.execute("SELECT is_admin, email FROM users WHERE id = ?", (uid,)).fetchone()
+        row = conn.execute("SELECT is_admin, is_sub_admin, email FROM users WHERE id = ?", (uid,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="没有这个用户")
+        _check_target(admin, row)
         if row["is_admin"]:
             raise HTTPException(status_code=403, detail="管理员账户不能停用")
         conn.execute("UPDATE users SET is_active = ?, token_version = token_version + ? WHERE id = ?",
@@ -144,17 +171,18 @@ def set_user_active(uid: int, body: ActiveIn, admin: dict = Depends(require_admi
 
 
 @router.post("/users/{uid}/name")
-def rename_user(uid: int, body: NameIn, admin: dict = Depends(require_admin)):
-    """管理员改昵称不检查违禁词（有时要用“官方”这样的名字），不限次数，也不通知用户。"""
+def rename_user(uid: int, body: NameIn, admin: dict = Depends(require_staff)):
+    """管理员改昵称不检查违禁词（有时要用“官方”这样的名字），子管理员改要检查；不限次数，也不通知用户。"""
 
     try:
-        name = nicknames.check(body.name, allow_banned=True)
+        name = nicknames.check(body.name, allow_banned=bool(admin.get("is_admin")))
     except nicknames.NicknameError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     with get_conn() as conn:
-        row = conn.execute("SELECT name, email FROM users WHERE id = ?", (uid,)).fetchone()
+        row = conn.execute("SELECT name, email, is_admin, is_sub_admin FROM users WHERE id = ?", (uid,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="没有这个用户")
+        _check_target(admin, row)
         if row["name"] == name:
             return {"id": uid, "name": name}
         conn.execute("UPDATE users SET name = ? WHERE id = ?", (name, uid))
@@ -162,6 +190,28 @@ def rename_user(uid: int, body: NameIn, admin: dict = Depends(require_admin)):
     audit.record(admin, "user.rename", f"把 {row['email']} 的昵称从“{row['name']}”改成“{name}”" + (f"：{reason}" if reason else ""),
                  user_id=uid, old=row["name"], new=name, reason=reason)
     return {"id": uid, "name": name}
+
+
+@router.post("/users/{uid}/sub-admin")
+def set_sub_admin(uid: int, body: SubAdminIn, admin: dict = Depends(require_admin)):
+    """设为或取消子管理员，立即生效（每次请求都从数据库读身份，不用重新登录）。"""
+
+    with get_conn() as conn:
+        row = conn.execute("SELECT is_admin, is_sub_admin, is_active, email FROM users WHERE id = ?", (uid,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="没有这个用户")
+        if row["is_admin"]:
+            raise HTTPException(status_code=400, detail="管理员不用设为子管理员")
+        if body.sub_admin and not row["is_active"]:
+            raise HTTPException(status_code=400, detail="这个账户已停用，先恢复再设为子管理员")
+        if bool(row["is_sub_admin"]) == body.sub_admin:
+            return {"id": uid, "is_sub_admin": body.sub_admin}
+        conn.execute("UPDATE users SET is_sub_admin = ? WHERE id = ?", (1 if body.sub_admin else 0, uid))
+    if body.sub_admin:
+        audit.record(admin, "user.sub_admin_on", f"把 {row['email']} 设为子管理员", user_id=uid)
+    else:
+        audit.record(admin, "user.sub_admin_off", f"取消了 {row['email']} 的子管理员", user_id=uid)
+    return {"id": uid, "is_sub_admin": body.sub_admin}
 
 
 @router.post("/users/{uid}/points")
@@ -207,7 +257,7 @@ def set_redeem_code_active(code: str, body: ActiveIn, admin: dict = Depends(requ
     return points_overview(30)
 
 
-@router.get("/registration", dependencies=[Depends(require_admin)])
+@router.get("/registration", dependencies=[Depends(require_staff)])
 def registration_settings():
     # signup：注册要不要邮箱验证码、现在能不能注册（开放注册但邮件服务没配好时不能）。
     return {"mode": registration.mode(), "locked": registration.env_locked(), "invites": registration.all_codes(),
@@ -225,14 +275,14 @@ def change_registration(body: ModeIn, admin: dict = Depends(require_admin)):
 
 
 @router.post("/invites", status_code=status.HTTP_201_CREATED)
-def create_invite(body: InviteIn, admin: dict = Depends(require_admin)):
+def create_invite(body: InviteIn, admin: dict = Depends(require_staff)):
     code = registration.create_code(body.code, body.max_uses, body.note)
     audit.record(admin, "registration.invite", f"生成了邀请码 {code}（可用 {body.max_uses} 次）", code=code, note=body.note)
     return {"code": code, **registration_settings()}
 
 
 @router.post("/invites/{code}/active")
-def set_invite_active(code: str, body: ActiveIn, admin: dict = Depends(require_admin)):
+def set_invite_active(code: str, body: ActiveIn, admin: dict = Depends(require_staff)):
     registration.set_code_active(code, body.active)
     audit.record(admin, "registration.invite_active", f"{'恢复' if body.active else '停用'}了邀请码 {code}", code=code)
     return registration_settings()
@@ -292,7 +342,7 @@ def _first_results(conn, now: datetime | None = None) -> dict:
             "median_minutes": None if median is None else round(median, 1)}
 
 
-@router.get("/stats", dependencies=[Depends(require_admin)])
+@router.get("/stats", dependencies=[Depends(require_staff)])
 def admin_stats():
     today, since = platform_ai._today(), _china_day_start()
     with get_conn() as conn:
@@ -479,13 +529,13 @@ def settings_test(body: SettingsTestIn, admin: dict = Depends(require_admin)):
     return {"ok": True, "seconds": round(time.monotonic() - started, 1), **result}
 
 
-@router.get("/banned-words", dependencies=[Depends(require_admin)])
+@router.get("/banned-words", dependencies=[Depends(require_staff)])
 def banned_words():
     return {"items": nicknames.words(), "word_max": nicknames.WORD_MAX}
 
 
 @router.post("/banned-words", status_code=status.HTTP_201_CREATED)
-def add_banned_words(body: WordsIn, admin: dict = Depends(require_admin)):
+def add_banned_words(body: WordsIn, admin: dict = Depends(require_staff)):
     try:
         result = nicknames.add(body.words, str(admin.get("email") or ""))
     except nicknames.NicknameError as e:
@@ -496,7 +546,7 @@ def add_banned_words(body: WordsIn, admin: dict = Depends(require_admin)):
 
 
 @router.post("/banned-words/delete")
-def delete_banned_word(body: WordIn, admin: dict = Depends(require_admin)):
+def delete_banned_word(body: WordIn, admin: dict = Depends(require_staff)):
     try:
         removed = nicknames.remove(body.word)
     except nicknames.NicknameError as e:
@@ -512,7 +562,7 @@ class FeedbackUpdateIn(BaseModel):
     note: str | None = Field(None, max_length=feedback.NOTE_MAX + 50)
 
 
-@router.get("/feedback", dependencies=[Depends(require_admin)])
+@router.get("/feedback", dependencies=[Depends(require_staff)])
 def feedback_list(kind: str = Query("", max_length=20), status_: str = Query("", alias="status", max_length=10),
                   limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
     try:
@@ -533,11 +583,11 @@ def feedback_update(feedback_id: int, body: FeedbackUpdateIn):
         raise HTTPException(status_code=404, detail=str(exc)) from None
 
 
-@router.get("/audit", dependencies=[Depends(require_admin)])
+@router.get("/audit", dependencies=[Depends(require_staff)])
 def audit_list(kind: str = Query("", max_length=20), limit: int = Query(100, ge=1, le=audit.MAX_ROWS)):
     return {"items": audit.listing(kind, limit), "kinds": audit.KINDS}
 
 
-@router.get("/ai-usage", dependencies=[Depends(require_admin)])
+@router.get("/ai-usage", dependencies=[Depends(require_staff)])
 def ai_usage(days: int = Query(30, ge=1, le=90)):
     return platform_ai.usage_history(days)
