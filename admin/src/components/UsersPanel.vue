@@ -32,7 +32,9 @@ const rows = computed(() => {
   return [...list].sort(by)
 })
 
-const time = (value) => (value ? new Date(value).toLocaleString() : '—')
+// 日期和时间分两行，表格窄一些，不用左右滚动。
+const day = (value) => (value ? new Date(value).toLocaleDateString() : '—')
+const clock = (value) => (value ? new Date(value).toLocaleTimeString() : '')
 const flagged = computed(() => props.users.filter((u) => u.banned_word).length)
 
 // 改昵称：管理员改不检查违禁词、不限次数，也不通知用户；记进操作记录。
@@ -123,7 +125,7 @@ async function toggle(user) {
     <p v-if="flagged" class="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm text-amber-200">有 {{ flagged }} 个用户的昵称含违禁词（下面标出来了）。系统不会自动改，可以点“改昵称”处理。</p>
     <p class="mt-2 text-xs text-slate-500">AI 次数包括 AI 解读、追问、AI 问答、生成规则、AI 评估和个股判断；某个人用得特别多时，可以先停用，查清楚再恢复。<template v-if="subAdmin">子管理员只能管理普通用户。</template><template v-else>给用户加或扣积分在“积分与兑换码”里；子管理员可以登录管理后台帮忙管理普通用户，但没有积分、数据和系统设置的权限。</template></p>
     <div class="mt-4 overflow-x-auto">
-      <table class="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:px-3 [&_th]:px-3 [&_td:first-child]:pl-0 [&_th:first-child]:pl-0 [&_td:last-child]:pr-0 [&_th:last-child]:pr-0 w-full min-w-[960px] text-left text-sm">
+      <table class="[&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_td]:px-2 [&_th]:px-2 [&_td:first-child]:pl-0 [&_th:first-child]:pl-0 [&_td:last-child]:pr-0 [&_th:last-child]:pr-0 w-full min-w-[820px] text-left text-sm">
         <thead>
           <tr class="text-xs text-slate-500">
             <th class="pb-3 font-medium">ID</th>
@@ -152,17 +154,17 @@ async function toggle(user) {
             <td class="py-3 text-right text-slate-400">{{ u.ai_total }}</td>
             <td class="py-3 text-right text-slate-400">{{ u.backtests }}</td>
             <td class="py-3 text-right text-slate-400">{{ u.points ?? '—' }}</td>
-            <td class="py-3 text-slate-400">{{ time(u.created_at) }}</td>
-            <td class="py-3 text-slate-400">{{ time(u.last_seen_at) }}</td>
-            <td class="space-x-2 py-3 text-right">
+            <td class="py-3 text-slate-400"><p>{{ day(u.created_at) }}</p><p class="text-xs text-slate-500">{{ clock(u.created_at) }}</p></td>
+            <td class="py-3 text-slate-400"><p>{{ day(u.last_seen_at) }}</p><p class="text-xs text-slate-500">{{ clock(u.last_seen_at) }}</p></td>
+            <td class="space-x-1.5 py-3 text-right">
               <span v-if="subAdmin && !userActions(u, true).rename" class="text-xs text-slate-500">—</span>
               <button v-if="userActions(u, subAdmin).toggleSubAdmin" type="button" :disabled="busy === u.id"
-                class="rounded-full border px-3 py-1 text-xs transition disabled:opacity-50"
+                class="rounded-full border px-2.5 py-1 text-xs transition disabled:opacity-50"
                 :class="u.is_sub_admin ? 'border-white/10 text-slate-400 hover:border-white/25 hover:text-white' : 'border-sky-400/30 text-sky-300 hover:bg-sky-400/10'"
                 @click="toggleSubAdmin(u)">{{ u.is_sub_admin ? '取消子管理员' : '设为子管理员' }}</button>
-              <button v-if="userActions(u, subAdmin).rename" type="button" :disabled="busy === u.id" class="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300 transition hover:border-white/25 hover:text-white disabled:opacity-50" @click="startRename(u)">改昵称</button>
+              <button v-if="userActions(u, subAdmin).rename" type="button" :disabled="busy === u.id" class="rounded-full border border-white/10 px-2.5 py-1 text-xs text-slate-300 transition hover:border-white/25 hover:text-white disabled:opacity-50" @click="startRename(u)">改昵称</button>
               <button v-if="userActions(u, subAdmin).toggleActive" type="button" :disabled="busy === u.id"
-                class="rounded-full border px-3 py-1 text-xs transition disabled:opacity-50"
+                class="rounded-full border px-2.5 py-1 text-xs transition disabled:opacity-50"
                 :class="u.is_active ? 'border-rose-400/30 text-rose-300 hover:bg-rose-400/10' : 'border-emerald-400/30 text-emerald-300 hover:bg-emerald-400/10'"
                 @click="toggle(u)">{{ u.is_active ? '停用' : '恢复' }}</button>
             </td>
