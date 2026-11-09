@@ -1,4 +1,4 @@
-// “一键试试”：官网首页和新手引导里的几个问题，点一下就打开填好条件的事件研究，几秒钟出结果。
+// “一键试试”：官网首页的几个问题，点一下就打开填好条件的事件研究，几秒钟出结果。
 // 条件和后端 event_study.PRESETS 里同名的常见问题一样；链接格式见 workspace/eventStudy.js 的 encodePreset。
 import { encodePreset } from './workspace/eventStudy.js'
 

@@ -72,9 +72,15 @@ def test_nothing_to_screen():
 
 
 @pytest.fixture
-def api(monkeypatch):
+def api(monkeypatch, tmp_path):
+    from app import database
     from app.routes import workspace
     from app.routes.auth import get_current_user
+
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "app.db"))   # 选股会记一笔“第一次选股”，不能写进真的数据库
+    database.init_db()
+    with database.get_conn() as conn:
+        conn.execute("INSERT INTO users (id, name, email, password_hash, salt, created_at) VALUES (1, 'u', 'u1@example.test', 'h', 's', 'now')")
 
     monkeypatch.setattr(workspace, "local_data_bounds", lambda: (date(2015, 1, 5), DAY))
     asked = {}
@@ -109,6 +115,9 @@ def test_the_endpoint_screens_the_pool_or_the_whole_market(api):
     assert pool["condition_indicators"] == [{"left": "close", "right": "moving_average"}]
     market = client.post("/api/v1/packages/screen", json={**PAYLOAD, "scope": "market", "limit": 1}).json()
     assert asked["symbols"] is None and market["matched"] == 2 and market["shown"] == 1
+    from app import database
+    with database.get_conn() as conn:   # 首页“开始使用”的“用条件选股筛一次股票”打勾，只记第一次
+        assert conn.execute("SELECT COUNT(*) FROM user_milestones WHERE user_id = 1 AND kind = 'stock_screen'").fetchone()[0] == 1
 
 
 def test_bad_rules_and_an_empty_pool_are_explained(api, monkeypatch):

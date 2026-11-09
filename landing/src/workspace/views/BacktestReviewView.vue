@@ -351,6 +351,7 @@ onActivated(async () => {
       <div class="mt-5 flex flex-wrap items-center justify-end gap-3">
         <p v-if="running" class="text-xs text-slate-400" role="status">{{ runningText(runSeconds) }}</p>
         <button
+          data-guide="backtest-run"
           @click="onSubmit"
           :disabled="running || catalogLoading || !selectedStrategy || !riskEditor?.ready"
           class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70"

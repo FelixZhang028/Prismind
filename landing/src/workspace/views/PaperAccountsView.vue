@@ -338,7 +338,7 @@ onActivated(async () => {
     <SectionCard title="新建模拟账户" :hint="`开始日期：今天（${today || '—'}），不能选以前的日期`">
       <div v-if="!packages.length" class="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-400">
         <p>模拟账户使用规则策略，你还没有规则策略。可以从模板开始，一两分钟就能建好；保存后点「开模拟账户」会回到这里。</p>
-        <button class="mt-4 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5" @click="openResearch('strategy-studio')">去新建规则策略</button>
+        <button data-guide="paper-create" class="mt-4 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5" @click="openResearch('strategy-studio')">去新建规则策略</button>
       </div>
       <template v-else>
         <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -354,7 +354,7 @@ onActivated(async () => {
           创建时会把策略规则、股票范围（选股票池时是现在的股票池）和现在的风控设置复制一份锁住，以后修改它们都不影响这个账户。风控可以先在「策略回测」页的风险设置里改好。
         </p>
         <div class="mt-5 flex justify-end">
-          <button :disabled="creating || !form.package_id || left <= 0"
+          <button data-guide="paper-create" :disabled="creating || !form.package_id || left <= 0"
             class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70"
             @click="onCreate">
             {{ creating ? '创建中…' : left <= 0 ? '已达到数量上限' : '创建模拟账户' }}

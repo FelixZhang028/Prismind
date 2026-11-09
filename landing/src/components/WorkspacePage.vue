@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import DynamicBackground from './DynamicBackground.vue'
 import LegalDialog from './LegalDialog.vue'
-import OnboardingTour from './OnboardingTour.vue'
+import GuideTour from './GuideTour.vue'
 import ThemeToggle from './ThemeToggle.vue'
 import AiChatWidget from '../workspace/ui/AiChatWidget.vue'
 import SuggestDialog from '../workspace/ui/SuggestDialog.vue'
@@ -10,6 +10,7 @@ import { accountMenu, adminViews, allItems, contentLayout, itemLabel, navigation
 import { getLocalUser, getPoints, logout, restoreSession } from '../api.js'
 import '../workspace/workspace.css'
 import { researchContext, researchUrl } from '../workspace/researchNavigation.js'
+import { guideSeen, markGuideSeen } from '../workspace/guideSteps.js'
 import { loginUrl } from '../authNext.js'
 
 const user = ref(getLocalUser())
@@ -21,7 +22,14 @@ const routeContext = ref(researchContext(new URL(window.location.href)))
 const activeSection = computed(() => navigationItem(activeKey.value))
 function isItemActive(item) { return activeSection.value?.key === item.key }
 const toast = ref('')
-const tourOpen = ref(false)
+// 新手引导：null 是关着；{ only: '' } 是完整引导；{ only: 'backtest' } 是首页“去做”只亮那一步。
+const guide = ref(null)
+const tourOpen = computed(() => guide.value !== null)
+function openGuide(only = '') {
+  menuOpen.value = false
+  sidebarOpen.value = false
+  guide.value = { only }
+}
 const githubUrl = 'https://github.com/FelixZhang028/Prismind'
 const suggestOpen = ref(false)   // 提建议的弹窗：侧栏底部和头像菜单都能打开
 
@@ -33,6 +41,8 @@ function navigate(destination) {
   activeKey.value = key
   sidebarOpen.value = false
   window.history.pushState({}, '', url)
+  // 首页“开始使用”的“去做”：到了那一页再亮出要点的按钮（不写进地址，刷新后不再出现）
+  if (typeof destination === 'object' && destination?.guide) openGuide(destination.guide)
 }
 function syncView() {
   routeContext.value = researchContext(new URL(window.location.href))
@@ -72,7 +82,7 @@ async function refreshPoints() {
 function onPointsChanged(e) { showPoints(e.detail) }
 watch(activeKey, () => { if (!loading.value) refreshPoints() })
 // 设置页的“重新打开新手引导”。
-function onOpenTour() { tourOpen.value = true }
+function onOpenTour() { openGuide() }
 // 顶栏：页面在最上面时完全透明、没有分界线，和页面背景连成一片；往下滚以后才加一层磨砂底，免得文字和内容叠在一起。
 const scrolled = ref(false)
 function onScroll() { scrolled.value = window.scrollY > 4 }
@@ -179,15 +189,17 @@ async function verifySession() {
   }
   loading.value = false
   refreshPoints()
-  // 首次进入工作台自动弹出新手引导（可在顶栏 ? 图标重新打开）
-  // 从首页“一键试试”点进来的（链接里带着事件研究的条件）：先让人看结果，不弹引导，下次进来再弹
-  if (!localStorage.getItem('zt_tour_done') && !routeContext.value.preset) tourOpen.value = true
+  // 第一次进入功能台自动打开新手引导（顶栏的 ?、头像菜单、设置页都能重新打开）。一打开就记为看过，
+  // 中途关掉也不再自动出现。从首页“一键试试”点进来的（链接里带着事件研究的条件）：先让人看结果，下次进来再打开。
+  if (!guideSeen() && !routeContext.value.preset) {
+    markGuideSeen()
+    openGuide()
+  }
 }
 onMounted(verifySession)
 
-function closeTour() {
-  localStorage.setItem('zt_tour_done', '1')
-  tourOpen.value = false
+function closeGuide() {
+  guide.value = null
 }
 
 function doLogout() {
@@ -262,7 +274,7 @@ function doLogout() {
             <button
               v-for="item in group.items"
               :key="item.key"
-              @click="navigate(item.key)" :aria-current="isItemActive(item) ? 'page' : undefined"
+              :data-guide-nav="item.key" @click="navigate(item.key)" :aria-current="isItemActive(item) ? 'page' : undefined"
               @mouseenter="showHint($event, item)" @mouseleave="hideHint" @focus="showHint($event, item)" @blur="hideHint"
               class="relative flex w-full items-start gap-2 rounded-lg py-2 pl-6 pr-2 text-sm transition whitespace-nowrap"
               :class="isItemActive(item) ? 'bg-white/5 text-fq-strong' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'"
@@ -323,18 +335,19 @@ function doLogout() {
               <span class="tabular-nums font-medium">{{ pointsBalance }}</span><span class="hidden sm:inline">积分</span>
             </button>
             <ThemeToggle />
-            <!-- 手机上顶栏放不下：新手引导在设置里也能打开 -->
+            <!-- 手机上顶栏放不下：新手引导在头像菜单和设置里也能打开 -->
             <button
               class="hidden h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-sm text-slate-300 transition hover:border-indigo-400/40 hover:text-white sm:flex"
+              data-guide="guide-reopen"
               title="新手引导"
               aria-label="新手引导"
-              @click="tourOpen = true"
+              @click="openGuide()"
             >
               <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" /><circle cx="12" cy="17" r="0.8" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="10" stroke-width="2" /></svg>
             </button>
             <!-- 头像菜单：个人中心、积分与打卡、设置、退出登录（手机上也在这里） -->
             <div ref="menuBox" class="relative">
-              <button type="button" :aria-label="`${user?.name || ''} · 账户菜单`" aria-haspopup="menu" :aria-expanded="menuOpen"
+              <button type="button" data-guide="guide-reopen-mobile" :aria-label="`${user?.name || ''} · 账户菜单`" aria-haspopup="menu" :aria-expanded="menuOpen"
                 class="flex items-center gap-2.5 rounded-full border border-white/10 bg-white/5 py-1 pl-1 pr-1 transition hover:border-indigo-400/40 hover:bg-white/10 sm:pr-3"
                 @click="menuOpen = !menuOpen">
                 <span class="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-xs font-bold text-ink">{{ (user?.name || 'U').slice(0, 1) }}</span>
@@ -355,6 +368,12 @@ function doLogout() {
                   @click="menuOpen = false; suggestOpen = true">
                   <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 011.037-.443 48.282 48.282 0 005.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" /></svg>
                   提建议
+                </button>
+                <button type="button" role="menuitem"
+                  class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-300 transition hover:bg-white/5 hover:text-white"
+                  @click="openGuide()">
+                  <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" /><circle cx="12" cy="17" r="0.8" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="10" /></svg>
+                  新手引导
                 </button>
                 <div class="my-1 border-t border-white/10" />
                 <button type="button" role="menuitem"
@@ -388,7 +407,7 @@ function doLogout() {
 
     <div v-if="sidebarOpen && !loading" class="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm lg:hidden" @click="sidebarOpen = false" />
 
-    <OnboardingTour v-if="tourOpen && !loading" :user="user" @close="closeTour" />
+    <GuideTour v-if="guide && !loading" :key="guide.only || 'all'" :only="guide.only" :active-view="activeKey" @close="closeGuide" />
     <SuggestDialog v-if="suggestOpen && user" :view="activeKey" :view-label="itemLabel(activeKey)" :route-context="routeContext" :notify="notify" @close="suggestOpen = false" />
     <!-- 右下角的 AI 问答：每个页面都能用；新手引导出现时、手机上展开侧栏时先隐藏 -->
     <AiChatWidget v-if="user && !loading" :view="activeKey" :label="itemLabel(activeKey)" :hidden="tourOpen || sidebarOpen" />

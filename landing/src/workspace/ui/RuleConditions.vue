@@ -36,7 +36,7 @@ function removeRule(index) {
       <div class="w-44"><FormField label="多条条件之间" type="select" v-model="form.entry_logic" :options="logicOptions" /></div>
     </div>
     <ol class="mt-3 space-y-3" aria-label="选股条件">
-      <li v-for="(rule, index) in form.rules" :key="index" class="rounded-xl border border-white/10 bg-white/5 p-4">
+      <li v-for="(rule, index) in form.rules" :key="index" :data-guide="index === 0 ? 'rule-first-condition' : undefined" class="rounded-xl border border-white/10 bg-white/5 p-4">
         <div class="flex items-center justify-between">
           <span class="text-xs text-slate-400">条件 {{ index + 1 }}</span>
           <button type="button" class="text-xs text-rose-300 hover:underline disabled:opacity-40" :disabled="form.rules.length <= 1" @click="removeRule(index)">删除</button>

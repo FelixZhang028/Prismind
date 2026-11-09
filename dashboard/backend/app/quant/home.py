@@ -135,9 +135,8 @@ def research(user_id: int) -> dict[str, Any]:
                   "backtests": count("SELECT COUNT(*) FROM backtests WHERE user_id = ? AND status = '完成'"),
                   "briefs": count("SELECT COUNT(*) FROM stock_briefs WHERE user_id = ?"),
                   "chats": count("SELECT COUNT(*) FROM ai_chats WHERE user_id = ?")}
-        pool_saved = conn.execute("SELECT symbols FROM universe WHERE user_id = ?", (user_id,)).fetchone()
-        tried_event = conn.execute("SELECT 1 FROM user_milestones WHERE user_id = ? AND kind = 'event_study'",
-                                   (user_id,)).fetchone() is not None
+        milestones = {row["kind"] for row in conn.execute("SELECT kind FROM user_milestones WHERE user_id = ?", (user_id,))}
+        papers = count("SELECT COUNT(*) FROM paper_accounts WHERE user_id = ?")
     items = []
     for row in backtests:
         result = json.loads(row["result"]) if row["result"] else {}
@@ -157,15 +156,20 @@ def research(user_id: int) -> dict[str, Any]:
         items.append({"kind": "strategy", "label": "策略", "title": row["name"], "detail": "保存的规则策略", "at": row["created_at"],
                       "view": "backtest-review", "context": {"strategy": f"package:{row['package_id']}"}})
     items.sort(key=lambda item: str(item["at"]), reverse=True)
-    pool_set = bool(pool_saved and json.loads(pool_saved["symbols"] or "[]"))
-    # 第一步最快能看到结果：点一下就用事件研究算“大跌之后会反弹吗？”（几秒钟出结果）
+    # 第一步最快能看到结果：点一下就用事件研究算“大跌之后会反弹吗？”（几秒钟出结果）；
+    # 后面四步是一条主线：条件选股 → 建规则策略 → 回测 → 模拟账户，和功能台的高亮引导一样。
+    # guide：点“去做”以后在那一页高亮哪个按钮（前端 guideSteps.js 里的 key）。
     steps = [
-        {"key": "event", "label": "检验一个说法：大跌之后会反弹吗？", "done": tried_event, "view": "event-study",
+        {"key": "event", "label": "试一个例子：大跌之后会反弹吗？", "done": "event_study" in milestones, "view": "event-study",
          "context": {"preset": FIRST_QUESTION_PRESET}},
-        {"key": "strategy", "label": "保存一个规则策略", "done": counts["strategies"] > 0, "view": "strategy-hub"},
-        {"key": "backtest", "label": "跑完第一次回测", "done": counts["backtests"] > 0, "view": "backtest-review"},
-        {"key": "brief", "label": "用 AI 个股分析看一只股票", "done": counts["briefs"] > 0, "view": "agent-lab"},
-        {"key": "pool", "label": "设置自己的股票池", "done": pool_set, "view": "universe"},
+        {"key": "screen", "label": "用条件选股筛一次股票", "done": "stock_screen" in milestones, "view": "stock-screen",
+         "context": {"guide": "screen"}},
+        {"key": "strategy", "label": "保存一个规则策略", "done": counts["strategies"] > 0, "view": "strategy-studio",
+         "context": {"guide": "strategy"}},
+        {"key": "backtest", "label": "跑完第一次回测", "done": counts["backtests"] > 0, "view": "backtest-review",
+         "context": {"guide": "backtest"}},
+        {"key": "paper", "label": "开一个模拟账户", "done": papers > 0, "view": "paper-accounts",
+         "context": {"guide": "paper"}},
     ]
     return {"recent": items[:RECENT_ROWS], "counts": counts, "steps": steps}
 

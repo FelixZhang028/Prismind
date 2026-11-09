@@ -182,7 +182,7 @@ onActivated(applyHandOff)
     <template v-else>
       <!-- 怎么开始 -->
       <SectionCard title="怎么开始？" hint="随时可以换一种方式，表单会跟着更新">
-        <div class="grid gap-3 sm:grid-cols-3" role="group" aria-label="开始方式">
+        <div data-guide="strategy-starts" class="grid gap-3 sm:grid-cols-3" role="group" aria-label="开始方式">
           <button v-for="item in STARTS" :key="item.key" type="button" :aria-pressed="start === item.key"
             class="rounded-xl border p-4 text-left transition"
             :class="start === item.key ? 'border-indigo-400/40 bg-indigo-500/20' : 'border-white/10 bg-white/5 hover:bg-white/10'"
