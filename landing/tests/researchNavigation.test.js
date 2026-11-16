@@ -42,10 +42,10 @@ test('带策略和历史记录的链接刷新后仍能恢复，普通导航清�
   const url = researchUrl('http://localhost/app.html?view=overview&theme=dark&run=9', {
     view: 'backtest-review', strategy: 'package:alpha', run: 12, mode: 'reuse', ignored: 'value',
   })
-  assert.deepEqual(researchContext(url), { strategy: 'package:alpha', run: '12', baseline: '', mode: 'reuse', symbol: '', brief: '', preset: '', account: '' })
+  assert.deepEqual(researchContext(url), { strategy: 'package:alpha', run: '12', baseline: '', mode: 'reuse', symbol: '', brief: '', preset: '', account: '', job: '' })
   assert.equal(url.searchParams.get('ignored'), null)
   assert.equal(url.searchParams.get('theme'), 'dark')
-  assert.deepEqual(researchContext(researchUrl(url, 'factor-lab')), { strategy: '', run: '', baseline: '', mode: '', symbol: '', brief: '', preset: '', account: '' })
+  assert.deepEqual(researchContext(researchUrl(url, 'factor-lab')), { strategy: '', run: '', baseline: '', mode: '', symbol: '', brief: '', preset: '', account: '', job: '' })
 })
 test('行情图表的股票代码写入链接，离开该页后清除', () => {
   const url = researchUrl('http://localhost/app.html?view=data-management', { view: 'market-chart', symbol: '000001' })
@@ -54,4 +54,10 @@ test('行情图表的股票代码写入链接，离开该页后清除', () => {
   assert.equal(navigationItem('market-chart').label, '行情图表')
   assert.ok(views['market-chart'])
   assert.equal(researchContext(researchUrl(url, 'strategy-hub')).symbol, '')
+})
+
+test('回测任务编号在刷新时保留，离开任务页后清除', () => {
+  const url = researchUrl('http://localhost/app.html', { view: 'backtest-review', job: 'job-123' })
+  assert.equal(researchContext(url).job, 'job-123')
+  assert.equal(researchContext(researchUrl(url, 'run-library')).job, '')
 })

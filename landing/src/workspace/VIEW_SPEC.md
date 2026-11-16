@@ -210,3 +210,12 @@ const props = defineProps({
 - 空列表用 EmptyState 或 DataTable 的 empty。
 - 删除操作前用 `confirm()` 确认。
 - 回测/评估等异步操作用 loading ref 控制按钮文案（「…中」）与 disabled。
+
+
+### 2026-11-16：第一批可靠性更新
+
+- `submitBacktest`、`backtestPackage`、`screenHistory` 改为创建 `/api/v1/backtest-jobs` 后台任务，返回任务对象（含 `id`、`state`），不再等待结果。
+- `BacktestTasks.vue` 在回测页和研究记录页显示后台状态、实际交易日进度、取消按钮及结果入口。链接通过 `job` 参数恢复任务；成功后使用 `result_id` 打开回测详情。
+- 研究记录增加单条/批量归档、已归档列表与恢复。归档不删除证据；对比仍最多 5 条。
+- 股票池导入返回数量明细、重复项和无效项，6000 只超限整批拒绝。条件选股采用 `offset` / `limit` 翻页。
+- 当前运行方式、接口和验收范围详见 `docs/RESEARCH_RELIABILITY_BATCH1.md`。旧段落与本节冲突时以本节为准。

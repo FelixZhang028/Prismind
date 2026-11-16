@@ -30,17 +30,25 @@ export function getLocalUser() {
   }
 }
 
-async function request(path, { method = 'GET', body, auth = false } = {}) {
+async function request(path, { method = 'GET', body, auth = false, timeoutMs = 0 } = {}) {
   const headers = { 'Content-Type': 'application/json' }
   if (auth) {
     const token = getToken()
     if (token) headers.Authorization = `Bearer ${token}`
   }
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  const controller = timeoutMs ? new AbortController() : null
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null
+  let res
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method, headers, body: body ? JSON.stringify(body) : undefined,
+      ...(controller ? { signal: controller.signal } : {}),
+    })
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error(method === 'GET' ? '读取状态超时' : '响应超时，请先查看任务列表确认最新状态')
+    throw e
+  } finally { if (timer) clearTimeout(timer) }
+
   let data = null
   try {
     data = await res.json()
@@ -137,7 +145,7 @@ export function deleteStrategy(id) {
 
 // ---- 回测 ----
 export function submitBacktest(payload) {
-  return request('/api/v1/backtests', { method: 'POST', body: payload, auth: true })
+  return request('/api/v1/backtest-jobs', { method: 'POST', body: { kind: 'backtest', request: payload }, auth: true, timeoutMs: 30000 })
 }
 export function getBacktestBenchmark(id, symbol) {
   return request(`/api/v1/backtests/${id}/benchmark?${new URLSearchParams({ symbol })}`, { auth: true })
@@ -194,13 +202,13 @@ export function screenBrief(payload) {
   return request('/api/v1/packages/screen/brief', { method: 'POST', body: payload, auth: true })
 }
 export function screenHistory(payload) {
-  return request('/api/v1/packages/screen/history', { method: 'POST', body: payload, auth: true })
+  return request('/api/v1/backtest-jobs', { method: 'POST', body: { kind: 'screen', request: payload }, auth: true, timeoutMs: 30000 })
 }
 export function preflightPackage(payload) {
   return request('/api/v1/packages/preflight', { method: 'POST', body: payload, auth: true })
 }
 export function backtestPackage(id, payload) {
-  return request(`/api/v1/packages/${id}/backtest`, { method: 'POST', body: payload || {}, auth: true })
+  return request('/api/v1/backtest-jobs', { method: 'POST', body: { kind: 'package', package_id: id, request: payload || {} }, auth: true, timeoutMs: 30000 })
 }
 export function studioOptions() {
   return request('/api/v1/studio/options', { auth: true })
@@ -505,3 +513,10 @@ export function jevStatus() { return request('/api/v1/jev/status', { auth: true 
 export function getBacktestCatalog() {
   return request('/api/v1/backtests/catalog', { auth: true })
 }
+
+// Durable jobs are independent of the current page and browser connection.
+export function listBacktestJobs() { return request('/api/v1/backtest-jobs', { auth: true, timeoutMs: 15000 }) }
+export function cancelBacktestJob(id) { return request(`/api/v1/backtest-jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST', auth: true, timeoutMs: 15000 }) }
+export function archiveRuns(runIds, archived = true) { return request('/api/v1/runs/archive', { method: 'POST', body: { run_ids: runIds, archived }, auth: true }) }
+
+export function getBacktestJob(id) { return request(`/api/v1/backtest-jobs/${encodeURIComponent(id)}`, { auth: true, timeoutMs: 15000 }) }

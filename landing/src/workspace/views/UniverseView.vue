@@ -85,24 +85,15 @@ const tableRows = computed(() =>
 // ---------- 添加股票（多代码文本） ----------
 const addText = ref('')
 const adding = ref(false)
+const importReport = ref(null)
 
-// 按换行/逗号/空格拆分，去空、去重、支持 600519.SH -> 600519 去后缀
+// 只拆分并去空；后端统一规范代码、统计重复项和无效项。
 function parseSymbols(text) {
   const tokens = String(text || '')
     .split(/[\s,，;；、\r\n]+/)
     .map((t) => t.trim())
     .filter(Boolean)
-  const seen = new Set()
-  const out = []
-  for (let t of tokens) {
-    let s = t.toUpperCase()
-    s = s.replace(/\.(SH|SZ|BJ)$/, '')
-    s = s.replace(/^(SH|SZ|BJ)(\d{6})$/, '$2')
-    if (s && !seen.has(s)) {
-      seen.add(s)
-      out.push(s)
-    }
-  }
+  const out = tokens
   return out
 }
 
@@ -110,7 +101,8 @@ async function doAdd(symbols) {
   adding.value = true
   try {
     const res = await universeAdd(symbols)
-    props.notify(`已添加 ${res.count} 只股票`)
+    importReport.value = res
+    props.notify(`新增 ${res.added_count} 只，当前共 ${res.count} 只股票`)
     await load()
     return true
   } catch (e) {
@@ -173,7 +165,7 @@ async function removeStock(row) {
   removingSymbol.value = row.symbol
   try {
     const res = await universeRemove([row.symbol])
-    props.notify(`已移除 ${res.count} 只股票`)
+    props.notify(`移除完成，当前共 ${res.count} 只股票`)
     pendingRemoval.value = ''
     await load()
   } catch (e) {
@@ -209,6 +201,12 @@ onMounted(load)
 
 <template>
   <div class="space-y-6">
+    <p class="text-sm text-slate-400">股票池上限 {{ universe.limit || 6000 }} 只；超出上限整批不保存。导入后会列明新增、重复和无效代码，不会截断。</p>
+    <div v-if="importReport" role="status" class="rounded-xl border border-indigo-400/30 p-4 text-sm text-slate-300">
+      输入 {{ importReport.input_count }} 项，新增 {{ importReport.added_count }} 只，重复 {{ importReport.duplicate_count }} 项，无效 {{ importReport.invalid_count }} 项；当前共 {{ importReport.count }} 只。
+      <details v-if="importReport.invalid_count" class="mt-2"><summary>查看未导入的无效代码</summary><p class="mt-2 break-all">{{ importReport.invalid.join('、') }}</p></details>
+      <details v-if="importReport.duplicate_count" class="mt-2"><summary>查看重复代码</summary><p class="mt-2 break-all">{{ importReport.duplicates.join('、') }}</p></details>
+    </div>
     <!-- 标题 -->
     <div class="glass glass-sheen relative overflow-hidden rounded-2xl p-6">
       <div class="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-indigo-500/20 blur-3xl" />

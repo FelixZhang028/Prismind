@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from ..database import _now, get_conn
 from ..quant.benchmark_view import benchmark_comparison, benchmark_options
+from ..quant.backtest_jobs import save_result
 from ..quant.compute import computing
 from ..quant.markets import CURRENT_POOL, market_options, use_market
 from ..quant.result_adapter import backtest_run_to_result
@@ -173,11 +174,9 @@ def submit_backtest(body: BacktestIn, user: dict = Depends(get_current_user)):
     result = with_run_evidence(result)
     payload = json.dumps(result, ensure_ascii=False)
     with get_conn() as conn:
-        cur = conn.execute(
-            "INSERT INTO backtests (user_id, strategy, market, from_date, to_date, status, result, created_at) VALUES (?,?,?,?,?,?,?,?)",
+        bid = save_result(conn,
             (user["id"], body.strategy, body.market, start, end, "完成", payload, _now()),
         )
-        bid = cur.lastrowid
     return {"id": bid, "status": "完成", "result": result, "created_at": _now()}
 
 

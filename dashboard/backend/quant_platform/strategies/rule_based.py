@@ -61,15 +61,15 @@ class RuleBasedStrategy(Strategy):
             fields=["adjusted_close", "amount"],
             lookback=definition.minimum_history_days,
         )
+        # StrategyContext already sorts symbol/date. Convert once per rebalance,
+        # not once for every stock (a major cost on large pools).
+        history[["adjusted_close", "amount"]] = history[["adjusted_close", "amount"]].apply(pd.to_numeric, errors="coerce")
         cutoff = pd.Timestamp(context.trade_date)
         signals: list[Signal] = []
         for symbol, original in history.groupby("symbol", observed=True):
-            group = original.sort_values("trade_date").copy()
-            if group.empty or pd.Timestamp(group.iloc[-1]["trade_date"]) != cutoff:
+            group = original
+            if group.empty or pd.Timestamp(group["trade_date"].iat[-1]) != cutoff:
                 continue
-            group[["adjusted_close", "amount"]] = group[
-                ["adjusted_close", "amount"]
-            ].apply(pd.to_numeric, errors="coerce")
             score = rank_score(group, definition)
             if score is None:
                 continue

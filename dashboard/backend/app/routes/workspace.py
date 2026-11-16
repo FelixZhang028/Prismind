@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 import os
 import random
 import re
@@ -47,6 +48,8 @@ from ..quant.research_runs import (
     walk_forward_range,
 )
 from ..quant import audit, daily_schedule, home, rate_limit
+from ..quant.backtest_jobs import save_result
+from ..quant.universe_import import MAX_POOL_SIZE, merge_codes
 from ..quant.compute import cached, computing
 from ..quant.runtime import (
     BACKEND_ROOT,
@@ -352,6 +355,7 @@ class ScreenIn(BaseModel):
     scope: Literal["pool", "market"] = "pool"
     exclude_st: bool = True
     limit: int = Field(100, ge=1, le=300)
+    offset: int = Field(0, ge=0, le=100000)
 
 
 class ScreenHistoryIn(BaseModel):
@@ -421,9 +425,10 @@ def screen_package(body: ScreenIn, user: dict = Depends(get_current_user)):
                      (user["id"], _now()))
     names = security_names()
     items = [{**item, "symbol": to_bare(item["symbol"]), "name": names.get(item["symbol"], "")}
-             for item in result["items"][: body.limit]]
+             for item in result["items"][body.offset : body.offset + body.limit]]
     return {
         "trade_date": day.isoformat(), "scope": body.scope, "checked": result["checked"], "matched": result["matched"],
+        "offset": body.offset, "limit": body.limit,
         "items": items, "shown": len(items), **_screen_described(rule),
         "ai": {"available": platform_ai.platform_model() is not None, "usage": platform_ai.usage(user, "screen"),
                "stocks": SCREEN_BRIEF_STOCKS},
@@ -585,12 +590,10 @@ def _run_backtest(user: dict, package: StrategyPackage, *, market: str, start: d
     }
     result = with_run_evidence(result)
     with get_conn() as conn:
-        cur = conn.execute(
-            "INSERT INTO backtests (user_id, strategy, market, from_date, to_date, status, result, created_at) VALUES (?,?,?,?,?,?,?,?)",
+        bid = save_result(conn,
             (user["id"], package.name, market, start.isoformat(), end.isoformat(), "完成",
              json.dumps(result, ensure_ascii=False), _now()),
         )
-        bid = cur.lastrowid
     return {"id": bid, "run_id": result["run_id"], "status": "完成", "summary": result}
 
 
@@ -1205,11 +1208,11 @@ def research_walk_forward(body: WalkForwardIn, user: dict = Depends(get_current_
 
 
 @router.get("/runs", summary="回测记录库列表")
-def run_library(user: dict = Depends(get_current_user), strategy: str = "", run_kind: str = "", status: str = "", keyword: str = ""):
+def run_library(user: dict = Depends(get_current_user), strategy: str = "", run_kind: str = "", status: str = "", keyword: str = "", archived: bool = False):
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, strategy, market, from_date, to_date, status, result, created_at FROM backtests WHERE user_id = ? ORDER BY id DESC",
-            (user["id"],),
+            "SELECT id, strategy, market, from_date, to_date, status, result, created_at FROM backtests WHERE user_id = ? AND (archived_at IS NOT NULL) = ? ORDER BY id DESC",
+            (user["id"], int(archived)),
         ).fetchall()
     items = []
     for r in rows:
@@ -1236,6 +1239,31 @@ def run_library(user: dict = Depends(get_current_user), strategy: str = "", run_
                       "failed": sum(i["status"] in {"FAILED", "失败"} for i in items),
                       "legacy_unverified": sum(i["legacy_unverified"] for i in items),
                       "experiment": sum(i["run_kind"] not in {"single", "unknown"} for i in items)}}
+
+
+class ArchiveRunsIn(BaseModel):
+    run_ids: list[str] = Field(..., min_length=1, max_length=500)
+    archived: bool = True
+
+
+@router.post("/runs/archive", summary="归档或恢复研究记录")
+def archive_runs(body: ArchiveRunsIn, user: dict = Depends(get_current_user)):
+    ids = []
+    for value in dict.fromkeys(body.run_ids):
+        if not re.fullmatch(r"run-[0-9]{1,18}", value):
+            raise HTTPException(422, detail="回测记录编号无效")
+        bid = int(value.removeprefix("run-"))
+        if bid not in ids:
+            ids.append(bid)
+    marks = ",".join("?" for _ in ids)
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        owned = conn.execute(f"SELECT COUNT(*) FROM backtests WHERE user_id=? AND id IN ({marks})", (user["id"], *ids)).fetchone()[0]
+        if owned != len(ids):
+            raise HTTPException(404, detail="部分记录不存在或不属于当前账户，未作修改")
+        conn.execute(f"UPDATE backtests SET archived_at=? WHERE user_id=? AND id IN ({marks})",
+                     (_now() if body.archived else None, user["id"], *ids))
+    return {"count": len(ids), "archived": body.archived}
 
 
 @router.post("/runs/compare", summary="对比 2~5 次回测")
@@ -2303,11 +2331,11 @@ def universe_get(user: dict = Depends(get_current_user)):
             "start_date": stat.get("start_date", "—"),
             "end_date": stat.get("end_date", "—"),
         })
-    return {"symbols": symbols, "filters": filters, "description": description}
+    return {"symbols": symbols, "filters": filters, "description": description, "limit": MAX_POOL_SIZE}
 
 
 class UniverseAddIn(BaseModel):
-    symbols: list[str]
+    symbols: list[str] = Field(..., min_length=1, max_length=20000)
 
 
 class UniverseRemoveIn(BaseModel):
@@ -2323,10 +2351,10 @@ def _load_universe_symbols(user_id: int) -> list[str]:
     return [to_bare(symbol) for symbol in symbols]
 
 
-def _save_universe(user_id: int, symbols: list[str], filters: dict[str, Any] | None = None) -> None:
+def _save_universe(user_id: int, symbols: list[str], filters: dict[str, Any] | None = None, connection=None) -> None:
     if filters is None:
         _, filters = default_universe_settings()
-    with get_conn() as conn:
+    with (nullcontext(connection) if connection is not None else get_conn()) as conn:
         conn.execute(
             "INSERT INTO universe (user_id, symbols, exclude_st, exclude_suspended, minimum_listing_days, minimum_history_days, minimum_average_amount, updated_at) "
             "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET symbols=excluded.symbols, updated_at=excluded.updated_at",
@@ -2338,13 +2366,15 @@ def _save_universe(user_id: int, symbols: list[str], filters: dict[str, Any] | N
 
 @router.post("/universe/add", summary="添加股票")
 def universe_add(body: UniverseAddIn, user: dict = Depends(get_current_user)):
-    current = _load_universe_symbols(user["id"])
-    for s in body.symbols:
-        norm = s.split(".")[0].strip()
-        if re.fullmatch(r"\d{6}", norm) and norm not in current:
-            current.append(norm)
-    _save_universe(user["id"], current)
-    return {"symbols": current, "count": len(current)}
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT symbols FROM universe WHERE user_id=?", (user["id"],)).fetchone()
+        current = json.loads(row["symbols"]) if row else [to_bare(s) for s in default_universe_settings()[0]]
+        result = merge_codes(current, body.symbols)
+        if result["count"] > MAX_POOL_SIZE:
+            raise HTTPException(422, detail=f"股票池上限为 {MAX_POOL_SIZE} 只，本次合并后为 {result['count']} 只。未保存任何新增股票，请减少数量后重试。")
+        _save_universe(user["id"], result["symbols"], connection=conn)
+    return result
 
 
 @router.post("/universe/remove", summary="移除股票")

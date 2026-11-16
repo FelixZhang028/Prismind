@@ -43,6 +43,8 @@ CONFIG_PATH = BACKEND_ROOT / "configs" / "app.yaml"
 MARKET_ROOT = BACKEND_ROOT / "data" / "market"
 RUNTIME_ROOT = BACKEND_ROOT / "data" / "runtime"
 
+TASK_SETTINGS: dict | None = None  # Frozen settings in the disposable backtest worker only.
+
 _CHDIR_LOCK = threading.Lock()
 # 数据更新（下载行情）为长任务且不可并发，同一进程内串行执行。
 DATA_UPDATE_LOCK = threading.Lock()
@@ -110,6 +112,8 @@ def local_data_bounds() -> tuple[date, date] | None:
 def _user_universe(user_id: int) -> tuple[list[str], dict[str, Any]]:
     """返回该用户股票池（canonical 符号）与过滤设置。"""
 
+    if TASK_SETTINGS is not None:
+        return list(TASK_SETTINGS["symbols"]), dict(TASK_SETTINGS["filters"])
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM universe WHERE user_id = ?", (user_id,)).fetchone()
     if not row:
@@ -141,6 +145,8 @@ def user_universe_symbols(user_id: int) -> list[str]:
 
 
 def user_risk_limits(user_id: int) -> RiskLimits:
+    if TASK_SETTINGS is not None:
+        return RiskLimits.from_mapping(TASK_SETTINGS["risk"])
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM risk_limits WHERE user_id = ?", (user_id,)).fetchone()
     if not row:
@@ -176,6 +182,10 @@ def build_backtest_service(user: dict) -> BacktestService:
     app_section = service.configs["app"]
     app_section["app"]["runtime_dir"] = str(_abs(app_section["app"]["runtime_dir"]))
     app_section["data"]["repository"] = str(_abs(app_section["data"]["repository"]))
+
+    if TASK_SETTINGS is not None and TASK_SETTINGS.get("paths"):
+        app_section["app"]["runtime_dir"] = str(RUNTIME_ROOT)
+        app_section["data"]["repository"] = str(MARKET_ROOT)
 
     # 注入该用户的股票池与过滤条件。
     symbols, filters = _user_universe(user["id"])

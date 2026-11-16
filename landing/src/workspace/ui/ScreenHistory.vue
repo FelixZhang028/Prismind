@@ -38,6 +38,8 @@ async function run() {
   try {
     const definition = definitionFromForm(props.form)
     result.value = await screenHistory({ definition, market: market.value, years: Number(years.value), top_n: Number(topN.value), rebalance: rebalance.value })
+    openResearch('backtest-review', { job: result.value.id })
+    result.value = null
     stale.value = false
   } catch (e) {
     error.value = e.message || '回测失败'
@@ -55,7 +57,7 @@ async function run() {
       <FormField class="w-28 shrink-0" label="持股数量" type="number" v-model="topN" :min="1" :max="50" :step="1" />
       <FormField class="min-w-[7rem] flex-1" label="调仓频率" type="select" v-model="rebalance" :options="freqOptions" />
       <button type="button" :disabled="running" class="rounded-full border border-indigo-400/40 bg-indigo-500/10 px-5 py-2.5 text-sm font-medium text-indigo-200 transition hover:bg-indigo-500/20 disabled:opacity-50" @click="run">
-        {{ running ? '回测中…（几秒到一分钟）' : '回测这组条件' }}
+        {{ running ? '正在提交…' : '回测这组条件' }}
       </button>
     </div>
     <p class="mt-2 text-xs text-slate-500">全市场太大，回测时请选股票池或指数（按当时的成分股，不会用今天的名单去回测过去）。历史表现不代表以后。</p>

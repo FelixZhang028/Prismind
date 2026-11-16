@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quant_platform.core import progress
+
 from dataclasses import asdict, replace
 from datetime import date, timedelta
 from math import isclose, isfinite
@@ -98,6 +100,7 @@ class BacktestEngine:
     ) -> BacktestResult:
         """Execute a deterministic long-only backtest over the requested dates."""
 
+        progress.report("加载行情与交易日历")
         calendar = self.repository.get_trade_calendar(start_date, end_date)
         if calendar.empty:
             raise ValueError("No trading calendar data in requested range")
@@ -212,6 +215,7 @@ class BacktestEngine:
         risk_interventions: list[dict[str, object]] = []
         unobserved_action_symbols: set[str] = set()
         for index, trade_date in enumerate(dates):
+            progress.report("逐日回测", index, len(dates))
             deadline.check()  # 网页请求有时间限制：超时就在两个交易日之间停下
             account.start_day(trade_date)
             for symbol in list(account.positions):
@@ -458,6 +462,7 @@ class BacktestEngine:
             )
             pending.setdefault(next_date, []).extend(orders)
 
+        progress.report("统计与保存结果", len(dates), len(dates))
         nav = pd.DataFrame(nav_rows)
         signals_frame = pd.DataFrame([signal.to_dict() for signal in all_signals])
         targets_frame = pd.DataFrame([asdict(target) for target in all_targets])
