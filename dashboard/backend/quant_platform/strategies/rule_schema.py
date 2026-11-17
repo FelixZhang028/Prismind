@@ -12,6 +12,13 @@ from quant_platform.core.exceptions import ConfigurationError
 
 SCHEMA_VERSION = 1
 
+FUNDAMENTAL_INDICATORS: dict[str, str] = {
+    "dividend_yield": "股息率（近一年）",
+    "roe_avg": "ROE（最新已披露财报）",
+    "pe_ttm": "市盈率（PE TTM）",
+    "pb_mrq": "市净率（PB 最近一季）",
+}
+
 INDICATOR_LABELS: dict[str, str] = {
     "close": "收盘价",
     "return": "区间涨跌幅",
@@ -22,6 +29,7 @@ INDICATOR_LABELS: dict[str, str] = {
     "previous_low": "前期最低收盘价",
     "rsi": "RSI强弱指标",
     "drawdown": "区间回撤",
+    **FUNDAMENTAL_INDICATORS,
 }
 
 OPERATOR_LABELS: dict[str, str] = {
@@ -69,9 +77,9 @@ class IndicatorSpec:
     def validate(self) -> None:
         if self.name not in INDICATOR_LABELS:
             raise ConfigurationError(f"不支持的指标：{self.name}")
-        if self.name == "close":
+        if self.name not in _WINDOW_RULES:
             if self.window is not None:
-                raise ConfigurationError("收盘价指标不需要周期")
+                raise ConfigurationError(f"{INDICATOR_LABELS[self.name]}指标不需要周期")
             return
         if self.window is None:
             raise ConfigurationError(f"{INDICATOR_LABELS[self.name]}必须设置周期")
@@ -142,7 +150,7 @@ class RuleSpec:
         return result
 
     def describe(self) -> str:
-        right = self.right.describe() if self.right is not None else _format_number(self.value)
+        right = self.right.describe() if self.right is not None else _format_number(self.value, self.left.name)
         return f"{self.left.describe()}{OPERATOR_LABELS[self.operator]}{right}"
 
 
@@ -231,15 +239,21 @@ class RuleStrategyDefinition:
             rule.validate()
         self.ranking.validate()
 
-    @property
-    def minimum_history_days(self) -> int:
+    def _indicators(self) -> list[IndicatorSpec]:
         indicators = [self.ranking.indicator]
         for rule in self.entry_rules:
             indicators.append(rule.left)
             if rule.right is not None:
                 indicators.append(rule.right)
-        requirements = [_indicator_history(item) for item in indicators]
-        return max(requirements, default=1)
+        return indicators
+
+    @property
+    def data_fields(self) -> frozenset[str]:
+        return frozenset(item.name for item in self._indicators() if item.name in FUNDAMENTAL_INDICATORS)
+
+    @property
+    def minimum_history_days(self) -> int:
+        return max(_indicator_history(item) for item in self._indicators())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -278,10 +292,12 @@ def _indicator_history(indicator: IndicatorSpec) -> int:
     return indicator.window + 1 if indicator.name in needs_previous else indicator.window
 
 
-def _format_number(value: float | None) -> str:
+def _format_number(value: float | None, indicator: str = "") -> str:
     if value is None:
         return "未知值"
-    if 0 < abs(value) < 1:
+    if indicator in {"dividend_yield", "roe_avg"} or (
+        indicator not in FUNDAMENTAL_INDICATORS and 0 < abs(value) < 1
+    ):
         return f"{_trim(f'{value * 100:.2f}')}%"
     return _trim(f"{value:,.2f}")
 

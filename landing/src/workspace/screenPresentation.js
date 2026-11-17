@@ -2,6 +2,8 @@
 
 const PRICE = new Set(['close', 'moving_average', 'previous_high', 'previous_low'])
 const SIGNED = new Set(['return', 'drawdown'])
+const FUNDAMENTAL_PERCENT = new Set(['dividend_yield', 'roe_avg'])
+const VALUATION = new Set(['pe_ttm', 'pb_mrq'])
 
 // 一个指标的数值：价格两位小数，涨跌幅和回撤带正负号的百分比，波动率百分比，RSI 一位小数，成交额用万 / 亿。
 export function formatIndicator(name, value) {
@@ -9,6 +11,8 @@ export function formatIndicator(name, value) {
   const number = Number(value)
   if (PRICE.has(name)) return number.toFixed(2)
   if (SIGNED.has(name)) return `${number > 0 ? '+' : ''}${(number * 100).toFixed(2)}%`
+  if (FUNDAMENTAL_PERCENT.has(name)) return `${(number * 100).toFixed(2)}%`
+  if (VALUATION.has(name)) return `${number.toFixed(2)} 倍`
   if (name === 'volatility') return `${(number * 100).toFixed(1)}%`
   if (name === 'rsi') return number.toFixed(1)
   if (name === 'average_amount') return number >= 1e8 ? `${(number / 1e8).toFixed(2)} 亿` : `${(number / 1e4).toFixed(0)} 万`

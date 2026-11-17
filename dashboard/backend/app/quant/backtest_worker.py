@@ -64,15 +64,18 @@ def execute(jid):
                                       rebalance=request.rebalance or package.rebalance)
                     initial_cash = request.initial_cash
                     reference = "package:" + payload["package_id"]
+                    exclude_st = None
                 else:
                     request = workspace.ScreenHistoryIn.model_validate({k: v for k, v in body.items() if k not in {"from_date", "to_date"}})
                     package = StrategyPackage(package_id="screen", name=payload["label"],
                         definition=workspace._screen_rule(request.definition), top_n=request.top_n,
                         rebalance=request.rebalance, source="stock_screen", created_at=datetime.now(timezone.utc))
                     initial_cash, reference = 1_000_000, ""
+                    exclude_st = request.exclude_st
                 workspace._run_backtest(user, package, market=request.market,
                     start=date.fromisoformat(body["from_date"]), end=date.fromisoformat(body["to_date"]),
-                    initial_cash=initial_cash, reference=reference, package_id=payload["package_id"])
+                    initial_cash=initial_cash, reference=reference, package_id=payload["package_id"],
+                    exclude_st=exclude_st)
     except HTTPException as exc:
         jobs.finish(jid, "FAILED", str(exc.detail))
     except BaseException:

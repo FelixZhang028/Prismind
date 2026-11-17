@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from quant_platform.strategies.rule_schema import RuleStrategyDefinition
+from quant_platform.strategies.rule_schema import FUNDAMENTAL_INDICATORS, RuleStrategyDefinition
 
-# 前端指标名 -> (quant 指标名, 默认周期)；close 无周期。
+# 前端指标名 -> (quant 指标名, 默认周期)；None 表示无周期。
 INDICATOR_TO_QUANT: dict[str, tuple[str, int | None]] = {
     "close": ("close", None),
     "return_1d": ("return", 20),
@@ -22,6 +22,7 @@ INDICATOR_TO_QUANT: dict[str, tuple[str, int | None]] = {
     "low_min": ("previous_low", 20),
     "rsi": ("rsi", 14),
     "drawdown": ("drawdown", 20),
+    **{name: (name, None) for name in FUNDAMENTAL_INDICATORS},
 }
 
 OPERATOR_TO_QUANT: dict[str, str] = {

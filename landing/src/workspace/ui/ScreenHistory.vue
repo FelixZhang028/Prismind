@@ -17,6 +17,7 @@ const market = ref('当前股票池')
 const years = ref(1)
 const topN = ref(5)
 const rebalance = ref('weekly')
+const excludeSt = ref(true)
 const running = ref(false)
 const result = ref(null)
 const stale = ref(false)
@@ -37,7 +38,10 @@ async function run() {
   error.value = ''
   try {
     const definition = definitionFromForm(props.form)
-    result.value = await screenHistory({ definition, market: market.value, years: Number(years.value), top_n: Number(topN.value), rebalance: rebalance.value })
+    result.value = await screenHistory({
+      definition, market: market.value, years: Number(years.value), top_n: Number(topN.value),
+      rebalance: rebalance.value, exclude_st: excludeSt.value,
+    })
     openResearch('backtest-review', { job: result.value.id })
     result.value = null
     stale.value = false
@@ -60,6 +64,10 @@ async function run() {
         {{ running ? '正在提交…' : '回测这组条件' }}
       </button>
     </div>
+    <label class="mt-3 flex items-center gap-2 text-sm text-slate-300">
+      <input v-model="excludeSt" type="checkbox" class="h-4 w-4 rounded border-white/20 bg-white/5 accent-indigo-500" />
+      按调仓日的历史状态排除 ST
+    </label>
     <p class="mt-2 text-xs text-slate-500">全市场太大，回测时请选股票池或指数（按当时的成分股，不会用今天的名单去回测过去）。历史表现不代表以后。</p>
     <p v-if="error" role="alert" class="mt-3 text-sm text-rose-300">{{ error }}</p>
 

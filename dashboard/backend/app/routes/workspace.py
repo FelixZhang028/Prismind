@@ -90,6 +90,7 @@ from quant_platform.application.strategy_studio_service import (
 from quant_platform.application.benchmarks import BENCHMARKS
 from quant_platform.application.data_jobs import exclusive
 from quant_platform.application.factor_research_service import research_combination
+from quant_platform.data.extras import extra_columns, require_extra_data
 from quant_platform.data.index_constituents import INDEX_UNIVERSES, IndexUniverseRepository
 from quant_platform.factors.evaluation import FactorEvaluator
 from quant_platform.core.exceptions import ConfigurationError
@@ -368,6 +369,7 @@ class ScreenHistoryIn(BaseModel):
     years: int = Field(1, ge=1, le=5)
     top_n: int = Field(5, ge=1, le=50)
     rebalance: Literal["daily", "weekly", "monthly"] = "weekly"
+    exclude_st: bool | None = None
 
 
 SCREEN_LIMIT = (60, 60 * 60)          # 全市场一次要读一年多的行情：每人每小时最多 60 次
@@ -400,7 +402,14 @@ def _run_screen(body: ScreenIn, user: dict) -> tuple[RuleStrategyDefinition, dat
         symbols = [to_canonical(str(code)) for code in _load_universe_symbols(user["id"])]
         if not symbols:
             raise HTTPException(status_code=409, detail="股票池是空的，请先在股票池管理里添加股票，或者改成筛选全市场")
-    bars = market_repository().get_daily_bars(symbols, start, day)
+    extras = extra_columns(rule.data_fields)
+    bars = market_repository().get_daily_bars(symbols, start, day, **({"extras": extras} if extras else {}))
+    if extras and not bars.empty:
+        latest = bars[pd.to_datetime(bars["trade_date"]).eq(pd.Timestamp(day))]
+        try:
+            require_extra_data(latest, extras)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     return rule, day, screen(rule, bars, day, exclude_st=body.exclude_st)
 
 
@@ -522,7 +531,7 @@ def screen_history(body: ScreenHistoryIn, user: dict = Depends(get_current_user)
     package = StrategyPackage(package_id="screen", name=name, definition=rule, top_n=body.top_n,
                               rebalance=body.rebalance, source="stock_screen", created_at=datetime.now(UTC))
     return _run_backtest(user, package, market=body.market, start=start, end=end, initial_cash=1_000_000,
-                         reference="", package_id=None)      # 没有保存成策略：研究记录里不显示“继续研究”
+                         reference="", package_id=None, exclude_st=body.exclude_st)
 
 
 @router.post("/packages/{package_id}/backtest", status_code=status.HTTP_201_CREATED, summary="运行策略包回测")
@@ -558,7 +567,7 @@ def backtest_package(package_id: str, body: PackageBacktestIn | None = None, use
 
 
 def _run_backtest(user: dict, package: StrategyPackage, *, market: str, start: date, end: date, initial_cash: float,
-                  reference: str, package_id: str | None) -> dict[str, Any]:
+                  reference: str, package_id: str | None, exclude_st: bool | None = None) -> dict[str, Any]:
     """跑一次规则策略回测并保存到回测记录；策略包回测和条件选股的“过去表现如何”共用。"""
 
     service = build_backtest_service(user)
@@ -566,6 +575,8 @@ def _run_backtest(user: dict, package: StrategyPackage, *, market: str, start: d
         use_market(service, market)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    if exclude_st is not None:
+        service.configs["universe"]["universe"]["filters"]["exclude_st"] = exclude_st
     studio = StrategyStudioService(service)
     base = dc_replace(
         service.default_request(),
