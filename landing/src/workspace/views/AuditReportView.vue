@@ -313,9 +313,7 @@ onActivated(() => {
     <template v-else>
       <!-- 选择记录 -->
       <SectionCard title="选择回测记录" hint="仅显示引擎明细仍存在的成功记录">
-        <div class="max-w-xl">
-          <FormField type="select" label="回测记录" v-model="selectedRun" :options="runOptions" :disabled="loading || auditing" />
-        </div>
+        <FormField type="select" label="回测记录" v-model="selectedRun" :options="runOptions" :disabled="loading || auditing" wrap-selection />
       </SectionCard>
 
       <div v-if="loading" class="text-sm text-slate-400">加载中…</div>
