@@ -12,6 +12,7 @@ from quant_platform.signals.models import Signal
 from quant_platform.strategies.base import Strategy
 from quant_platform.strategies.context import StrategyContext
 from quant_platform.strategies.rule_schema import (
+    FUNDAMENTAL_INDICATORS,
     IndicatorSpec,
     RuleSpec,
     RuleStrategyDefinition,
@@ -54,16 +55,21 @@ class RuleBasedStrategy(Strategy):
         definition = RuleStrategyDefinition.from_json(str(parameters["definition_json"]))
         return cls(strategy_id, RuleBasedParameters(definition))
 
+    @property
+    def data_fields(self) -> frozenset[str]:
+        return self.config.definition.data_fields
+
     def generate_signals(self, context: StrategyContext) -> list[Signal]:
         context.require_fields(self.required_fields)
         definition = self.config.definition
+        fields = ["adjusted_close", "amount", *sorted(self.data_fields)]
         history = context.history(
-            fields=["adjusted_close", "amount"],
+            fields=fields,
             lookback=definition.minimum_history_days,
         )
         # StrategyContext already sorts symbol/date. Convert once per rebalance,
         # not once for every stock (a major cost on large pools).
-        history[["adjusted_close", "amount"]] = history[["adjusted_close", "amount"]].apply(pd.to_numeric, errors="coerce")
+        history[fields] = history[fields].apply(pd.to_numeric, errors="coerce")
         cutoff = pd.Timestamp(context.trade_date)
         signals: list[Signal] = []
         for symbol, original in history.groupby("symbol", observed=True):
@@ -106,7 +112,7 @@ def rank_score(group: pd.DataFrame, definition: RuleStrategyDefinition) -> float
 
 
 def indicator_value(group: pd.DataFrame, indicator: IndicatorSpec | None) -> float | None:
-    """One indicator on the stock's last day (None when there is not enough history)."""
+    """One indicator on the stock's last day, or None if the value is unavailable."""
 
     return _indicator_value(group, indicator)
 
@@ -130,6 +136,11 @@ def _evaluate_rule(group: pd.DataFrame, rule: RuleSpec) -> bool:
 def _indicator_value(group: pd.DataFrame, indicator: IndicatorSpec | None) -> float | None:
     if indicator is None:
         return None
+    if indicator.name in FUNDAMENTAL_INDICATORS:
+        if indicator.name not in group.columns or group.empty:
+            return None
+        value = group[indicator.name].iat[-1]
+        return float(value) if pd.notna(value) and isfinite(value) else None
     close = group["adjusted_close"].dropna()
     if close.empty:
         return None

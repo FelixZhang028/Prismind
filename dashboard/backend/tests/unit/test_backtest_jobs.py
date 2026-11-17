@@ -232,6 +232,7 @@ def test_screen_pagination_preserves_total_and_does_not_change_the_pool(db, monk
 def test_real_worker_saves_a_backtest_and_uses_submitted_pool(db, monkeypatch, kind, count):
     from app.quant import runtime
     from app.routes.backtest_jobs import JobIn, submit
+    from quant_platform.backtest.run_store import BacktestRunStore
     from quant_platform.data.repositories.parquet_repository import ParquetMarketDataRepository
     import numpy as np
     import pandas as pd
@@ -280,7 +281,11 @@ def test_real_worker_saves_a_backtest_and_uses_submitted_pool(db, monkeypatch, k
         request = JobIn(kind="package", package_id=package["package_id"], request=dict(market="当前股票池",
             from_date=str(days[150].date()), to_date=str(days[-1].date())))
     else:
-        request = JobIn(kind="screen", request=dict(definition=definition, market="当前股票池", top_n=2, years=1))
+        with database.get_conn() as conn:
+            conn.execute("UPDATE universe SET exclude_st=0 WHERE user_id=1")
+        request = JobIn(kind="screen", request=dict(
+            definition=definition, market="当前股票池", top_n=2, years=1, exclude_st=True,
+        ))
     task = submit(request, {"id": 1})
     if kind == "package":
         with database.get_conn() as conn:
@@ -304,3 +309,5 @@ def test_real_worker_saves_a_backtest_and_uses_submitted_pool(db, monkeypatch, k
         if kind == "screen":
             assert recorded["pool"]["name"] == "中证 800"
             assert recorded["pool"]["snapshot_date"] == day.date().isoformat()
+            snapshot = BacktestRunStore(runtime.RUNTIME_ROOT / "runs").load_config(recorded["run_id"])
+            assert snapshot["universe"]["universe"]["filters"]["exclude_st"] is True

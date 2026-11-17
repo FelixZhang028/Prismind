@@ -24,7 +24,7 @@ const stale = ref(false)
 const error = ref('')
 const lastRequest = ref(null)     // 这次结果用的条件和范围：AI 解读要用同一组
 
-watch(() => props.form, () => { if (result.value) stale.value = true }, { deep: true })
+watch([() => props.form, scope, excludeSt], () => { if (result.value) stale.value = true }, { deep: true })
 
 async function run(offset = 0) {
   running.value = true
@@ -62,6 +62,7 @@ const tone = (change) => (change > 0 ? 'text-rose-300' : change < 0 ? 'text-emer
         {{ running ? (scope === 'market' ? '筛选全市场中…（几秒钟）' : '筛选中…') : '开始筛选' }}
       </button>
     </div>
+    <p v-if="excludeSt" class="mt-2 text-xs text-slate-400">开启「排除 ST」时，仅纳入当天 ST 状态明确为正常的股票。</p>
     <p class="mt-2 text-xs text-slate-500">停牌的股票当天没有行情，不参与筛选。结果只是按你设置的条件从数据里筛出来的，不是推荐，也不代表以后的走势。</p>
     <p v-if="error" role="alert" class="mt-3 text-sm text-rose-300">{{ error }}</p>
 
@@ -72,7 +73,7 @@ const tone = (change) => (change > 0 ? 'text-rose-300' : change < 0 ? 'text-emer
         <button :disabled="running || stale || (result.offset || 0) + result.items.length >= result.matched" class="text-indigo-300 disabled:opacity-40" @click="run((result.offset || 0) + 100)">下一页</button>
       </div>
       <p class="text-sm text-slate-200">{{ screenSummary(result) }}</p>
-      <p v-if="stale" class="mt-1 text-xs text-amber-300">条件改过了，下面是改之前的结果；点“开始筛选”重新筛。</p>
+      <p v-if="stale" class="mt-1 text-xs text-amber-300">筛选设置已变更。点击「开始筛选」更新结果。</p>
       <p class="mt-1 text-xs text-slate-500">条件：{{ result.conditions.join(result.logic === 'all' ? '，并且' : '，或者') }}；{{ result.ranking }}</p>
 
       <div v-if="result.items.length" class="mt-3 overflow-x-auto">

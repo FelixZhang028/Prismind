@@ -50,14 +50,15 @@ SYSTEM_PROMPT = f"""你是量化策略助手。把用户的中文策略描述转
 - ranking: {{"indicator": {{"name": 指标, "window": 周期}},
             "direction": "descending" 或 "ascending"}}
 
-允许的指标（name 必须逐字使用，close 不需要 window，其余必须有整数 window）：
+允许的指标（name 必须逐字使用，close、dividend_yield、roe_avg、pe_ttm、pb_mrq 不需要 window，其余必须有整数 window）：
 {_INDICATOR_DOC}
 
 允许的比较符（operator 必须逐字使用）：
 {_OPERATOR_DOC}
 
 规则：
-- 涨跌幅、回撤类阈值用小数，例如 5% 写成 0.05；
+- 涨跌幅、回撤、波动率、股息率和 ROE 的阈值用小数，例如 5% 写成 0.05；
+- PE、PB 的阈值以倍为单位，例如 PB 低于 1.5 倍写成 1.5；
 - 平均成交额用元为单位，例如 2000 万写成 20000000；
 - 「A大于B」即 left=A, operator=greater_than, right=B；
 - 只输出 JSON 对象本身，不要输出任何解释或代码块标记。"""

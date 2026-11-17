@@ -4,12 +4,17 @@ from datetime import date, timedelta
 
 import pandas as pd
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from quant_platform.strategies.rule_based import rank_score
+from quant_platform.data.fundamentals import FUNDAMENTALS_TABLE
+from quant_platform.data.indicators import INDICATOR_TABLE
+from quant_platform.data.repositories.parquet_repository import ParquetMarketDataRepository
+from quant_platform.strategies.context import StrategyContext
+from quant_platform.strategies.rule_based import RuleBasedStrategy, rank_score
 from quant_platform.strategies.rule_schema import RuleStrategyDefinition
 from quant_platform.strategies.screen import screen
+from quant_platform.universe.a_share import AShareUniverse, AShareUniverseConfig
 
 DAY = date(2026, 10, 21)
 
@@ -69,6 +74,72 @@ def test_the_screen_agrees_with_the_backtest_rule_check():
 
 def test_nothing_to_screen():
     assert screen(definition(), pd.DataFrame(), DAY) == {"checked": 0, "matched": 0, "items": []}
+
+
+def test_historical_st_filter_reads_the_state_on_each_day():
+    first = DAY - timedelta(days=1)
+    symbol = "600001.SH"
+    frame = pd.DataFrame(history(symbol, [10, 11], st=True)).assign(quality_status="OK", is_listed=True)
+    universe = AShareUniverse(AShareUniverseConfig((symbol,), minimum_history_days=1))
+    universe.prepare(frame)
+    assert universe.select(first, frame) == [symbol]
+    assert universe.select(DAY, frame) == []
+
+    unknown = bars()
+    unknown["is_st"] = unknown["is_st"].astype("boolean").mask(unknown["symbol"].eq(symbol))
+    assert symbol not in {item["symbol"] for item in screen(definition(), unknown, DAY)["items"]}
+    assert symbol in {item["symbol"] for item in screen(definition(), unknown, DAY, exclude_st=False)["items"]}
+
+
+def test_fundamental_rules_share_point_in_time_data_between_screen_and_strategy(tmp_path, monkeypatch):
+    from app.routes import workspace
+
+    repo = ParquetMarketDataRepository(tmp_path)
+    days = pd.date_range(DAY - timedelta(days=2), DAY)
+    one, two, missing = "600001.SH", "600002.SH", "600003.SH"
+    for symbol in (one, two, missing):
+        repo.save_table("daily_bars", pd.DataFrame(history(symbol, [10, 10, 10])).assign(adjusted_close=20))
+        repo.save_table(INDICATOR_TABLE, pd.DataFrame({
+            "symbol": symbol, "trade_date": days, "pe_ttm": 12.0, "pb_mrq": 0.5,
+        }))
+    repo.save_table(FUNDAMENTALS_TABLE, pd.DataFrame([
+        {"symbol": one, "stat_date": "2026-06-30", "pub_date": days[1], "roe_avg": 0.12},
+        {"symbol": two, "stat_date": "2026-06-30", "pub_date": days[2], "roe_avg": 0.15},
+    ]))
+    repo.save_table("corporate_actions", pd.DataFrame([
+        {"symbol": one, "ex_date": DAY - timedelta(days=365), "cash_per_share": 9.0, "share_multiplier": 1.0},
+        {"symbol": one, "ex_date": DAY - timedelta(days=200), "cash_per_share": 0.6, "share_multiplier": 1.0},
+        {"symbol": one, "ex_date": DAY, "cash_per_share": 0.2, "share_multiplier": 2.0},
+        {"symbol": one, "ex_date": DAY + timedelta(days=1), "cash_per_share": 9.0, "share_multiplier": 1.0},
+        {"symbol": two, "ex_date": DAY - timedelta(days=10), "cash_per_share": 0.7, "share_multiplier": 1.0},
+    ]))
+    monkeypatch.setattr(workspace, "market_repository", lambda: repo)
+    monkeypatch.setattr(workspace, "local_data_bounds", lambda: (days[0].date(), DAY))
+    request = workspace.ScreenIn.model_validate({"scope": "market", "definition": {
+        "name": "红利质量",
+        "entry_rules": [
+            {"left": {"name": "roe_avg"}, "operator": "gte", "value": 0.10},
+            {"left": {"name": "pe_ttm"}, "operator": "gt", "value": 0},
+            {"left": {"name": "pb_mrq"}, "operator": "lt", "value": 0.8},
+        ],
+        "ranking": {"indicator": {"name": "dividend_yield"}},
+    }})
+    rule, day, result = workspace._run_screen(request, {"id": 1})
+    assert day == DAY
+    assert rule.entry_rules[-1].describe() == "市净率（PB 最近一季）小于0.8"
+    assert [item["symbol"] for item in result["items"]] == [two, one]
+    assert [item["ranking"] for item in result["items"]] == pytest.approx([0.07, 0.04])
+
+    strategy = RuleBasedStrategy.from_parameters("dividend", {"definition_json": rule.to_json()})
+    frame = repo.get_daily_bars(None, days[0].date(), DAY, extras=strategy.data_fields)
+    for trading_day, expected in zip(days, [[], [one], [two, one]], strict=True):
+        context = StrategyContext.create(trading_day.date(), frame, (one, two, missing))
+        assert [signal.symbol for signal in strategy.generate_signals(context)] == expected
+
+    monkeypatch.setattr(workspace, "local_data_bounds", lambda: (days[0].date(), days[0].date()))
+    with pytest.raises(HTTPException) as exc:
+        workspace._run_screen(request, {"id": 1})
+    assert exc.value.status_code == 409 and "财务数据" in exc.value.detail
 
 
 @pytest.fixture

@@ -39,7 +39,7 @@ def screen(definition: RuleStrategyDefinition, bars: pd.DataFrame, day: date, *,
     if bars.empty:
         return {"checked": 0, "matched": 0, "items": []}
     frame = bars.copy()
-    for column in _NUMERIC:
+    for column in (*_NUMERIC, *definition.data_fields):
         if column in frame.columns:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     cutoff = pd.Timestamp(day)
@@ -48,8 +48,13 @@ def screen(definition: RuleStrategyDefinition, bars: pd.DataFrame, day: date, *,
     frame = frame[frame["trade_date"] <= cutoff].sort_values(["symbol", "trade_date"], kind="stable")
     last_rows = frame.groupby("symbol", observed=True, sort=False).tail(1).set_index("symbol")
     keep = last_rows["trade_date"] == cutoff
-    if exclude_st and "is_st" in last_rows.columns:
-        keep &= ~last_rows["is_st"].fillna(False).astype(bool)
+    if exclude_st:
+        if "is_st" in last_rows:
+            keep &= last_rows["is_st"].eq(False).fillna(False)
+            if "quality_status" in last_rows:
+                keep &= last_rows["quality_status"].ne("UNKNOWN_STATUS")
+        else:
+            keep &= False
     if exclude_suspended and "is_suspended" in last_rows.columns:
         keep &= ~last_rows["is_suspended"].fillna(False).astype(bool)
     wanted = set(last_rows.index[keep])

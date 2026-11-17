@@ -1,7 +1,7 @@
 """Data a factor or strategy can ask for beyond the daily bar itself.
 
-Three kinds, each in its own table: daily valuation and turnover indicators, quarterly
-financial reports joined point in time, and the industry classification in force on the day.
+Daily valuation and turnover, quarterly financial reports, industry classifications and
+trailing cash dividends are aligned to each bar's date.
 Callers name the columns they need; nothing extra is read otherwise.
 """
 
@@ -11,16 +11,18 @@ from collections.abc import Iterable
 
 import pandas as pd
 
+from quant_platform.data.corporate_actions import DIVIDEND_YIELD, MISSING_DIVIDEND_YIELD_MESSAGE
 from quant_platform.data.fundamentals import MISSING_FUNDAMENTALS_MESSAGE, fundamental_columns
 from quant_platform.data.indicators import MISSING_INDICATORS_MESSAGE, indicator_columns
 from quant_platform.data.industry import MISSING_INDUSTRY_MESSAGE, industry_columns
 
 
 def extra_columns(fields: Iterable[str]) -> list[str]:
-    """The indicator, financial-report and industry columns among ``fields``."""
+    """The supported extra data columns among ``fields``."""
 
     wanted = list(fields)
-    return [*indicator_columns(wanted), *fundamental_columns(wanted), *industry_columns(wanted)]
+    dividends = [DIVIDEND_YIELD] if DIVIDEND_YIELD in wanted else []
+    return [*indicator_columns(wanted), *fundamental_columns(wanted), *industry_columns(wanted), *dividends]
 
 
 def require_extra_data(bars: pd.DataFrame, columns: Iterable[str]) -> None:
@@ -29,7 +31,8 @@ def require_extra_data(bars: pd.DataFrame, columns: Iterable[str]) -> None:
     wanted = list(columns)
     for names, message in ((indicator_columns(wanted), MISSING_INDICATORS_MESSAGE),
                            (fundamental_columns(wanted), MISSING_FUNDAMENTALS_MESSAGE),
-                           (industry_columns(wanted), MISSING_INDUSTRY_MESSAGE)):
+                           (industry_columns(wanted), MISSING_INDUSTRY_MESSAGE),
+                           ([DIVIDEND_YIELD] if DIVIDEND_YIELD in wanted else [], MISSING_DIVIDEND_YIELD_MESSAGE)):
         for column in names:
             if column not in bars.columns or not bars[column].notna().any():
                 raise ValueError(message)

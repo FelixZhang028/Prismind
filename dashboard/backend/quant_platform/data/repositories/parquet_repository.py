@@ -15,6 +15,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from quant_platform.core.files import replace_file
+from quant_platform.data.corporate_actions import DIVIDEND_YIELD, trailing_dividend_yield
 from quant_platform.data.fundamentals import (
     FUNDAMENTAL_COLUMNS,
     FUNDAMENTALS_TABLE,
@@ -129,6 +130,7 @@ class ParquetMarketDataRepository(MarketDataRepository):
         Valuation and turnover indicators are matched on the day. Financial-report columns are
         matched point in time: each bar gets the newest report already published that day.
         ``industry`` / ``sector`` are the classification in force that day.
+        Dividend yield is derived from the cash entitlements recorded through each bar's date.
         A bar without a value keeps the bar and gets a missing value.
         """
 
@@ -137,10 +139,11 @@ class ParquetMarketDataRepository(MarketDataRepository):
         daily = [column for column in INDICATOR_COLUMNS if column in asked]
         quarterly = [column for column in FUNDAMENTAL_COLUMNS if column in asked]
         industry = [column for column in INDUSTRY_COLUMNS if column in asked]
-        if not daily and not quarterly and not industry:
+        dividends = [DIVIDEND_YIELD] if DIVIDEND_YIELD in asked else []
+        if not (daily or quarterly or industry or dividends):
             return bars
         if bars.empty:
-            return bars.reindex(columns=[*bars.columns, *daily, *quarterly, *industry])
+            return bars.reindex(columns=[*bars.columns, *daily, *quarterly, *industry, *dividends])
         if industry:
             changes = self.read_table(EXPOSURES_TABLE)
             days = pd.DataFrame({"symbol": bars["symbol"].to_numpy(), "date": bars["trade_date"].to_numpy()})
@@ -154,6 +157,8 @@ class ParquetMarketDataRepository(MarketDataRepository):
             matched = point_in_time(bars, reports, quarterly)
             for column in quarterly:
                 bars[column] = matched[column].to_numpy()
+        if dividends:
+            bars[DIVIDEND_YIELD] = trailing_dividend_yield(bars, self.read_table("corporate_actions"))
         return bars
 
     def get_fundamentals(self, symbols: list[str] | None = None) -> pd.DataFrame:

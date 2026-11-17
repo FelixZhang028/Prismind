@@ -17,6 +17,9 @@ const select = (mapping) => Object.entries(mapping || {}).map(([value, label]) =
 const indicatorOptions = computed(() => select(props.options.indicators))
 const operatorOptions = computed(() => select(props.options.operators))
 const windowLimits = (name) => props.options.indicator_windows[name]
+const usesDividendYield = computed(() => props.form.ranking.name === 'dividend_yield'
+  || props.form.rules.some(rule => rule.left.name === 'dividend_yield'
+    || (rule.compare === 'indicator' && rule.right.name === 'dividend_yield')))
 
 function addRule() {
   if (props.form.rules.length < MAX_RULES) props.form.rules.push(blankRule(props.options))
@@ -31,7 +34,7 @@ function removeRule(index) {
     <div class="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h3 class="text-sm font-semibold text-white">选股条件</h3>
-        <p class="mt-1 text-xs text-slate-500">涨跌幅、回撤、波动率用小数填写：0.05 表示 5%。成交额的单位是元。</p>
+        <p class="mt-1 text-xs text-slate-400">涨跌幅、回撤、波动率、股息率和 ROE 用小数填写（0.05 表示 5%）。PE、PB 的单位是倍，成交额的单位是元。</p>
       </div>
       <div class="w-44"><FormField label="多条条件之间" type="select" v-model="form.entry_logic" :options="logicOptions" /></div>
     </div>
@@ -63,5 +66,6 @@ function removeRule(index) {
       <FormField v-if="form.ranking.window != null" class="w-28 shrink-0" label="周期（日）" type="number" v-model="form.ranking.window" :min="windowLimits(form.ranking.name).minimum" :max="windowLimits(form.ranking.name).maximum" :step="1" />
       <FormField class="min-w-[9rem] flex-1" label="排序方向" type="select" v-model="form.ranking.direction" :options="dirOptions" />
     </div>
+    <p v-if="usesDividendYield" class="mt-2 text-xs text-slate-400">股息率按近 365 天已有的现金分红记录和当日未复权收盘价估算。没有现金分红记录时，该值按缺失处理。</p>
   </div>
 </template>
