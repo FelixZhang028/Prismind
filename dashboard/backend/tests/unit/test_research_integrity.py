@@ -1,7 +1,5 @@
 """Regression checks for truthful runs, effective inputs, and held-out research."""
 import json
-import sqlite3
-from contextlib import contextmanager
 from datetime import date
 from types import SimpleNamespace
 
@@ -11,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app import database
 from app.quant import run_evidence
 from app.routes import backtests, workspace
 from app.routes.auth import get_current_user
@@ -24,16 +23,16 @@ from quant_platform.risk.config import RiskLimits
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.setattr(run_evidence, "RUNTIME_ROOT", tmp_path)
-    db = tmp_path / "test.db"
-    @contextmanager
-    def connect():
-        with sqlite3.connect(db) as conn:
-            conn.row_factory = sqlite3.Row
-            yield conn
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "test.db"))
+    monkeypatch.delenv("FELLOWQUANT_ADMIN_EMAIL", raising=False)
+    database.init_db()
+    connect = database.get_conn
     with connect() as conn:
-        conn.execute("CREATE TABLE backtests (id INTEGER PRIMARY KEY, user_id INTEGER, strategy TEXT, market TEXT, from_date TEXT, to_date TEXT, status TEXT, result TEXT, created_at TEXT)")
-    monkeypatch.setattr(backtests, "get_conn", connect)
-    monkeypatch.setattr(workspace, "get_conn", connect)
+        conn.executemany(
+            "INSERT INTO users (id, name, email, password_hash, salt, created_at) "
+            "VALUES (?, ?, ?, 'unused', 'unused', '2025-01-01')",
+            [(1, "owner", "owner@example.test"), (2, "other", "other@example.test")],
+        )
     monkeypatch.setattr(workspace, "_cached_grade", lambda *_: None)
     app = FastAPI()
     app.include_router(backtests.router)
@@ -55,7 +54,11 @@ def save_run(api, number, *, user=1, dates=None, equity=None, status="WARNING", 
         "status": status, "metrics_reliable": reliable, "issues": issues or []}), encoding="utf-8")
     result = {"output_dir": str(directory), "total_return": 5.0, "max_drawdown": round(500 / 110, 2)}
     with connect() as conn:
-        conn.execute("INSERT INTO backtests VALUES (?,?,?,?,?,?,?,?,?)", (number, user, f"strategy-{number}", "当前股票池", dates[0], dates[-1], "完成", json.dumps(result), "2025-01-07"))
+        conn.execute(
+            "INSERT INTO backtests (id, user_id, strategy, market, from_date, to_date, status, result, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (number, user, f"strategy-{number}", "当前股票池", dates[0], dates[-1], "完成", json.dumps(result), "2025-01-07"),
+        )
     return directory
 
 

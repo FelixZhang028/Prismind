@@ -18,8 +18,6 @@ from test_research_integrity import api, save_run
 @pytest.fixture
 def workflow(api, monkeypatch):
     client, connect, root = api
-    with connect() as conn:
-        conn.execute("CREATE TABLE strategy_packages (id INTEGER PRIMARY KEY, user_id INTEGER, package_id TEXT, name TEXT, definition TEXT, top_n INTEGER, rebalance TEXT, source TEXT, created_at TEXT)")
     captured = []
     catalog = StrategyCatalog()
     metadata = catalog.metadata()
