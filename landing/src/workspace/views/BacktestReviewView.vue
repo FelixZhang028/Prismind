@@ -333,7 +333,6 @@ onActivated(async () => {
 
 <template>
   <div class="space-y-6">
-    <BacktestTasks :focus-job="routeContext.job" :refresh-key="tasksRefresh" @completed="taskCompleted" />
     <!-- 标题 -->
     <div class="glass glass-sheen rounded-2xl p-6">
       <h1 class="text-xl font-bold text-white">策略回测</h1>
@@ -377,6 +376,8 @@ onActivated(async () => {
         </button>
       </div>
     </SectionCard>
+
+    <BacktestTasks :focus-job="routeContext.job" :refresh-key="tasksRefresh" @completed="taskCompleted" />
 
     <!-- 回测结果 -->
     <SectionCard title="回测结果" hint="一次回测的收益、风险、交易成本与持仓 · 基于历史数据，仅供研究参考">
