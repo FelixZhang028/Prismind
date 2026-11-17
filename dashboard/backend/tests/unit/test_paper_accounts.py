@@ -32,11 +32,6 @@ class Calendar:
 @pytest.fixture
 def env(api, monkeypatch):  # noqa: F811
     client, connect, root = api
-    with connect() as conn:
-        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, is_active INTEGER, is_admin INTEGER)")
-        conn.executemany("INSERT INTO users VALUES (?,1,0)", [(1,), (2,)])
-        conn.execute("CREATE TABLE strategy_packages (id INTEGER PRIMARY KEY, user_id INTEGER, package_id TEXT, name TEXT, definition TEXT, top_n INTEGER, rebalance TEXT, source TEXT, created_at TEXT)")
-        conn.execute(database.PAPER_ACCOUNTS_TABLE)
     client.app.include_router(paper.router)
 
     state = SimpleNamespace(requests=[], universes=[], pool=["600000.SH", "000001.SZ"], fail=None,
