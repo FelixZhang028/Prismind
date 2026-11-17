@@ -257,7 +257,7 @@ async function onSubmit() {
       rebalance: form.rebalance,
       strategy_parameters: { ...strategyParameters },
     })
-    props.notify('任务已提交，可在下方查看进度或取消')
+    props.notify('回测已提交。可在「回测任务」中查看进度或取消任务。')
     tasksRefresh.value += 1
     activeTab.value = '概览'
     // 保存任务编号：刷新后重新订阅后台状态，成功后再打开结果。
