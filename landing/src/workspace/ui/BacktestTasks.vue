@@ -2,6 +2,7 @@
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { listBacktestJobs, getBacktestJob, cancelBacktestJob } from '../../api.js'
 import { openResearch } from '../researchNavigation.js'
+import { backtestTimestamp } from '../runRecords.js'
 import SectionCard from './SectionCard.vue'
 
 const props = defineProps({ focusJob: { type: String, default: '' }, refreshKey: { type: Number, default: 0 } })
@@ -87,7 +88,7 @@ watch(() => [props.refreshKey, props.focusJob], refresh)
           <template v-if="job.state === 'RUNNING'"> · 已用时 {{ elapsed(job) }} 秒 · 运行上限 {{ Math.round(job.timeout_seconds / 60) }} 分钟</template>
         </p>
         <progress v-if="job.state === 'RUNNING' && job.total" :value="job.completed" :max="job.total" class="mt-2 h-2 w-full accent-indigo-400" :aria-label="`已处理 ${job.completed} / ${job.total} 个交易日`" />
-        <p class="mt-1 text-xs text-slate-500">提交于 {{ new Date(job.created_at).toLocaleString() }}</p>
+        <p class="mt-1 text-xs text-slate-500">提交于 {{ backtestTimestamp(job.created_at) }}</p>
       </article>
     </div>
     <div v-if="hiddenCount" class="mt-3 flex justify-center">

@@ -7,6 +7,7 @@ import DataTable from '../ui/DataTable.vue'
 import FormField from '../ui/FormField.vue'
 import StrategyForensicsView from './StrategyForensicsView.vue'
 import { pendingAuditRun } from '../auditLink.js'
+import { backtestTimestamp } from '../runRecords.js'
 
 const props = defineProps({
   routeContext: { type: Object, default: () => ({}) },
@@ -50,10 +51,14 @@ const SEVERITY_LABELS = { info: '信息', warn: '警告', fail: '不通过' }
 const SEVERITY_TONE = { info: 'text-slate-400 border-white/10 bg-white/5', warn: 'text-amber-300 border-amber-400/30 bg-amber-400/10', fail: 'text-rose-300 border-rose-400/30 bg-rose-400/10' }
 
 const runOptions = computed(() =>
-  runs.value.map((r) => ({
-    value: r.run_id,
-    label: `${r.run_label}${r.metrics_reliable === false ? '（绩效不可用）' : ''}`,
-  }))
+  runs.value.map((r) => {
+    const submitted = backtestTimestamp(r.submitted_at)
+    const recorded = backtestTimestamp(r.recorded_at)
+    const time = submitted ? '提交于 ' + submitted : recorded ? '记录于 ' + recorded : ''
+    const period = r.from_date && r.to_date ? r.from_date + ' 至 ' + r.to_date : ''
+    const title = [r.strategy_name || r.run_label, time, period].filter(Boolean).join('｜')
+    return { value: r.run_id, label: title + (r.metrics_reliable === false ? '（绩效不可用）' : '') }
+  })
 )
 
 // ---------- 评级仪表盘 ----------

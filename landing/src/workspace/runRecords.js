@@ -34,6 +34,12 @@ export function runTime(value) {
   return `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())} ${two(at.getHours())}:${two(at.getMinutes())}`
 }
 
+// 回测任务与审计记录使用相同的本地提交时间（含秒）。
+export function backtestTimestamp(value) {
+  const at = new Date(value || '')
+  return Number.isNaN(at.getTime()) ? '' : at.toLocaleString()
+}
+
 export function recordsSummary(total, stats) {
   if (!total) return '还没有回测记录。'
   const parts = [`成功 ${stats?.success ?? 0}`, `失败 ${stats?.failed ?? 0}`]

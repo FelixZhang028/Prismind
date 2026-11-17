@@ -1339,14 +1339,35 @@ def audit_run_list(user: dict = Depends(get_current_user)):
             "SELECT id, strategy, from_date, to_date, status, result, created_at FROM backtests WHERE user_id = ? ORDER BY id DESC",
             (user["id"],),
         ).fetchall()
+        task_rows = conn.execute(
+            "SELECT result_id, created_at, CASE WHEN json_valid(payload) THEN json_extract(payload, '$.label') END AS label "
+            "FROM backtest_jobs WHERE user_id = ? AND state = 'SUCCEEDED' AND result_id IS NOT NULL",
+            (user["id"],),
+        ).fetchall()
+    tasks = {row["result_id"]: row for row in task_rows}
+    strategy_names = None
     items = []
     for r in rows:
         result = with_run_evidence(json.loads(r["result"]) if r["result"] else {})
         if not result.get("output_dir"):
             continue
+        task = tasks.get(r["id"])
+        label = task["label"] if task else None
+        if not label:
+            if strategy_names is None:
+                from quant_platform.strategies.discovery import StrategyCatalog
+
+                strategy_names = {m.plugin_name: m.display_name for m in StrategyCatalog().metadata()}
+            stored = r["strategy"]
+            label = strategy_names.get(stored) or (stored if re.search(r"[\u4e00-\u9fff]", stored) else "历史回测")
         items.append({
             "run_id": f"run-{r['id']}",
-            "run_label": f"{r['strategy']}｜{r['from_date']}~{r['to_date']}｜{r['created_at'][:10]}",
+            "run_label": f"{label}｜{r['from_date']}~{r['to_date']}",
+            "strategy_name": label,
+            "from_date": r["from_date"],
+            "to_date": r["to_date"],
+            "submitted_at": task["created_at"] if task else None,
+            "recorded_at": r["created_at"],
             "status": r["status"],
             "metrics_reliable": result["metrics_reliable"],
             "validity_status": result["validity_status"],
