@@ -272,6 +272,19 @@ class DailyUpdate:
         stored = self.service.repository.read_table("benchmark_bars")
         symbols = sorted(stored["symbol"].astype(str).unique()) if not stored.empty else ["000300.SH"]
         errors: list[str] = list(repaired["errors"])
+        local = self.service.repository.daily_bar_bounds()
+        target = max(HISTORY_START, local[0]) if local else HISTORY_START
+        # Recover old CSI 300 history before resuming the ordinary 30-day refresh.
+        available = stored.loc[stored["symbol"].eq("000300.SH"), "trade_date"] if not stored.empty else pd.Series(dtype=str)
+        first = pd.to_datetime(available, errors="coerce").min()
+        if target <= today and (pd.isna(first) or first.date() > target):
+            self.heartbeat()
+            try:
+                # Overlap the first stored close so daily jump checks cover the join.
+                through = min(first.date(), today) if pd.notna(first) else today
+                self.service.update_benchmark(target, through, "000300.SH")
+            except Exception as exc:  # noqa: BLE001 - still try to keep recent bars current
+                errors.append(f"沪深 300 历史回填：{_error(exc)}")
         for symbol in symbols:
             self.heartbeat()
             try:

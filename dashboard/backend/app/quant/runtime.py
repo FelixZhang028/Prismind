@@ -109,15 +109,20 @@ def local_data_bounds() -> tuple[date, date] | None:
 # --------------------------------------------------------------------------- #
 
 
-def _user_universe(user_id: int) -> tuple[list[str], dict[str, Any]]:
-    """返回该用户股票池（canonical 符号）与过滤设置。"""
+def universe_preset(row) -> dict | None:
+    if row is None or "preset" not in row.keys() or not row["preset"]:
+        return None
+    return json.loads(row["preset"])
 
+
+def saved_universe_snapshot(user_id: int) -> tuple[list[str], dict[str, Any], dict | None] | None:
+    """Read the saved symbols, filters and preset metadata from the same row."""
     if TASK_SETTINGS is not None:
-        return list(TASK_SETTINGS["symbols"]), dict(TASK_SETTINGS["filters"])
+        return list(TASK_SETTINGS["symbols"]), dict(TASK_SETTINGS["filters"]), TASK_SETTINGS.get("preset")
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM universe WHERE user_id = ?", (user_id,)).fetchone()
     if not row:
-        return [], {}
+        return None
     symbols = [to_canonical(s) for s in json.loads(row["symbols"])]
     filters = {
         "exclude_st": bool(row["exclude_st"]),
@@ -126,7 +131,12 @@ def _user_universe(user_id: int) -> tuple[list[str], dict[str, Any]]:
         "minimum_history_days": row["minimum_history_days"],
         "minimum_average_amount": row["minimum_average_amount"],
     }
-    return symbols, filters
+    return symbols, filters, universe_preset(row)
+
+
+def _user_universe(user_id: int) -> tuple[list[str], dict[str, Any]]:
+    snapshot = saved_universe_snapshot(user_id)
+    return (snapshot[0], snapshot[1]) if snapshot is not None else ([], {})
 
 
 def default_universe_settings() -> tuple[list[str], dict[str, Any]]:
@@ -188,10 +198,13 @@ def build_backtest_service(user: dict) -> BacktestService:
         app_section["data"]["repository"] = str(MARKET_ROOT)
 
     # 注入该用户的股票池与过滤条件。
-    symbols, filters = _user_universe(user["id"])
-    if symbols:
+    snapshot = saved_universe_snapshot(user["id"])
+    if snapshot is not None and snapshot[0]:
+        symbols, filters, preset = snapshot
         universe_section = service.configs["universe"].setdefault("universe", {})
         universe_section["symbols"] = symbols
+        if preset:
+            universe_section["preset"] = preset
         if filters:
             merged = dict(universe_section.get("filters") or {})
             merged.update(filters)

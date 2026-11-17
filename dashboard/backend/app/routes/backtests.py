@@ -25,12 +25,14 @@ from ..quant.benchmark_view import benchmark_comparison, benchmark_options
 from ..quant.backtest_jobs import save_result
 from ..quant.compute import computing
 from ..quant.markets import CURRENT_POOL, market_options, use_market
+from ..quant.run_pool import pool_from_snapshot
 from ..quant.result_adapter import backtest_run_to_result
 from ..quant.run_evidence import run_directory, with_run_evidence
 from ..quant.runtime import (
     build_backtest_service,
     local_data_bounds,
     market_repository,
+    saved_universe_snapshot,
     security_names,
     user_risk_limits,
 )
@@ -161,6 +163,7 @@ def submit_backtest(body: BacktestIn, user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=422, detail=_friendly_error(exc))
 
     result = backtest_run_to_result(run, names=security_names())
+    result["pool"] = pool_from_snapshot(getattr(run, "config_snapshot", {}), body.market, run.result.summary.get("universe_count"))
     result["effective_config"] = {
         "strategy_reference": reference,
         "strategy_plugin": request.strategy_plugin,
@@ -192,10 +195,19 @@ def backtest_catalog(user: dict = Depends(get_current_user)):
     items = [item(m, m.plugin_name, m.display_name)
              for m in metadata.values() if m.plugin_name != "rule_builder"
              and (user.get("is_admin") or m.plugin_name not in ADMIN_ONLY_STRATEGIES)]
+    saved_pool = saved_universe_snapshot(user["id"])
+    config = getattr(service, "configs", {}).get("app", {}).get("backtest", {})
+    symbol = str(config.get("benchmark", "000300.SH") or "")
+    span = None
+    if symbol:
+        bars = market_repository().read_table("benchmark_bars")
+        span = next((item for item in benchmark_options(bars) if item["symbol"] == symbol), None)
     return {"items": items,
             "default": service.default_request().strategy_plugin,
             "market": CURRENT_POOL,
-            "markets": market_options()}
+            "markets": market_options(),
+            "pool_preset": saved_pool[2] if saved_pool else None,
+            "benchmark_coverage": (span or {"symbol": symbol, "name": BENCHMARK_NAMES.get(symbol, symbol)}) if symbol else None}
 
 
 @router.get("/{bid}", summary="单次回测详情")
@@ -208,6 +220,7 @@ def get_backtest(bid: int, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="回测不存在")
     result = with_run_evidence(json.loads(row["result"]) if row["result"] else {})
     directory = run_directory(result)
+    bars = market_repository().read_table("benchmark_bars") if directory else None
     return {
         "id": row["id"],
         "strategy": row["strategy"],
@@ -220,9 +233,9 @@ def get_backtest(bid: int, user: dict = Depends(get_current_user)):
         "trades": result.get("trades") or [],
         "positions": result.get("positions") or [],
         # 和基准的对比在查看时从运行目录读出，所以以前的回测也有。
-        "benchmark": benchmark_comparison(directory),
+        "benchmark": benchmark_comparison(directory, bars=bars),
         # 本地有行情的常用指数：结果页可以换一个指数来比较。
-        "benchmark_options": benchmark_options(market_repository().read_table("benchmark_bars")) if directory else [],
+        "benchmark_options": benchmark_options(bars) if bars is not None else [],
     }
 
 

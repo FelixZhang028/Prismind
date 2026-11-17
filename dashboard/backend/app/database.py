@@ -425,6 +425,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE backtest_jobs ADD COLUMN lease_at TEXT")
         if "archived_at" not in {row[1] for row in conn.execute("PRAGMA table_info(backtests)")}:
             conn.execute("ALTER TABLE backtests ADD COLUMN archived_at TEXT")
+        if "preset" not in {row[1] for row in conn.execute("PRAGMA table_info(universe)")}:
+            conn.execute("ALTER TABLE universe ADD COLUMN preset TEXT")
 
     # No public default credentials. Bootstrap only when explicitly configured.
     email = os.getenv("FELLOWQUANT_ADMIN_EMAIL", "").strip().lower()

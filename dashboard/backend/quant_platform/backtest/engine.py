@@ -505,8 +505,11 @@ class BacktestEngine:
             )
             raise BacktestValidityError(errors or "回测有效性检查未通过")
 
+        analytics_nav = nav
+        if "benchmark_equity" in nav and nav["benchmark_equity"].iloc[[0, -1]].isna().any():
+            analytics_nav = nav.drop(columns="benchmark_equity")
         analytics = analyze_backtest(
-            nav,
+            analytics_nav,
             orders_frame,
             fills_frame,
             positions_frame,
@@ -536,6 +539,7 @@ class BacktestEngine:
                 "metrics_reliable": validity.metrics_reliable,
                 "evaluation_mode": self.evaluation_mode,
                 "validity_audit_version": validity.audit_version,
+                "universe_count": len(set(universe_symbols)) if universe_symbols else None,
                 "unknown_market_rows": validity.unknown_market_rows,
                 "unknown_market_symbols": validity.unknown_market_symbols,
                 "unknown_status_orders": validity.unknown_status_orders,
@@ -662,8 +666,7 @@ class BacktestEngine:
 
         未配置基准（benchmark_symbol 为空）时返回空字典且 nav 不写该列；
         配置了基准但本地无行情时同样返回空字典，nav 中该列整列为 NA。
-        基准当日无行情沿用最近一次收盘价（前向填充）；首条基准行情出现
-        之前的交易日保持缺失，锚定后首值恒等于 initial_cash。
+        首末条行情之间的缺口沿用最近一次收盘价；区间两端缺失保持为空。
         """
 
         if not self.benchmark_symbol:
@@ -677,7 +680,7 @@ class BacktestEngine:
         selected = selected.copy()
         selected["trade_date"] = pd.to_datetime(selected["trade_date"]).dt.normalize()
         selected["raw_close"] = pd.to_numeric(selected["raw_close"], errors="coerce")
-        selected = selected.dropna(subset=["raw_close"])
+        selected = selected[selected["raw_close"].gt(0) & selected["raw_close"].lt(float("inf"))]
         if selected.empty:
             return {}
         selected = selected[
@@ -688,10 +691,15 @@ class BacktestEngine:
             timestamp.date(): float(price)
             for timestamp, price in zip(selected["trade_date"], selected["raw_close"], strict=True)
         }
+        observed = [day for day in dates if day in close_by_date]
+        if not observed:
+            return {}
         series: dict[date, float] = {}
         first_close: float | None = None
         last_close: float | None = None
         for trade_date in dates:
+            if trade_date > observed[-1]:
+                break
             close = close_by_date.get(trade_date)
             if close is not None:
                 if first_close is None:
@@ -721,8 +729,14 @@ def _benchmark_summary(
         metrics["benchmark_symbol"] = benchmark_symbol
     if "benchmark_equity" not in nav.columns:
         return metrics
-    benchmark = pd.to_numeric(nav["benchmark_equity"], errors="coerce").dropna()
-    if len(benchmark) >= 2 and float(benchmark.iloc[0]) > 0:
+    benchmark = pd.to_numeric(nav["benchmark_equity"], errors="coerce")
+    observed = benchmark.dropna()
+    if not observed.empty:
+        if pd.isna(benchmark.iloc[0]):
+            metrics["benchmark_start"] = pd.Timestamp(nav.loc[observed.index[0], "trade_date"]).date().isoformat()
+        if pd.isna(benchmark.iloc[-1]):
+            metrics["benchmark_end"] = pd.Timestamp(nav.loc[observed.index[-1], "trade_date"]).date().isoformat()
+    if len(benchmark) >= 2 and benchmark.iloc[[0, -1]].notna().all() and float(benchmark.iloc[0]) > 0:
         benchmark_return = float(benchmark.iloc[-1]) / float(benchmark.iloc[0]) - 1.0
         metrics["benchmark_return"] = benchmark_return
         cumulative = summary.get("cumulative_return")

@@ -320,6 +320,17 @@ onActivated(consumePending)
           可信度评级 {{ report.grade }}——{{ report.headline }}
         </p>
 
+        <SectionCard v-if="report.grade_rule" title="评级依据">
+          <p class="text-sm text-slate-300">{{ report.grade_rule }}</p>
+          <ul v-if="report.grade_reasons?.length" class="mt-3 space-y-3">
+            <li v-for="(reason, index) in report.grade_reasons" :key="index" class="rounded-lg bg-white/5 px-4 py-3 text-sm">
+              <p class="font-medium text-white">{{ reason.title }}</p>
+              <p class="mt-1 text-slate-300">{{ reason.message }}</p>
+              <p v-if="reason.action" class="mt-1 text-slate-400">{{ reason.action }}</p>
+            </li>
+          </ul>
+        </SectionCard>
+
         <!-- 六维审计 -->
         <SectionCard title="六维审计" hint="各维度的结论与首条要点">
           <DataTable :columns="dimensionCols" :rows="dimensionRows" empty="暂无审计维度">

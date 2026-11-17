@@ -16,7 +16,7 @@ def universe_db(monkeypatch):
     conn.execute("""CREATE TABLE universe (
         user_id INTEGER PRIMARY KEY, symbols TEXT, exclude_st INTEGER,
         exclude_suspended INTEGER, minimum_listing_days INTEGER,
-        minimum_history_days INTEGER, minimum_average_amount REAL, updated_at TEXT
+        minimum_history_days INTEGER, minimum_average_amount REAL, updated_at TEXT, preset TEXT
     )""")
     monkeypatch.setattr(workspace, "get_conn", lambda: conn)
     monkeypatch.setattr(runtime, "get_conn", lambda: conn)
@@ -46,7 +46,7 @@ def test_first_edit_starts_from_displayed_pool_and_keeps_default_filters(univers
 
 
 def test_saved_custom_pool_and_filters_are_not_replaced(universe_db):
-    universe_db.execute("INSERT INTO universe VALUES (?,?,?,?,?,?,?,?)", (
+    universe_db.execute("INSERT INTO universe (user_id, symbols, exclude_st, exclude_suspended, minimum_listing_days, minimum_history_days, minimum_average_amount, updated_at) VALUES (?,?,?,?,?,?,?,?)", (
         123, json.dumps(["000001"]), 0, 1, 30, 42, 1234, "2026-10-10"
     ))
     before = workspace.universe_get({"id": 123})

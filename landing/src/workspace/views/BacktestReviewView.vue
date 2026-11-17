@@ -4,7 +4,7 @@ import { getBacktestBenchmark, getBacktestCatalog, getBacktest, getPreferences, 
 import { REBALANCE_OPTIONS, backtestDefaults } from '../preferences.js'
 import { openResearch } from '../researchNavigation.js'
 import { setFocus } from '../chatFocus.js'
-import { backtestId, countText, runTime, strategyName, validityLabel } from '../runRecords.js'
+import { backtestId, countText, poolLabel, runTime, strategyName, validityLabel } from '../runRecords.js'
 import BacktestAiReview from '../ui/BacktestAiReview.vue'
 import BacktestTasks from '../ui/BacktestTasks.vue'
 import UsefulPrompt from '../ui/UsefulPrompt.vue'
@@ -17,7 +17,7 @@ import FormField from '../ui/FormField.vue'
 import DataTable from '../ui/DataTable.vue'
 import StatusPill from '../ui/StatusPill.vue'
 import { pendingAuditRun } from '../auditLink.js'
-import { benchmarkCards, benchmarkChoices, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
+import { benchmarkCards, benchmarkChoices, benchmarkCoverageNote, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
 import { CURRENT_POOL, marketChoices, marketLabel, marketNote, usableMarket } from '../marketPresentation.js'
 import { paperPrefill, returnTone } from '../paperPresentation.js'
 
@@ -37,6 +37,8 @@ const catalogLoading = ref(false)
 const catalogErrors = ref([])
 const strategyParameters = reactive({})
 const selectedStrategy = computed(() => strategyOptions.value.find((s) => s.value === form.strategy))
+const poolPreset = ref(null)
+const benchmarkCoverage = ref(null)
 const riskEditor = ref(null)
 const riskOpen = ref(false)
 function chooseStrategy() {
@@ -58,6 +60,13 @@ const form = reactive({
   rebalance: 'weekly',
 })
 
+const presetNote = computed(() => {
+  const pool = poolPreset.value
+  if (form.market !== CURRENT_POOL || !pool) return ''
+  const earlier = form.from_date && form.from_date < pool.snapshot_date
+  return poolLabel(pool) + (earlier ? '。回测起点早于名单快照，可能存在前视偏差。' : '。回测期间使用这份固定名单。')
+})
+const coverageNote = computed(() => benchmarkCoverageNote(benchmarkCoverage.value, form.from_date, form.to_date))
 const running = ref(false)
 const tasksRefresh = ref(0)
 function taskCompleted(job) {
@@ -85,7 +94,7 @@ const GRADE_TONE = { A: 'text-emerald-300', B: 'text-sky-300', C: 'text-amber-30
 const gradeTone = computed(() => GRADE_TONE[audit.value?.grade] || 'text-slate-300')
 const gradeValue = computed(() => audit.value?.grade || '待检查')
 const gradeSub = computed(() =>
-  audit.value?.headline ? '点击下方按钮查看证据链' : '含数据、成本与参数搜索偏差等审计维度，不代表未来盈利概率'
+  audit.value?.headline ? audit.value.headline : '含数据、成本与参数搜索偏差等审计维度，不代表未来盈利概率'
 )
 
 function openAudit() {
@@ -266,6 +275,8 @@ async function loadCatalog() {
   catalogErrors.value = []
   try {
     const [catalog, packages] = await Promise.all([getBacktestCatalog(), listPackages()])
+    poolPreset.value = catalog.pool_preset || null
+    benchmarkCoverage.value = catalog.benchmark_coverage || null
     strategyOptions.value = [
       ...(packages.items || []).map((p) => ({ value: `package:${p.package_id}`, label: `${p.name} · 规则策略`, top_n: p.top_n, rebalance: p.rebalance })),
       ...catalog.items,
@@ -343,6 +354,8 @@ onActivated(async () => {
         <FormField label="调仓频率" type="select" v-model="form.rebalance" :options="rebalances" />
       </div>
       <p v-if="marketHint" class="mt-3 text-xs text-slate-400">{{ marketHint }}</p>
+      <p v-if="presetNote" class="mt-2 text-xs" :class="form.from_date < poolPreset?.snapshot_date ? 'text-amber-300' : 'text-slate-400'">{{ presetNote }}</p>
+      <p v-if="coverageNote.text" class="mt-2 text-xs" :class="coverageNote.outside ? 'text-amber-300' : 'text-slate-400'">{{ coverageNote.text }}</p>
       <p v-for="(error, i) in catalogErrors" :key="i" role="alert" class="mt-3 text-sm text-amber-300">{{ error }}</p>
       <div v-if="selectedStrategy?.parameters?.length" class="mt-5 grid gap-4 border-t border-white/10 pt-5 md:grid-cols-2 xl:grid-cols-4">
         <FormField v-for="p in selectedStrategy.parameters" :key="p.name" v-model="strategyParameters[p.name]" :label="p.label" :type="p.choices?.length ? 'select' : p.kind === 'boolean' ? 'checkbox' : ['integer', 'number'].includes(p.kind) ? 'number' : 'text'" :options="(p.choices || []).map((v) => ({ value: v, label: v }))" :min="p.minimum" :max="p.maximum" :step="p.kind === 'integer' ? 1 : 'any'" :hint="p.description" />
@@ -407,6 +420,10 @@ onActivated(async () => {
         <div v-if="current" class="rounded-xl border border-amber-400/20 bg-white/5 p-4 text-xs text-slate-300">
           <p>数据状态：{{ validityLabel(result) }}；{{ result.metrics_reliable ? '指标可计算，请结合警告审阅' : '指标不可作为可信结论' }}</p>
           <p v-if="result.effective_config" class="mt-2">实际配置：{{ shownStrategy }} · ¥{{ Number(result.effective_config.initial_capital).toLocaleString() }} · 最多 {{ result.effective_config.max_positions }} 只 · {{ rebalances.find(r => r.value === result.effective_config.rebalance)?.label }}调仓 · {{ result.effective_config.from_date }} 至 {{ result.effective_config.to_date }}</p>
+          <p v-if="result.pool?.name" class="mt-2">股票池：{{ poolLabel(result.pool) }}</p>
+          <p v-if="result.pool?.snapshot_date && current.from_date < result.pool.snapshot_date" class="mt-1 text-amber-300">
+            回测起点早于成分股名单快照，可能存在前视偏差。
+          </p>
           <p v-for="(issue, index) in result.validity_issues || []" :key="index" class="mt-1 text-amber-300" :title="issue.code">{{ issue.message }}</p>
         </div>
         <!-- 概览 -->

@@ -55,3 +55,11 @@ export function runningText(seconds) {
   const spent = s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, '0')} 秒`
   return `已运行 ${spent}。通常需要 1 分钟左右，区间长或股票多时会更久，请不要关闭页面。`
 }
+
+export function poolLabel(pool) {
+  if (!pool?.name) return '未记录'
+  const count = Number.isInteger(pool.count)
+    ? (pool.kind === 'historical' ? '区间共 ' : '') + pool.count + ' 只'
+    : '只数未记录'
+  return [pool.name, pool.snapshot_date, count].filter(Boolean).join(' · ')
+}

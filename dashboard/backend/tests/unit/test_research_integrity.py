@@ -33,7 +33,6 @@ def api(tmp_path, monkeypatch):
             "VALUES (?, ?, ?, 'unused', 'unused', '2025-01-01')",
             [(1, "owner", "owner@example.test"), (2, "other", "other@example.test")],
         )
-    monkeypatch.setattr(workspace, "_cached_grade", lambda *_: None)
     app = FastAPI()
     app.include_router(backtests.router)
     app.include_router(workspace.router)

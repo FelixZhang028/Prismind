@@ -28,12 +28,15 @@ from pydantic import BaseModel, Field, AliasChoices, ConfigDict, model_validator
 
 from ..database import _now, get_conn
 from ..quant.result_adapter import backtest_run_to_result, factor_report_to_dict
-from ..quant.result_adapter import _round
+from ..quant.result_adapter import _percent, _round
 from ..quant.run_evidence import with_run_evidence, run_directory
 from ..quant.run_comparison import compare_persisted_runs
 from ..quant.market_catalog import LocalMarketCatalog
 from ..quant.stock_financials import stock_financials
 from ..quant import platform_ai
+from ..quant.grade_explanation import grade_explanation
+from ..quant.index_pools import INDEX_POOLS, index_pools
+from ..quant.run_pool import persisted_pool, pool_from_snapshot
 from ..quant.markets import CURRENT_POOL, market_options, use_market
 from ..quant.run_trades import symbol_trades, traded_symbols
 from ..quant.research_runs import (
@@ -66,6 +69,7 @@ from ..quant.runtime import (
     local_data_bounds,
     market_repository,
     security_names,
+    universe_preset,
     user_risk_limits,
     user_universe_symbols,
 )
@@ -581,6 +585,7 @@ def _run_backtest(user: dict, package: StrategyPackage, *, market: str, start: d
             raise HTTPException(status_code=422, detail=_friendly_engine_error(exc))
 
     result = backtest_run_to_result(run, names=security_names())
+    result["pool"] = pool_from_snapshot(getattr(run, "config_snapshot", {}), market, run.result.summary.get("universe_count"))
     result["effective_config"] = {
         "strategy_reference": reference, "package_id": package_id,
         "strategy_plugin": "rule_builder", "market": market,
@@ -1207,6 +1212,20 @@ def research_walk_forward(body: WalkForwardIn, user: dict = Depends(get_current_
             raise HTTPException(status_code=422, detail=f"滚动验证失败：{_sanitize_detail(exc)}")
 
 
+def _persisted_annual_return(result: dict, directory: Path | None) -> float | None:
+    annual = result.get("annual_return")
+    if annual is not None:
+        return _round(annual)
+    if directory is not None:
+        try:
+            summary = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
+            if isinstance(summary, dict):
+                return _percent(summary.get("annual_return"))
+        except (OSError, ValueError):
+            pass
+    return None
+
+
 @router.get("/runs", summary="回测记录库列表")
 def run_library(user: dict = Depends(get_current_user), strategy: str = "", run_kind: str = "", status: str = "", keyword: str = "", archived: bool = False):
     with get_conn() as conn:
@@ -1224,14 +1243,17 @@ def run_library(user: dict = Depends(get_current_user), strategy: str = "", run_
         state = "SUCCESS" if r["status"] == "完成" else r["status"]
         if (strategy and strategy != r["strategy"]) or (run_kind and run_kind != kind) or (status and status != state):
             continue
+        directory = run_directory(res)
         items.append({"run_id": f"run-{r['id']}", "backtest_id": r["id"],
                       "strategy_reference": (res.get("effective_config") or {}).get("strategy_reference")
                           or (res.get("effective_config") or {}).get("strategy_plugin"),
                       "run_label": label, "run_kind": kind, "status": state,
                       **{k: res[k] for k in ("validity_status", "metrics_reliable", "legacy_unverified", "validity_issues")},
-                      "grade": _cached_grade(int(r["id"]), res),
+                      **_cached_grade(int(r["id"]), res),
                       "strategy": r["strategy"], "start_date": r["from_date"], "end_date": r["to_date"],
-                      "updated_at": r["created_at"], "cumulative_return": res.get("total_return"), "max_drawdown": res.get("max_drawdown"),
+                      "pool": persisted_pool(res, r["market"], directory),
+                      "updated_at": r["created_at"], "cumulative_return": res.get("total_return"),
+                      "annual_return": _persisted_annual_return(res, directory), "max_drawdown": res.get("max_drawdown"),
                       "sharpe": res.get("sharpe"), "sortino": res.get("sortino"), "calmar": res.get("calmar")})
     total = len(items)
     return {"items": items, "total": total,
@@ -1301,7 +1323,7 @@ def _audit_run_row(run_ref: str, user: dict):
         raise HTTPException(status_code=400, detail="回测记录编号无效")
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id, strategy, from_date, to_date, status, result, created_at FROM backtests WHERE id = ? AND user_id = ?",
+            "SELECT id, strategy, market, from_date, to_date, status, result, created_at FROM backtests WHERE id = ? AND user_id = ?",
             (int(raw_id), user["id"]),
         ).fetchone()
     if not row:
@@ -1329,36 +1351,30 @@ def audit_run_list(user: dict = Depends(get_current_user)):
             "metrics_reliable": result["metrics_reliable"],
             "validity_status": result["validity_status"],
             "legacy_unverified": result["legacy_unverified"],
-            "grade": _cached_grade(int(r["id"]), result),
+            **_cached_grade(int(r["id"]), result),
         })
     return {"items": items}
 
 
-# 运行一旦完成即不可变，评级按记录编号缓存；失败返回 None 由前端显示"待检查"。
-_GRADE_CACHE: dict[int, str | None] = {}
+# Cache one small explanation per run, separately from the full evidence view.
+_GRADE_CACHE: dict[tuple[int, str], dict] = {}
 
 
-def _cached_grade(db_id: int, result: dict) -> str | None:
-    if result.get("legacy_unverified") or not result.get("metrics_reliable"):
-        return "D"
-    if db_id in _GRADE_CACHE:
-        cached = _GRADE_CACHE[db_id]
-        return "B" if cached == "A" and result.get("validity_status") == "WARNING" else cached
-    output_dir = run_directory(result)
-    if output_dir is None:
-        raise HTTPException(status_code=404, detail="该记录没有可验证的运行明细")
-    grade = None
-    if (output_dir / "summary.json").exists():
+def _cached_grade(db_id: int, result: dict) -> dict:
+    directory = run_directory(result)
+    can_audit = directory is not None and (directory / "summary.json").is_file()
+    key = (db_id, str(directory))
+    if can_audit and not result.get("legacy_unverified") and key not in _GRADE_CACHE:
         try:
             from quant_platform.backtest.credibility import audit_persisted_run
 
-            grade = audit_persisted_run(output_dir).grade
-        except Exception:  # noqa: BLE001 - 单条失败不拖垮整个列表
-            grade = None
-    if result.get("validity_status") == "WARNING" and grade == "A":
-        grade = "B"
-    _GRADE_CACHE[db_id] = grade
-    return grade
+            _GRADE_CACHE[key] = grade_explanation(result, audit_persisted_run(directory))
+        except Exception:  # noqa: BLE001 - single missing or unreadable run
+            can_audit = False
+    details = _GRADE_CACHE.get(key) if can_audit else None
+    if details is None:
+        details = grade_explanation(result)
+    return {**details, "can_audit": can_audit}
 
 
 def _run_trade_directory(run_ref: str, user: dict):
@@ -1408,7 +1424,7 @@ def run_audit(run_ref: str, user: dict = Depends(get_current_user)):
             "key": d.key,
             "title": d.title,
             "status": d.status,
-            "findings": [{"severity": f.severity, "message": f.message} for f in d.findings],
+            "findings": [{"severity": f.severity, "message": f.message, "code": f.code} for f in d.findings],
         }
         for d in report.dimensions
     ]
@@ -1452,8 +1468,7 @@ def run_audit(run_ref: str, user: dict = Depends(get_current_user)):
     return {
         "run_id": f"run-{row['id']}",
         "run_label": f"{row['strategy']}｜{row['from_date']}~{row['to_date']}｜{row['created_at'][:10]}",
-        "grade": "D" if not result["metrics_reliable"] else ("B" if result["validity_status"] == "WARNING" and report.grade == "A" else report.grade),
-        "headline": ("存在需要复核的有效性警告。" if result["validity_status"] == "WARNING" and report.grade == "A" else report.headline) if result["metrics_reliable"] else "有效性证据不足或存在错误，绩效指标不可用于策略评价。",
+        **grade_explanation(result, report),
         "dimensions": dimensions,
         "validity_status": result["validity_status"],
         "metrics_reliable": result["metrics_reliable"],
@@ -2331,7 +2346,36 @@ def universe_get(user: dict = Depends(get_current_user)):
             "start_date": stat.get("start_date", "—"),
             "end_date": stat.get("end_date", "—"),
         })
-    return {"symbols": symbols, "filters": filters, "description": description, "limit": MAX_POOL_SIZE}
+    return {"symbols": symbols, "filters": filters, "description": description, "limit": MAX_POOL_SIZE,
+            "preset": universe_preset(row)}
+
+
+@router.get("/universe/presets", summary="可选择的指数股票池快照")
+def universe_presets(user: dict = Depends(get_current_user)):
+    pools = index_pools(market_repository())
+    return {"items": [
+        {**pools[code].metadata(), "available": True} if code in pools else
+        {"index": code, "name": label, "available": False}
+        for code, (label, _, _) in INDEX_POOLS.items()
+    ]}
+
+
+class UniversePresetIn(BaseModel):
+    index: str = Field(..., max_length=12)
+    snapshot_date: date
+
+
+@router.post("/universe/preset", summary="用指数成分股快照替换当前股票池")
+def universe_use_preset(body: UniversePresetIn, user: dict = Depends(get_current_user)):
+    if body.index not in INDEX_POOLS:
+        raise HTTPException(422, "不支持这个指数股票池")
+    pool = index_pools(market_repository()).get(body.index)
+    if pool is None or pool.snapshot_date != body.snapshot_date.isoformat():
+        raise HTTPException(409, "指数成分数据已更新或暂不可用，请刷新股票池页面后重试。")
+    metadata = pool.metadata()
+    symbols = [to_bare(symbol) for symbol in pool.symbols]
+    _save_universe(user["id"], symbols, preset=metadata)
+    return {"preset": metadata, "count": len(symbols)}
 
 
 class UniverseAddIn(BaseModel):
@@ -2351,16 +2395,18 @@ def _load_universe_symbols(user_id: int) -> list[str]:
     return [to_bare(symbol) for symbol in symbols]
 
 
-def _save_universe(user_id: int, symbols: list[str], filters: dict[str, Any] | None = None, connection=None) -> None:
+def _save_universe(user_id: int, symbols: list[str], filters: dict[str, Any] | None = None,
+                   connection=None, preset: dict | None = None) -> None:
     if filters is None:
         _, filters = default_universe_settings()
     with (nullcontext(connection) if connection is not None else get_conn()) as conn:
         conn.execute(
-            "INSERT INTO universe (user_id, symbols, exclude_st, exclude_suspended, minimum_listing_days, minimum_history_days, minimum_average_amount, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET symbols=excluded.symbols, updated_at=excluded.updated_at",
+            "INSERT INTO universe (user_id, symbols, exclude_st, exclude_suspended, minimum_listing_days, minimum_history_days, minimum_average_amount, updated_at, preset) "
+            "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET symbols=excluded.symbols, updated_at=excluded.updated_at, preset=excluded.preset",
             (user_id, json.dumps(symbols, ensure_ascii=False), int(bool(filters.get("exclude_st", False))),
              int(bool(filters.get("exclude_suspended", False))), filters.get("minimum_listing_days", 0),
-             filters.get("minimum_history_days", 0), filters.get("minimum_average_amount", 0), _now()),
+             filters.get("minimum_history_days", 0), filters.get("minimum_average_amount", 0), _now(),
+             json.dumps(preset, ensure_ascii=False) if preset else None),
         )
 
 
@@ -2373,16 +2419,21 @@ def universe_add(body: UniverseAddIn, user: dict = Depends(get_current_user)):
         result = merge_codes(current, body.symbols)
         if result["count"] > MAX_POOL_SIZE:
             raise HTTPException(422, detail=f"股票池上限为 {MAX_POOL_SIZE} 只，本次合并后为 {result['count']} 只。未保存任何新增股票，请减少数量后重试。")
-        _save_universe(user["id"], result["symbols"], connection=conn)
+        if result["added_count"]:
+            _save_universe(user["id"], result["symbols"], connection=conn)
     return result
 
 
 @router.post("/universe/remove", summary="移除股票")
 def universe_remove(body: UniverseRemoveIn, user: dict = Depends(get_current_user)):
-    current = _load_universe_symbols(user["id"])
-    remove = {s.split(".")[0].strip() for s in body.symbols}
-    current = [s for s in current if s not in remove]
-    _save_universe(user["id"], current)
+    remove = {to_bare(to_canonical(s)) for s in body.symbols}
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT symbols FROM universe WHERE user_id=?", (user["id"],)).fetchone()
+        before = json.loads(row["symbols"]) if row else [to_bare(s) for s in default_universe_settings()[0]]
+        current = [s for s in before if s not in remove]
+        if current != before:
+            _save_universe(user["id"], current, connection=conn)
     return {"symbols": current, "count": len(current)}
 
 
