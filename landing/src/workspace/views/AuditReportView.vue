@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onActivated, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, ref, watch } from 'vue'
 import { getRunAudit, listAuditRuns } from '../../api.js'
 import MetricCard from '../ui/MetricCard.vue'
 import SectionCard from '../ui/SectionCard.vue'
@@ -21,6 +21,7 @@ const mode = ref('平台回测')
 const runs = ref([])
 const selectedRun = ref('')
 const loading = ref(false)
+const listError = ref('')
 const auditing = ref(false)
 const report = ref(null)
 
@@ -206,7 +207,9 @@ const assumptionRows = computed(() => {
 
 // ---------- 数据加载 ----------
 async function loadRuns() {
+  if (loading.value) return
   loading.value = true
+  listError.value = ''
   try {
     const data = await listAuditRuns()
     runs.value = data.items || []
@@ -216,7 +219,7 @@ async function loadRuns() {
       selectedRun.value = runs.value[0].run_id
     }
   } catch (e) {
-    props.notify(e.message || '加载回测记录失败')
+    listError.value = e.message || '加载回测记录失败'
   } finally {
     loading.value = false
   }
@@ -256,11 +259,10 @@ function consumePending() {
 
 watch(selectedRun, loadAudit)
 watch(() => props.routeContext.run, consumePending)
-onMounted(async () => {
+onActivated(() => {
   consumePending()
-  await loadRuns()
+  loadRuns()
 })
-onActivated(consumePending)
 </script>
 
 <template>
@@ -283,6 +285,10 @@ onActivated(consumePending)
         :class="mode === m ? 'bg-indigo-500 text-white' : 'border border-white/10 bg-white/5 text-slate-400 hover:text-slate-200'"
         @click="mode = m"
       >{{ m }}</button>
+      <button v-if="mode === '平台回测'" type="button" :disabled="loading"
+        class="ml-auto rounded-lg px-3 py-2 text-sm text-indigo-300 disabled:opacity-60" @click="loadRuns">
+        {{ loading ? '正在刷新…' : '刷新记录' }}
+      </button>
     </div>
 
     <!-- 外部材料模式：委托给 StrategyForensicsView -->
@@ -290,8 +296,10 @@ onActivated(consumePending)
 
     <!-- 平台回测模式 -->
     <template v-else>
-    <!-- 无记录 -->
-    <SectionCard v-if="!loading && !runs.length" title="暂无可审计的回测记录">
+    <SectionCard v-if="listError" title="无法加载回测记录">
+      <p role="alert" class="text-sm text-amber-300">{{ listError }}。可点击「刷新记录」重试。</p>
+    </SectionCard>
+    <SectionCard v-else-if="!loading && !runs.length" title="暂无可审计的回测记录">
       <p class="rounded-xl bg-white/5 px-3 py-2 text-sm text-slate-400">
         请先在「策略回测」中运行一次回测，再回到本页查看可信度评级与证据链。
       </p>
