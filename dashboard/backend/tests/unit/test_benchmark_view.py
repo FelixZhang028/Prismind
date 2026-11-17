@@ -99,6 +99,32 @@ def test_an_index_that_starts_late_or_stops_early_is_not_compared(tmp_path):
     assert recent["comparable"] and recent["benchmark_curve"][-3:] == [90.0, 90.0, 90.0]
 
 
+def test_old_partial_default_benchmark_uses_backfilled_bars_without_rewriting_the_run(tmp_path):
+    directory = save(tmp_path / "run", [100, 102, 105, 115], [None, None, 100, 102],
+                     {**SUMMARY, "initial_cash": 100, "cumulative_return": 0.15})
+    before = (directory / "summary.json").read_bytes()
+    bars = index_bars("000300.SH", [100, 105, 109, 110])
+    assert benchmark_comparison(directory, bars=bars.iloc[1:])["comparable"] is False
+    refreshed = benchmark_comparison(directory, bars=bars)
+    assert refreshed["source"] == "backfilled"
+    assert (refreshed["benchmark_return"], refreshed["excess_return"]) == (10.0, 5.0)
+    assert (directory / "summary.json").read_bytes() == before
+
+
+def test_engine_does_not_report_excess_return_against_a_partial_benchmark():
+    from quant_platform.backtest.engine import _benchmark_summary
+
+    nav = pd.DataFrame({
+        "trade_date": pd.bdate_range("2021-12-30", periods=4),
+        "benchmark_equity": [None, 100, 110, None],
+    })
+    result = _benchmark_summary(nav, {"cumulative_return": 0.20}, "000300.SH")
+    assert result == {"benchmark_symbol": "000300.SH", "benchmark_start": "2021-12-31", "benchmark_end": "2022-01-03"}
+    nav["benchmark_equity"] = [100, 102, 107, 110]
+    complete = _benchmark_summary(nav, {"cumulative_return": 0.20}, "000300.SH")
+    assert complete["excess_return"] == pytest.approx(0.10)
+
+
 def test_indices_without_usable_bars_cannot_be_chosen(tmp_path):
     directory = save(tmp_path / "run", [100, 104, 110, 115], [100, 120, 90, 110], FULL_SUMMARY)
     bars = index_bars("000905.SH", [10, 11, 12, 13], start="2030-01-01")

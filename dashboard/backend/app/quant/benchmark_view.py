@@ -40,7 +40,8 @@ def benchmark_options(bars: pd.DataFrame) -> list[dict[str, str]]:
 
     if bars.empty or not {"symbol", "trade_date", "raw_close"} <= set(bars.columns):
         return []
-    valid = bars[pd.to_numeric(bars["raw_close"], errors="coerce") > 0]
+    closes = pd.to_numeric(bars["raw_close"], errors="coerce")
+    valid = bars[closes.gt(0) & closes.lt(float("inf"))]
     spans = valid.groupby(valid["symbol"].astype(str))["trade_date"].agg(["min", "max"])
     return [{"symbol": symbol, "name": name, "start_date": _day(spans.loc[symbol, "min"]), "end_date": _day(spans.loc[symbol, "max"])}
             for symbol, name in BENCHMARK_NAMES.items() if symbol in spans.index]
@@ -54,10 +55,12 @@ def _equity_from_bars(nav: pd.DataFrame, bars: pd.DataFrame, symbol: str, initia
     run's days, the date its bars start or stop, so the page can say why nothing is compared.
     """
 
+    if bars.empty or not {"symbol", "trade_date", "raw_close"} <= set(bars.columns):
+        return None
     selected = bars[bars["symbol"].astype(str).eq(symbol)]
     closes = pd.to_numeric(selected["raw_close"], errors="coerce")
     closes.index = pd.to_datetime(selected["trade_date"]).dt.normalize()
-    closes = closes[closes > 0]
+    closes = closes[closes.gt(0) & closes.lt(float("inf"))]
     closes = closes[~closes.index.duplicated(keep="last")].sort_index()
     if closes.empty:
         return None
@@ -76,8 +79,8 @@ def benchmark_comparison(directory: Path | None, symbol: str | None = None,
                          bars: pd.DataFrame | None = None) -> dict[str, Any] | None:
     """Return curves and relative metrics, or ``None`` when there is nothing to compare with.
 
-    Without ``symbol`` the run's recorded benchmark is used as the engine saved it. With another
-    ``symbol`` the comparison is recomputed from ``bars`` (the local ``benchmark_bars`` table).
+    Prefer a complete saved benchmark. An incomplete saved benchmark can be compared
+    again if the local bars now cover both ends. A different index always uses local bars.
 
     Percent fields are already multiplied by 100. When the index's bars do not span the run,
     the two returns would cover different periods, so nothing is compared: the result carries
@@ -91,48 +94,61 @@ def benchmark_comparison(directory: Path | None, symbol: str | None = None,
         summary = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(summary, dict) or not {"trade_date", "equity"} <= set(nav.columns):
+    if not isinstance(summary, dict) or nav.empty or not {"trade_date", "equity"} <= set(nav.columns):
         return None
     nav = nav.sort_values("trade_date").reset_index(drop=True)
     equity = pd.to_numeric(nav["equity"], errors="coerce")
     recorded = str(summary.get("benchmark_symbol") or "")
     chosen = symbol or recorded
-    stale_days = 0
-    if chosen == recorded and "benchmark_equity" in nav.columns:
-        benchmark = pd.to_numeric(nav["benchmark_equity"], errors="coerce")
+    if not chosen:
+        return None
+    result: dict[str, Any] = {"symbol": chosen, "name": BENCHMARK_NAMES.get(chosen, chosen), "comparable": False}
+
+    saved = pd.to_numeric(nav["benchmark_equity"], errors="coerce") if chosen == recorded and "benchmark_equity" in nav else None
+    from_saved = saved is not None
+    saved_complete = from_saved and len(saved) >= 2 and saved.iloc[[0, -1]].notna().all()
+    initial_cash = _number(summary.get("initial_cash"), digits=6)
+    local = None
+    if not saved_complete and bars is not None and initial_cash and initial_cash > 0:
+        local = _equity_from_bars(nav, bars, chosen, initial_cash)
+    if isinstance(local, pd.Series) and (not from_saved or local.iloc[[0, -1]].notna().all()):
+        benchmark = local
+        from_saved = False
+    elif from_saved:
+        benchmark = saved
+    else:
+        if isinstance(local, dict):
+            return {**result, **local}
+        return {**result, "missing": True} if symbol is None and bars is not None else None
+
+    present = benchmark.dropna()
+    if len(present) < 2:
+        if isinstance(local, dict):
+            return {**result, **local}
+        return {**result, "missing": True} if symbol is None and bars is not None else None
+    if pd.isna(benchmark.iloc[0]) or equity.isna().any():
+        return {**result, "benchmark_start": _day(nav.loc[present.index[0], "trade_date"])}
+    stale_days = int(benchmark.isna().iloc[::-1].cumprod().sum())
+    if stale_days and (chosen == recorded or stale_days > MAX_TRAILING_DAYS_WITHOUT_BENCHMARK):
+        return {**result, "benchmark_end": _day(nav.loc[present.index[-1], "trade_date"])}
+
+    if from_saved:
         metrics = summary
     else:
-        initial_cash = _number(summary.get("initial_cash"), digits=6)
-        if bars is None or not chosen or not initial_cash or initial_cash <= 0:
-            return None
-        benchmark = _equity_from_bars(nav, bars, chosen, initial_cash)
-        if benchmark is None:
-            return None
-        if isinstance(benchmark, dict):
-            return {"symbol": chosen, "name": BENCHMARK_NAMES.get(chosen, chosen), "comparable": False, **benchmark}
-        stale_days = int(benchmark.isna().iloc[::-1].cumprod().sum())
         metrics = relative_metrics(
             nav.assign(benchmark_equity=benchmark.ffill()),
             int(summary.get("annualization") or 252), float(summary.get("risk_free_rate") or 0.0))
-        present = benchmark.dropna()
         metrics["benchmark_return"] = float(present.iloc[-1]) / float(present.iloc[0]) - 1.0
         cumulative = _number(summary.get("cumulative_return"), digits=10)
         metrics["excess_return"] = None if cumulative is None else cumulative - metrics["benchmark_return"]
-    if benchmark.notna().sum() < 2:
-        return None
-    result: dict[str, Any] = {"symbol": chosen, "name": BENCHMARK_NAMES.get(chosen, chosen or "基准"), "comparable": False}
-    if pd.isna(benchmark.iloc[0]) or equity.isna().any():
-        result["benchmark_start"] = _day(nav.loc[benchmark.notna(), "trade_date"].iloc[0])
-        return result
-    if stale_days > MAX_TRAILING_DAYS_WITHOUT_BENCHMARK:
-        result["benchmark_end"] = _day(nav.loc[benchmark.notna(), "trade_date"].iloc[-1])
-        return result
     # 基准的第一天等于初始资金，所以两条曲线从同一个起点出发。
     initial = float(benchmark.iloc[0])
     if initial <= 0:
         return None
     benchmark = benchmark.ffill()
     drawdown = 1.0 - benchmark / benchmark.cummax()
+    if chosen == recorded and not from_saved:
+        result["source"] = "backfilled"
     result.update({
         "comparable": True,
         "strategy_curve": [round(float(value), 2) for value in (equity / initial - 1.0) * 100],

@@ -85,13 +85,12 @@ def prepare(body: JobIn, user: dict) -> dict:
     if start >= end:
         raise HTTPException(422, "开始日期需早于结束日期，且区间须与本地行情有交集。")
     values.update(from_date=start.isoformat(), to_date=end.isoformat())
-    with get_conn() as conn:
-        saved_pool = conn.execute("SELECT 1 FROM universe WHERE user_id=?", (user["id"],)).fetchone()
-    symbols, filters = runtime._user_universe(user["id"]) if saved_pool else runtime.default_universe_settings()
+    saved_pool = runtime.saved_universe_snapshot(user["id"])
+    symbols, filters, preset = saved_pool if saved_pool is not None else (*runtime.default_universe_settings(), None)
     if market == CURRENT_POOL and not symbols:
         raise HTTPException(422, "股票池为空，请先添加股票")
     return dict(kind=kind, request=values, package=package, package_id=package_id, label=label,
-                snapshot=dict(symbols=symbols, filters=filters, risk=asdict(runtime.user_risk_limits(user["id"]))))
+                snapshot=dict(symbols=symbols, filters=filters, preset=preset, risk=asdict(runtime.user_risk_limits(user["id"]))))
 
 
 @router.post("", status_code=202)

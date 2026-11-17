@@ -231,7 +231,9 @@ def test_audit_route_six_dimensions_and_grade_cache(api, tmp_path, monkeypatch):
         def __exit__(self, *args):
             return False
 
-        def execute(self, *args, **kwargs):
+        def execute(self, sql, params):
+            if "FROM backtest_jobs" in sql:
+                return FakeResult({"result_id": 7, "label": "A股动量策略", "created_at": "2024-01-01T00:00:08+00:00"})
             return FakeResult(row)
 
     monkeypatch.setattr(workspace, "get_conn", lambda: FakeConn())
@@ -250,6 +252,8 @@ def test_audit_route_six_dimensions_and_grade_cache(api, tmp_path, monkeypatch):
 
     items = client.get("/api/v1/runs/audit").json()["items"]
     assert items[0]["run_id"] == "run-7" and items[0]["grade"] == "B"
+    assert items[0]["strategy_name"] == "A股动量策略"
+    assert items[0]["submitted_at"] == "2024-01-01T00:00:08+00:00"
     # 运行不可变：评级缓存后不重算。
     monkeypatch.setattr(credibility_mod, "audit_persisted_run", lambda d: pytest.fail("不应重算"))
     items = client.get("/api/v1/runs/audit").json()["items"]

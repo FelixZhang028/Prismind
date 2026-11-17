@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from .result_adapter import _round
 from .run_evidence import run_directory
+from .run_pool import persisted_pool
 
 
 def compare_persisted_runs(records):
@@ -31,6 +32,7 @@ def compare_persisted_runs(records):
             return _round((abs(value) if absolute else value) * 100) if isinstance(value, (int, float)) else None
         comparison.append({
             "run_id": rid, "strategy": row["strategy"],
+            "pool": persisted_pool(result, row["market"] if "market" in row.keys() else "", directory),
             "start_date": str(dates.min().date()), "end_date": str(dates.max().date()),
             "cumulative_return": percent("cumulative_return"), "annual_return": percent("annual_return"),
             "max_drawdown": percent("max_drawdown", True),

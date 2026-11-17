@@ -52,9 +52,11 @@ class Service:
             "delist_date": [None] * 5 + ["2020-06-01", None, None],
         })
         summary = pd.DataFrame({"end": pd.Timestamp("2026-10-15")}, index=pd.Index(list(stored), name="symbol"))
-        benchmarks = pd.DataFrame({"symbol": ["000300.SH", "000905.SH"], "trade_date": ["2026-10-15"] * 2})
+        benchmarks = pd.DataFrame({"symbol": ["000300.SH", "000905.SH"], "trade_date": ["2015-01-05", "2026-10-15"]})
         tables = {"security_master": master, "benchmark_bars": benchmarks}
-        self.repository = SimpleNamespace(read_table=lambda name: tables.get(name, pd.DataFrame()), daily_bar_summary=lambda: summary)
+        self.repository = SimpleNamespace(read_table=lambda name: tables.get(name, pd.DataFrame()), daily_bar_summary=lambda: summary,
+                                          daily_bar_bounds=lambda: (date(2015, 1, 5), TODAY))
+        self.benchmark_requests = []
         self.sources = SimpleNamespace(baostock_provider=lambda: self.provider)
         backfill = SimpleNamespace(
             refresh_security_master=lambda: self.calls.append("security_master") or master,
@@ -82,6 +84,7 @@ class Service:
         return {"removed": 0, "detail": "", "errors": []}
 
     def update_benchmark(self, start, end, symbol):
+        self.benchmark_requests.append((start, end, symbol))
         self.calls.append(f"benchmark:{symbol}")
         if symbol in self.failing_benchmarks:
             raise RuntimeError("AkShare 超时")
@@ -124,6 +127,20 @@ def test_a_trading_day_updates_every_listed_stock_and_the_rest_in_order(tmp_path
     assert len(locked) == 3                                  # 每批下载都和手动更新互斥
     assert len(beats) >= 5                                   # 每只股票都报一次平安
     assert result["steps"]["daily_bars"]["symbols"] == 5 and result["steps"]["daily_bars"]["new_listings"] == 1
+
+
+def test_benchmark_backfill_overlaps_first_stored_close_before_recent_refresh(tmp_path):
+    service = Service()
+    stored = service.repository.read_table("benchmark_bars")
+    stored.loc[0, "trade_date"] = "2022-01-04"
+    update = DailyUpdate(service, tmp_path / "state.json")
+    outcome = update._benchmarks(TODAY, {})
+    assert outcome["errors"] == []
+    assert service.benchmark_requests == [
+        (date(2015, 1, 5), date(2022, 1, 4), "000300.SH"),
+        (TODAY - timedelta(days=30), TODAY, "000300.SH"),
+        (TODAY - timedelta(days=30), TODAY, "000905.SH"),
+    ]
 
 
 def test_a_failed_step_is_reported_the_rest_still_run_and_a_rerun_only_redoes_it(tmp_path):

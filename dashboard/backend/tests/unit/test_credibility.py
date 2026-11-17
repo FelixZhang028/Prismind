@@ -128,6 +128,15 @@ def test_typical_in_sample_run_grades_c() -> None:
     assert sample_bias.status == "warn"
     assert len([f for f in sample_bias.findings if f.severity == "warn"]) == 2
 
+    from app.quant.grade_explanation import grade_explanation
+
+    display = grade_explanation({"metrics_reliable": True, "validity_status": "WARNING"}, report)
+    assert display["grade"] == "C"
+    reasons = {item["message"]: item["action"] for item in display["grade_reasons"]}
+    assert len(reasons) == 2
+    assert "历史成分股" in reasons["固定股票池警告。"]
+    assert "样本外" in reasons["样本内回测警告。"]
+
 
 def test_error_issue_grades_d() -> None:
     report = _audit(

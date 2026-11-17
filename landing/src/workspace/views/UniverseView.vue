@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { getUniverse, universeAdd, universeRemove, universeSaveFilters, universeSearch } from '../../api.js'
+import { getUniverse, listUniversePresets, useUniversePreset, universeAdd, universeRemove, universeSaveFilters, universeSearch } from '../../api.js'
 import MetricCard from '../ui/MetricCard.vue'
 import SectionCard from '../ui/SectionCard.vue'
 import DataTable from '../ui/DataTable.vue'
@@ -98,6 +98,7 @@ function parseSymbols(text) {
 }
 
 async function doAdd(symbols) {
+  if (savingPreset.value || removingSymbol.value || adding.value) return false
   adding.value = true
   try {
     const res = await universeAdd(symbols)
@@ -160,7 +161,7 @@ const removingSymbol = ref('')
 const pendingRemoval = ref('')
 
 async function removeStock(row) {
-  if (removingSymbol.value || adding.value || loading.value) return
+  if (removingSymbol.value || adding.value || loading.value || savingPreset.value) return
   if (pendingRemoval.value !== row.symbol) return
   removingSymbol.value = row.symbol
   try {
@@ -196,7 +197,38 @@ async function saveFilters() {
   }
 }
 
-onMounted(load)
+const presets = ref([])
+const presetError = ref('')
+const pendingPreset = ref('')
+const savingPreset = ref(false)
+
+async function loadPresets() {
+  presetError.value = ''
+  try {
+    presets.value = (await listUniversePresets()).items || []
+  } catch (e) {
+    presetError.value = e.message || '指数股票池加载失败'
+  }
+}
+
+async function applyPreset(pool) {
+  if (savingPreset.value || adding.value || removingSymbol.value) return
+  savingPreset.value = true
+  try {
+    const res = await useUniversePreset(pool.index, pool.snapshot_date)
+    pendingPreset.value = ''
+    importReport.value = null
+    props.notify('已使用 ' + res.preset.name + ' 成分股，共 ' + res.count + ' 只')
+    await load()
+  } catch (e) {
+    props.notify(e.message || '替换失败')
+    await loadPresets()
+  } finally {
+    savingPreset.value = false
+  }
+}
+
+onMounted(() => { load(); loadPresets() })
 </script>
 
 <template>
@@ -225,6 +257,36 @@ onMounted(load)
         :tone="m.tone"
       />
     </section>
+
+    <SectionCard title="指数股票池" hint="使用指定日期的成分股名单，替换当前股票池。">
+      <p v-if="universe.preset" class="mb-3 text-sm text-indigo-200">
+        当前使用 {{ universe.preset.name }} · {{ universe.preset.snapshot_date }} 快照 · {{ universe.preset.count }} 只
+      </p>
+      <p v-if="presetError" role="alert" class="text-sm text-amber-300">{{ presetError }}
+        <button type="button" class="ml-2 underline" @click="loadPresets">重试</button>
+      </p>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div v-for="pool in presets" :key="pool.index" class="rounded-xl border border-white/10 p-4">
+          <h3 class="font-semibold text-white">{{ pool.name }}</h3>
+          <p v-if="pool.available" class="mt-1 text-xs text-slate-400">
+            {{ pool.count }} 只 · {{ pool.snapshot_date }} 快照 · {{ pool.source }}
+          </p>
+          <p v-else class="mt-1 text-xs text-slate-400">暂无完整成分数据，请等待管理员更新。</p>
+          <div v-if="pool.available" class="mt-3 flex flex-wrap gap-2">
+            <button v-if="pendingPreset !== pool.index" type="button" class="rounded-full border border-indigo-400/40 px-3 py-1 text-xs text-indigo-200"
+              :disabled="loading || savingPreset || adding || !!removingSymbol"
+              @click="pendingPreset = pool.index">使用成分股</button>
+            <template v-else>
+              <button type="button" class="rounded-full bg-indigo-600 px-3 py-1 text-xs text-white"
+                :disabled="savingPreset || adding || !!removingSymbol" @click="applyPreset(pool)">
+                {{ savingPreset ? '替换中…' : '确认替换当前股票池' }}
+              </button>
+              <button type="button" class="px-2 text-xs text-slate-400" :disabled="savingPreset" @click="pendingPreset = ''">取消</button>
+            </template>
+          </div>
+        </div>
+      </div>
+    </SectionCard>
 
     <!-- 按名称搜索 -->
     <SectionCard title="按名称搜索" hint="通过股票名称模糊搜索，勾选后批量添加">

@@ -43,16 +43,30 @@ export function benchmarkChoices(options, benchmark) {
   return choices
 }
 
+export function benchmarkCoverageNote(coverage, from, to) {
+  if (!coverage) return { text: '', outside: false }
+  const { name, start_date: start, end_date: end } = coverage
+  if (!start || !end) return { text: '默认基准 ' + name + ' 暂无本地行情。', outside: true }
+  const outside = Boolean((from && from < start) || (to && to > end))
+  return {
+    text: '默认基准 ' + name + ' · 行情覆盖 ' + start + ' 至 ' + end
+      + (outside ? '。所选日期超出覆盖范围，无法对齐时不计算超额收益。' : ''),
+    outside,
+  }
+}
+
 // 卡片下面的一行小字：次要指标和读数时要注意的地方。
 export function benchmarkNote(benchmark) {
   if (!benchmark) return ''
   if (!benchmark.comparable) {
+    if (benchmark.missing) return benchmark.name + ' 在回测区间内缺少可用行情，暂不计算超额收益。'
     const span = benchmark.benchmark_end ? `只到 ${benchmark.benchmark_end}` : `从 ${benchmark.benchmark_start} 开始`
     return `${benchmark.name} 的本地行情${span}，没有覆盖整个回测区间，所以不做比较。平台补齐基准指数的行情后就能比较。`
   }
   const parts = []
   if (finite(benchmark.information_ratio)) parts.push(`信息比率 ${Number(benchmark.information_ratio).toFixed(2)}`)
   if (finite(benchmark.tracking_error)) parts.push(`年化跟踪误差 ${Number(benchmark.tracking_error).toFixed(2)}%`)
+  if (benchmark.source === 'backfilled') parts.push('已用补齐的基准行情重新比较')
   const metrics = parts.length ? `${parts.join(' · ')}。` : ''
   return `${metrics}${benchmark.name} 是价格指数，不含成分股的分红，所以基准收益略微偏低。`
 }

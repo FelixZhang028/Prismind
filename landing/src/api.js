@@ -473,6 +473,12 @@ export function saveRisk(payload) {
 export function getUniverse() {
   return request('/api/v1/universe', { auth: true })
 }
+export function listUniversePresets() {
+  return request('/api/v1/universe/presets', { auth: true })
+}
+export function useUniversePreset(index, snapshot_date) {
+  return request('/api/v1/universe/preset', { method: 'POST', body: { index, snapshot_date }, auth: true })
+}
 export function universeAdd(symbols) {
   return request('/api/v1/universe/add', { method: 'POST', body: { symbols }, auth: true })
 }

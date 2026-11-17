@@ -2,6 +2,7 @@
 import { computed, onActivated, ref } from 'vue'
 import { openResearch } from '../researchNavigation.js'
 import { getBacktestCatalog, listRuns, compareRuns, archiveRuns } from '../../api.js'
+import { poolLabel } from '../runRecords.js'
 import { MAX_COMPARED, recordsSummary, runTime, strategyName } from '../runRecords.js'
 import SectionCard from '../ui/SectionCard.vue'
 import BacktestTasks from '../ui/BacktestTasks.vue'
@@ -183,12 +184,13 @@ const fullRunColumns = [
   { key: 'run_id', label: '运行' },
   { key: 'run_kind', label: '类型' },
   { key: 'status', label: '状态' },
-  { key: 'trust', label: '指标' },
-  { key: 'grade', label: '可信度评级' },
+  { key: 'trust', label: '可信度' },
   { key: 'strategy', label: '策略' },
   { key: 'start_date', label: '开始' },
   { key: 'end_date', label: '结束' },
+  { key: 'pool', label: '股票池' },
   { key: 'cumulative_return', label: '累计收益', align: 'right' },
+  { key: 'annual_return', label: '年化收益', align: 'right' },
   { key: 'max_drawdown', label: '最大回撤', align: 'right' },
   { key: 'sharpe', label: '夏普', align: 'right' },
   { key: 'updated_at', label: '运行时间' },
@@ -198,17 +200,21 @@ const runColumns = computed(() => showDetailedColumns.value ? fullRunColumns : [
   selectColumn,
   { key: 'strategy', label: '策略 / 记录' },
   { key: 'period', label: '回测区间' },
+  { key: 'pool', label: '股票池' },
   { key: 'cumulative_return', label: '累计收益', align: 'right' },
+  { key: 'annual_return', label: '年化收益', align: 'right' },
   { key: 'max_drawdown', label: '最大回撤', align: 'right' },
   { key: 'sharpe', label: '夏普', align: 'right' },
-  { key: 'trust', label: '指标状态' },
+  { key: 'trust', label: '可信度' },
   { key: 'actions', label: '操作' },
 ])
 
 const compareColumns = [
   { key: 'run_id', label: '运行' },
   { key: 'strategy', label: '策略' },
+  { key: 'pool', label: '股票池' },
   { key: 'cumulative_return', label: '累计收益', align: 'right' },
+  { key: 'annual_return', label: '年化收益', align: 'right' },
   { key: 'max_drawdown', label: '最大回撤', align: 'right' },
   { key: 'sharpe', label: '夏普', align: 'right' },
   { key: 'sortino', label: '索提诺', align: 'right' },
@@ -291,12 +297,21 @@ onActivated(() => {
           <StatusPill :value="row.status" />
         </template>
         <template #cell-trust="{ row }">
-          <span class="inline-flex rounded-full border px-2.5 py-0.5 text-xs whitespace-nowrap" :class="trustInfo(row).cls">
-            {{ trustInfo(row).text }}
-          </span>
+          <div class="min-w-36 max-w-64 space-y-1 whitespace-normal text-xs">
+            <span class="inline-flex rounded-full border px-2.5 py-0.5" :class="trustInfo(row).cls">
+              {{ trustInfo(row).text }}{{ row.grade ? ' / ' + row.grade : '' }}
+            </span>
+            <p v-for="(reason, i) in row.grade_reasons?.slice(0, 2)" :key="i" class="text-slate-400">
+              {{ reason.message }}
+            </p>
+            <button v-if="row.can_audit" type="button" class="text-indigo-300 underline" @click="openResearch('audit-report', { run: row.backtest_id })">查看审计</button>
+          </div>
         </template>
-        <template #cell-grade="{ row }">
-          <StatusPill :value="row.grade || '待检查'" :text="row.grade ? `评级 ${row.grade}` : '待检查'" />
+        <template #cell-pool="{ row }">
+          <span class="block min-w-28 max-w-48 whitespace-normal text-xs text-slate-300">{{ poolLabel(row.pool) }}</span>
+        </template>
+        <template #cell-annual_return="{ row }">
+          <span class="font-semibold" :class="pctClass(row.annual_return)">{{ fmtPct(row.annual_return) }}</span>
         </template>
         <template #cell-strategy="{ row }">
           <span class="font-medium text-white">{{ nameOf(row) }}</span>
@@ -327,7 +342,6 @@ onActivated(() => {
     <!-- 对比结果 -->
     <SectionCard v-if="comparison && comparison.length" title="对比结果" hint="所选回测的净值与绩效指标。">
       <div class="space-y-6">
-    <BacktestTasks @completed="loadRuns(keyword.trim())" />
         <div>
           <div class="flex items-center justify-between text-xs text-slate-400">
             <span>净值对比 · {{ comparisonScope?.start_date }} 至 {{ comparisonScope?.end_date }}</span>
@@ -367,6 +381,12 @@ onActivated(() => {
           </template>
           <template #cell-calmar="{ row }">
             <span class="text-slate-300">{{ fmtRatio(row.calmar) }}</span>
+          </template>
+          <template #cell-pool="{ row }">
+            <span class="block min-w-28 max-w-48 whitespace-normal text-xs text-slate-300">{{ poolLabel(row.pool) }}</span>
+          </template>
+          <template #cell-annual_return="{ row }">
+            <span class="font-semibold" :class="pctClass(row.annual_return)">{{ fmtPct(row.annual_return) }}</span>
           </template>
           <template #cell-metrics_reliable="{ row }">
             <span class="inline-flex rounded-full border px-2.5 py-0.5 text-xs" :class="trustInfo(row).cls">{{ trustInfo(row).text }}</span>

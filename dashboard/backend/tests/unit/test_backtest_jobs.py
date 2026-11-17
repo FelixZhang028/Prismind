@@ -253,7 +253,21 @@ def test_real_worker_saves_a_backtest_and_uses_submitted_pool(db, monkeypatch, k
     repo.save_table("daily_bars", pd.concat(frames, ignore_index=True))
     repo.save_table("trade_calendar", pd.DataFrame(dict(cal_date=days, is_open=1)))
     repo.save_table("security_master", pd.DataFrame(dict(symbol=symbols, name=["test"] * count, list_date=pd.Timestamp("2010-01-01"), delist_date=pd.NaT)))
-    workspace._save_universe(1, [s.split(".")[0] for s in symbols])
+    if kind == "screen":
+        day = days[150]
+        codes = ["000300.SH", "000905.SH"]
+        repo.save_table("index_constituents", pd.DataFrame({
+            "index_symbol": [codes[0]] * 300 + [codes[1]] * 500,
+            "effective_date": day, "symbol": symbols, "source": "test",
+        }))
+        repo.save_table("index_constituent_checks", pd.DataFrame({
+            "index_symbol": codes, "checked_from": day, "checked_through": day,
+        }))
+        monkeypatch.setattr(workspace, "market_repository", lambda: repo)
+        preset = workspace.universe_use_preset(workspace.UniversePresetIn(index="000906.SH", snapshot_date=day.date()), {"id": 1})
+        assert preset["count"] == 800
+    else:
+        workspace._save_universe(1, [s.split(".")[0] for s in symbols])
     definition = dict(name="趋势过滤短期反转", entry_logic="all",
         entry_rules=[dict(left=dict(name="close"), operator="gt", right=dict(name="sma", window=60)),
                      dict(left=dict(name="return_1d", window=5), operator="lt", value=.05)],
@@ -284,4 +298,9 @@ def test_real_worker_saves_a_backtest_and_uses_submitted_pool(db, monkeypatch, k
     assert result["total"] == (180 if kind == "screen" else 30) and result["completed"] == result["total"]
     with database.get_conn() as conn:
         row = conn.execute("SELECT result FROM backtests WHERE id=?", (result["result_id"],)).fetchone()
-        assert row is not None and json.loads(row["result"])["run_id"]
+        assert row is not None
+        recorded = json.loads(row["result"])
+        assert recorded["run_id"] and recorded["pool"]["count"] == count
+        if kind == "screen":
+            assert recorded["pool"]["name"] == "中证 800"
+            assert recorded["pool"]["snapshot_date"] == day.date().isoformat()

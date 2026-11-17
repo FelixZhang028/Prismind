@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onActivated, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, ref, watch } from 'vue'
 import { getRunAudit, listAuditRuns } from '../../api.js'
 import MetricCard from '../ui/MetricCard.vue'
 import SectionCard from '../ui/SectionCard.vue'
@@ -7,6 +7,7 @@ import DataTable from '../ui/DataTable.vue'
 import FormField from '../ui/FormField.vue'
 import StrategyForensicsView from './StrategyForensicsView.vue'
 import { pendingAuditRun } from '../auditLink.js'
+import { backtestTimestamp } from '../runRecords.js'
 
 const props = defineProps({
   routeContext: { type: Object, default: () => ({}) },
@@ -21,6 +22,7 @@ const mode = ref('平台回测')
 const runs = ref([])
 const selectedRun = ref('')
 const loading = ref(false)
+const listError = ref('')
 const auditing = ref(false)
 const report = ref(null)
 
@@ -49,10 +51,14 @@ const SEVERITY_LABELS = { info: '信息', warn: '警告', fail: '不通过' }
 const SEVERITY_TONE = { info: 'text-slate-400 border-white/10 bg-white/5', warn: 'text-amber-300 border-amber-400/30 bg-amber-400/10', fail: 'text-rose-300 border-rose-400/30 bg-rose-400/10' }
 
 const runOptions = computed(() =>
-  runs.value.map((r) => ({
-    value: r.run_id,
-    label: `${r.run_label}${r.metrics_reliable === false ? '（绩效不可用）' : ''}`,
-  }))
+  runs.value.map((r) => {
+    const submitted = backtestTimestamp(r.submitted_at)
+    const recorded = backtestTimestamp(r.recorded_at)
+    const time = submitted ? '提交于 ' + submitted : recorded ? '记录于 ' + recorded : ''
+    const period = r.from_date && r.to_date ? r.from_date + ' 至 ' + r.to_date : ''
+    const title = [r.strategy_name || r.run_label, time, period].filter(Boolean).join('｜')
+    return { value: r.run_id, label: title + (r.metrics_reliable === false ? '（绩效不可用）' : '') }
+  })
 )
 
 // ---------- 评级仪表盘 ----------
@@ -206,7 +212,9 @@ const assumptionRows = computed(() => {
 
 // ---------- 数据加载 ----------
 async function loadRuns() {
+  if (loading.value) return
   loading.value = true
+  listError.value = ''
   try {
     const data = await listAuditRuns()
     runs.value = data.items || []
@@ -216,7 +224,7 @@ async function loadRuns() {
       selectedRun.value = runs.value[0].run_id
     }
   } catch (e) {
-    props.notify(e.message || '加载回测记录失败')
+    listError.value = e.message || '加载回测记录失败'
   } finally {
     loading.value = false
   }
@@ -256,11 +264,10 @@ function consumePending() {
 
 watch(selectedRun, loadAudit)
 watch(() => props.routeContext.run, consumePending)
-onMounted(async () => {
+onActivated(() => {
   consumePending()
-  await loadRuns()
+  loadRuns()
 })
-onActivated(consumePending)
 </script>
 
 <template>
@@ -283,6 +290,10 @@ onActivated(consumePending)
         :class="mode === m ? 'bg-indigo-500 text-white' : 'border border-white/10 bg-white/5 text-slate-400 hover:text-slate-200'"
         @click="mode = m"
       >{{ m }}</button>
+      <button v-if="mode === '平台回测'" type="button" :disabled="loading"
+        class="ml-auto rounded-lg px-3 py-2 text-sm text-indigo-300 disabled:opacity-60" @click="loadRuns">
+        {{ loading ? '正在刷新…' : '刷新记录' }}
+      </button>
     </div>
 
     <!-- 外部材料模式：委托给 StrategyForensicsView -->
@@ -290,8 +301,10 @@ onActivated(consumePending)
 
     <!-- 平台回测模式 -->
     <template v-else>
-    <!-- 无记录 -->
-    <SectionCard v-if="!loading && !runs.length" title="暂无可审计的回测记录">
+    <SectionCard v-if="listError" title="无法加载回测记录">
+      <p role="alert" class="text-sm text-amber-300">{{ listError }}。可点击「刷新记录」重试。</p>
+    </SectionCard>
+    <SectionCard v-else-if="!loading && !runs.length" title="暂无可审计的回测记录">
       <p class="rounded-xl bg-white/5 px-3 py-2 text-sm text-slate-400">
         请先在「策略回测」中运行一次回测，再回到本页查看可信度评级与证据链。
       </p>
@@ -300,9 +313,7 @@ onActivated(consumePending)
     <template v-else>
       <!-- 选择记录 -->
       <SectionCard title="选择回测记录" hint="仅显示引擎明细仍存在的成功记录">
-        <div class="max-w-xl">
-          <FormField type="select" label="回测记录" v-model="selectedRun" :options="runOptions" :disabled="loading || auditing" />
-        </div>
+        <FormField type="select" label="回测记录" v-model="selectedRun" :options="runOptions" :disabled="loading || auditing" wrap-selection />
       </SectionCard>
 
       <div v-if="loading" class="text-sm text-slate-400">加载中…</div>
@@ -319,6 +330,17 @@ onActivated(consumePending)
         >
           可信度评级 {{ report.grade }}——{{ report.headline }}
         </p>
+
+        <SectionCard v-if="report.grade_rule" title="评级依据">
+          <p class="text-sm text-slate-300">{{ report.grade_rule }}</p>
+          <ul v-if="report.grade_reasons?.length" class="mt-3 space-y-3">
+            <li v-for="(reason, index) in report.grade_reasons" :key="index" class="rounded-lg bg-white/5 px-4 py-3 text-sm">
+              <p class="font-medium text-white">{{ reason.title }}</p>
+              <p class="mt-1 text-slate-300">{{ reason.message }}</p>
+              <p v-if="reason.action" class="mt-1 text-slate-400">{{ reason.action }}</p>
+            </li>
+          </ul>
+        </SectionCard>
 
         <!-- 六维审计 -->
         <SectionCard title="六维审计" hint="各维度的结论与首条要点">
