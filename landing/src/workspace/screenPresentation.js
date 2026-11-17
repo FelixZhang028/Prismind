@@ -32,7 +32,7 @@ export function changeText(change) {
 export function screenSummary(result) {
   if (!result) return ''
   const where = result.scope === 'pool' ? '你的股票池' : '全市场'
-  const shown = result.shown < result.matched ? `，按排序显示前 ${result.shown} 只` : ''
+  const shown = result.offset ? `，本页显示第 ${result.offset + 1}–${result.offset + result.shown} 只` : result.shown < result.matched ? `，按排序显示前 ${result.shown} 只` : ''
   return `按 ${result.trade_date} 收盘后的数据，在${where} ${result.checked.toLocaleString('zh-CN')} 只股票里，有 ${result.matched.toLocaleString('zh-CN')} 只符合条件${shown}`
 }
 

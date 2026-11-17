@@ -1,9 +1,10 @@
 <script setup>
 import { computed, onActivated, ref } from 'vue'
 import { openResearch } from '../researchNavigation.js'
-import { getBacktestCatalog, listRuns, compareRuns } from '../../api.js'
-import { MAX_COMPARED, recordsSummary, runTime, strategyName, toggleSelection } from '../runRecords.js'
+import { getBacktestCatalog, listRuns, compareRuns, archiveRuns } from '../../api.js'
+import { MAX_COMPARED, recordsSummary, runTime, strategyName } from '../runRecords.js'
 import SectionCard from '../ui/SectionCard.vue'
+import BacktestTasks from '../ui/BacktestTasks.vue'
 import DataTable from '../ui/DataTable.vue'
 import LineChart from '../ui/LineChart.vue'
 import StatusPill from '../ui/StatusPill.vue'
@@ -21,6 +22,21 @@ const stats = ref(null)
 const loading = ref(false)
 const error = ref('')
 const keyword = ref('')
+const archived = ref(false)
+const archiving = ref(false)
+async function changeArchive(ids) {
+  if (!ids.length || archiving.value) return
+  archiving.value = true
+  try {
+    await archiveRuns(ids, !archived.value)
+    props.notify(archived.value ? '记录已恢复' : '记录已归档，可在已归档中恢复')
+    selectedIds.value = []
+    await loadRuns(keyword.value.trim())
+  } catch (e) { props.notify(e.message || '操作失败') }
+  finally { archiving.value = false }
+}
+async function switchArchive() { archived.value = !archived.value; selectedIds.value = []; await loadRuns(keyword.value.trim()) }
+
 // 策略目录：用来把记录里的内部标识换成策略名称；读不到时显示记录里保存的名字。
 const strategies = ref([])
 const nameOf = (run, stored) => strategyName(strategies.value, run?.strategy_reference, stored ?? run?.strategy)
@@ -81,7 +97,7 @@ async function loadRuns(kw = '') {
   loading.value = true
   error.value = ''
   try {
-    const data = await listRuns(kw ? { keyword: kw } : {})
+    const data = await listRuns({ keyword: kw, archived: archived.value })
     runs.value = data?.items || []
     total.value = data?.total ?? runs.value.length
     stats.value = data?.stats || null
@@ -118,14 +134,13 @@ const runMap = computed(() => Object.fromEntries(runs.value.map((r) => [r.run_id
 const selectedCount = computed(() => selectedIds.value.length)
 
 function toggleSelect(runId) {
-  const next = toggleSelection(selectedIds.value, runId)
-  if (next === null) return props.notify(`最多选择 ${MAX_COMPARED} 次回测`)
-  selectedIds.value = next
+  if (!selectedIds.value.includes(runId) && selectedIds.value.length >= 500) return props.notify('每批最多选择 500 条记录')
+  selectedIds.value = selectedIds.value.includes(runId) ? selectedIds.value.filter((id) => id !== runId) : [...selectedIds.value, runId]
 }
 
 async function onCompare() {
   const ids = [...selectedIds.value]
-  if (ids.length < 2) return props.notify('请至少选择 2 次回测进行对比')
+  if (ids.length < 2 || ids.length > MAX_COMPARED) return props.notify(`请选择 2~${MAX_COMPARED} 次回测进行对比`)
   comparing.value = true
   comparison.value = null
   navPoints.value = []
@@ -209,6 +224,7 @@ onActivated(() => {
 
 <template>
   <div class="space-y-6">
+    <BacktestTasks @completed="loadRuns(keyword.trim())" />
     <!-- 标题 -->
     <div class="glass glass-sheen rounded-2xl p-6">
       <h1 class="text-xl font-bold text-white">研究记录</h1>
@@ -218,15 +234,21 @@ onActivated(() => {
     <!-- 回测记录：搜索、勾选对比、打开结果都在这一张表里 -->
     <SectionCard title="回测记录" :hint="summary">
       <template #actions>
-        <span class="text-xs text-slate-500">已选 {{ selectedCount }} / {{ MAX_COMPARED }}</span>
+        <span class="text-xs text-slate-500">已选 {{ selectedCount }} 条；对比最多 {{ MAX_COMPARED }} 条</span>
         <button
           @click="onCompare"
-          :disabled="comparing || selectedCount < 2"
+          :disabled="comparing || selectedCount < 2 || selectedCount > MAX_COMPARED"
           class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70"
         >
           {{ comparing ? '对比中…' : '对比所选' }}
         </button>
       </template>
+      <div class="mb-3 flex flex-wrap gap-3 text-sm text-indigo-300">
+        <button @click="switchArchive">{{ archived ? '返回未归档' : '查看已归档' }}</button>
+        <button :disabled="archiving || !selectedCount" class="disabled:opacity-50" @click="changeArchive([...selectedIds])">{{ archived ? '恢复所选' : '归档所选' }}</button>
+        <button v-if="runs.length" @click="selectedIds = runs.slice(0, 500).map(r => r.run_id)">选择前 {{ Math.min(runs.length, 500) }} 条</button>
+        <span class="text-xs text-slate-500">归档只隐藏列表记录，保留结果和关联证据，可随时恢复。</span>
+      </div>
       <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
         <input
           v-model="keyword"
@@ -254,6 +276,7 @@ onActivated(() => {
         <template #cell-actions="{ row }">
           <div class="flex flex-wrap gap-2 whitespace-nowrap text-sm text-indigo-300">
             <button @click="openResearch('backtest-review', { run: row.backtest_id || row.run_id })">查看结果</button>
+            <button :disabled="archiving" @click="changeArchive([row.run_id])">{{ archived ? '恢复' : '归档' }}</button>
             <button v-if="row.strategy_reference" @click="openResearch('backtest-review', { strategy: row.strategy_reference, run: row.backtest_id || row.run_id, mode: 'reuse' })">继续研究</button>
             <button v-if="row.strategy_reference?.startsWith('package:')" @click="openResearch('strategy-hub', { strategy: row.strategy_reference })">回到策略</button>
           </div>
@@ -304,6 +327,7 @@ onActivated(() => {
     <!-- 对比结果 -->
     <SectionCard v-if="comparison && comparison.length" title="对比结果" hint="所选回测的净值与绩效指标。">
       <div class="space-y-6">
+    <BacktestTasks @completed="loadRuns(keyword.trim())" />
         <div>
           <div class="flex items-center justify-between text-xs text-slate-400">
             <span>净值对比 · {{ comparisonScope?.start_date }} 至 {{ comparisonScope?.end_date }}</span>

@@ -4,8 +4,9 @@ import { getBacktestBenchmark, getBacktestCatalog, getBacktest, getPreferences, 
 import { REBALANCE_OPTIONS, backtestDefaults } from '../preferences.js'
 import { openResearch } from '../researchNavigation.js'
 import { setFocus } from '../chatFocus.js'
-import { backtestId, countText, runTime, runningText, strategyName, validityLabel } from '../runRecords.js'
+import { backtestId, countText, runTime, strategyName, validityLabel } from '../runRecords.js'
 import BacktestAiReview from '../ui/BacktestAiReview.vue'
+import BacktestTasks from '../ui/BacktestTasks.vue'
 import UsefulPrompt from '../ui/UsefulPrompt.vue'
 import RiskSettings from '../ui/RiskSettings.vue'
 import MetricCard from '../ui/MetricCard.vue'
@@ -58,7 +59,11 @@ const form = reactive({
 })
 
 const running = ref(false)
-const runSeconds = ref(0) // 这次回测已经等了多少秒，按钮旁提示用
+const tasksRefresh = ref(0)
+function taskCompleted(job) {
+  props.notify('回测已完成')
+  if (job.id === props.routeContext.job) openResearch('backtest-review', { run: job.result_id })
+}
 const runError = ref('')
 
 // ---------- 回测结果 ----------
@@ -231,9 +236,7 @@ async function onSubmit() {
   if (form.from_date >= form.to_date) return props.notify('开始日期需早于结束日期')
   running.value = true
   runError.value = ''
-  runSeconds.value = 0
-  const started = Date.now()
-  const timer = setInterval(() => { runSeconds.value = (Date.now() - started) / 1000 }, 1000)
+
   try {
     const data = await submitBacktest({
       strategy: form.strategy.trim(),
@@ -245,15 +248,15 @@ async function onSubmit() {
       rebalance: form.rebalance,
       strategy_parameters: { ...strategyParameters },
     })
-    props.notify('回测已完成')
+    props.notify('任务已提交，可在下方查看进度或取消')
+    tasksRefresh.value += 1
     activeTab.value = '概览'
-    // 把这次回测写进链接：刷新或后退仍然是这次结果，结果由下面对链接的监听加载。
-    openResearch('backtest-review', { run: data.id })
+    // 保存任务编号：刷新后重新订阅后台状态，成功后再打开结果。
+    openResearch('backtest-review', { job: data.id })
   } catch (e) {
     runError.value = e.message || '回测失败'
     props.notify(e.message || '回测失败')
   } finally {
-    clearInterval(timer)
     running.value = false
   }
 }
@@ -319,6 +322,7 @@ onActivated(async () => {
 
 <template>
   <div class="space-y-6">
+    <BacktestTasks :focus-job="routeContext.job" :refresh-key="tasksRefresh" @completed="taskCompleted" />
     <!-- 标题 -->
     <div class="glass glass-sheen rounded-2xl p-6">
       <h1 class="text-xl font-bold text-white">策略回测</h1>
@@ -349,7 +353,7 @@ onActivated(async () => {
       </details>
       <p v-if="runError" class="mt-4 text-sm text-rose-300">{{ runError }}</p>
       <div class="mt-5 flex flex-wrap items-center justify-end gap-3">
-        <p v-if="running" class="text-xs text-slate-400" role="status">{{ runningText(runSeconds) }}</p>
+        <p v-if="running" class="text-xs text-slate-400" role="status">正在提交任务…</p>
         <button
           data-guide="backtest-run"
           @click="onSubmit"

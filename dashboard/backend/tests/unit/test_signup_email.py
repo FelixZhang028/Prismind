@@ -1,5 +1,6 @@
 """注册要先验证邮箱；同一个邮箱（不同写法算同一个）只送一次注册积分，注销后再注册也不送；163 邮箱用 SSL 端口发信。"""
 
+import re
 from unittest.mock import patch
 
 import pytest
@@ -127,12 +128,16 @@ def test_ports_465_and_994_use_ssl_and_587_uses_starttls(monkeypatch):
     assert plain.return_value.__enter__.return_value.starttls.called and not ssl.called
 
 
-def test_other_spellings_of_one_address_are_the_same_mailbox():
+def test_other_spellings_of_one_address_are_the_same_mailbox(monkeypatch):
     same = ["Ab.C+promo@Gmail.com", "abc@googlemail.com", "a.b.c@gmail.com"]
     assert {security.canonical_email(e) for e in same} == {"abc@gmail.com"}
     assert security.canonical_email("Li.Lei+x@163.com") == "li.lei@163.com"                # 别的邮箱的点要保留
-    assert security.email_key("A@163.com") == security.email_key("a+1@163.com") != security.email_key("b@163.com")
-    assert "163" not in security.email_key("a@163.com")                                     # 看不出原来的邮箱
+    monkeypatch.setattr(security, "SECRET_KEY", "signup-test-key")
+    key = security.email_key("A@163.com")
+    assert key == security.email_key("a+1@163.com") != security.email_key("b@163.com")
+    assert re.fullmatch(r"[0-9a-f]{64}", key)
+    monkeypatch.setattr(security, "SECRET_KEY", "other-signup-test-key")
+    assert security.email_key("A@163.com") != key
 
 
 def test_the_sign_up_gift_is_given_once_per_mailbox_even_after_deleting_the_account(site, monkeypatch):

@@ -49,3 +49,10 @@ test('这组条件过去表现如何：回测结果的几个数', async () => {
   assert.deepEqual(historyMetrics(null), [])
   assert.equal(historyMetrics({ sharpe: null })[3].value, '—')
 })
+
+
+test('第二页明确显示范围，不再误称为前一百只', () => {
+  const text = screenSummary({ scope: 'pool', trade_date: '2026-11-16', checked: 800, matched: 205, shown: 100, offset: 100 })
+  assert.match(text, /第 101–200 只/)
+  assert.doesNotMatch(text, /显示前/)
+})

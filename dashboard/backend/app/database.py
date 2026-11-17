@@ -73,6 +73,21 @@ PAPER_ACCOUNTS_TABLE = """
 """
 
 
+BACKTEST_JOBS_TABLE = """
+CREATE TABLE IF NOT EXISTS backtest_jobs (
+    id TEXT PRIMARY KEY, user_id INTEGER NOT NULL,
+    payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'QUEUED',
+    stage TEXT NOT NULL DEFAULT '等待计算名额', completed INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+    started_at TEXT, finished_at TEXT, heartbeat_at TEXT, lease_at TEXT,
+    result_id INTEGER, error TEXT,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(result_id) REFERENCES backtests(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS backtest_jobs_queue ON backtest_jobs(state, created_at);
+"""
+
+
 def init_db() -> None:
     """建表与轻量迁移。可重复调用。"""
     with get_conn() as conn:
@@ -403,6 +418,13 @@ def init_db() -> None:
         ).fetchall()
         conn.executemany("INSERT OR IGNORE INTO signup_emails (email_key, created_at) VALUES (?, ?)",
                          [(email_key(row["email"]), row["created_at"]) for row in gifted])
+
+    with get_conn() as conn:
+        conn.executescript(BACKTEST_JOBS_TABLE)
+        if "lease_at" not in {row[1] for row in conn.execute("PRAGMA table_info(backtest_jobs)")}:
+            conn.execute("ALTER TABLE backtest_jobs ADD COLUMN lease_at TEXT")
+        if "archived_at" not in {row[1] for row in conn.execute("PRAGMA table_info(backtests)")}:
+            conn.execute("ALTER TABLE backtests ADD COLUMN archived_at TEXT")
 
     # No public default credentials. Bootstrap only when explicitly configured.
     email = os.getenv("FELLOWQUANT_ADMIN_EMAIL", "").strip().lower()

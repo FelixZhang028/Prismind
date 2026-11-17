@@ -26,14 +26,14 @@ const lastRequest = ref(null)     // 这次结果用的条件和范围：AI 解�
 
 watch(() => props.form, () => { if (result.value) stale.value = true }, { deep: true })
 
-async function run() {
+async function run(offset = 0) {
   running.value = true
   error.value = ''
   try {
     const definition = definitionFromForm(props.form)
     if (!definition.name) definition.name = '未命名策略'
-    const request = { definition, scope: scope.value, exclude_st: excludeSt.value }
-    result.value = await screenPackage({ ...request, limit: 100 })
+    const request = offset && lastRequest.value ? lastRequest.value : { definition, scope: scope.value, exclude_st: excludeSt.value }
+    result.value = await screenPackage({ ...request, limit: 100, offset })
     lastRequest.value = request
     stale.value = false
     emit('result', result.value)
@@ -58,7 +58,7 @@ const tone = (change) => (change > 0 ? 'text-rose-300' : change < 0 ? 'text-emer
       <label class="flex items-center gap-2 text-sm text-slate-300">
         <input v-model="excludeSt" type="checkbox" class="h-4 w-4 rounded border-white/20 bg-white/5 accent-indigo-500" />排除 ST
       </label>
-      <button type="button" :disabled="running || disabled" class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0" @click="run">
+      <button type="button" :disabled="running || disabled" class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0" @click="run(0)">
         {{ running ? (scope === 'market' ? '筛选全市场中…（几秒钟）' : '筛选中…') : '开始筛选' }}
       </button>
     </div>
@@ -66,6 +66,11 @@ const tone = (change) => (change > 0 ? 'text-rose-300' : change < 0 ? 'text-emer
     <p v-if="error" role="alert" class="mt-3 text-sm text-rose-300">{{ error }}</p>
 
     <div v-if="result" class="mt-4" aria-live="polite">
+      <div class="mb-3 flex flex-wrap items-center gap-3 text-sm text-slate-300">
+        <span>共匹配 {{ result.matched }} 只，本页显示 {{ result.items.length ? (result.offset || 0) + 1 : 0 }}–{{ (result.offset || 0) + result.items.length }} 只；分页不改变股票池。</span>
+        <button :disabled="running || stale || !result.offset" class="text-indigo-300 disabled:opacity-40" @click="run(Math.max(0, result.offset - 100))">上一页</button>
+        <button :disabled="running || stale || (result.offset || 0) + result.items.length >= result.matched" class="text-indigo-300 disabled:opacity-40" @click="run((result.offset || 0) + 100)">下一页</button>
+      </div>
       <p class="text-sm text-slate-200">{{ screenSummary(result) }}</p>
       <p v-if="stale" class="mt-1 text-xs text-amber-300">条件改过了，下面是改之前的结果；点“开始筛选”重新筛。</p>
       <p class="mt-1 text-xs text-slate-500">条件：{{ result.conditions.join(result.logic === 'all' ? '，并且' : '，或者') }}；{{ result.ranking }}</p>
