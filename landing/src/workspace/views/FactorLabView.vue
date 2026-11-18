@@ -263,11 +263,18 @@ const evalForm = reactive({
   horizon: 5,
   n_groups: 5,
   neutralization: 'none',
+  filters: { exclude_st: false, exclude_suspended: false, exclude_recent_ipos: false },
   start_date: defaultStart,
   end_date: defaultEnd,
 })
+const evalFilters = [
+  { key: 'exclude_st', label: '排除 ST' },
+  { key: 'exclude_suspended', label: '排除停牌' },
+  { key: 'exclude_recent_ipos', label: '上市满一年' },
+]
 const evalLoading = ref(false)
 const evalResult = ref(null)
+const reportFilterLabels = computed(() => evalFilters.filter(({ key }) => evalResult.value?.filters?.[key]).map(({ label }) => label))
 const evalError = ref('')
 const evalJob = ref('')
 const evalReportLoading = ref(false)
@@ -283,6 +290,7 @@ async function runEvaluate() {
       horizon: Number(evalForm.horizon),
       n_groups: Number(evalForm.n_groups),
       neutralization: evalForm.neutralization,
+      filters: { ...evalForm.filters },
       start_date: evalForm.start_date,
       end_date: evalForm.end_date,
       universe: universe.value,
@@ -736,8 +744,18 @@ onBeforeUnmount(() => {
             <input v-model="evalForm.end_date" type="date" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/40" />
           </label>
         </div>
-        <div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2" role="group" aria-label="中性化">
-          <span class="text-xs text-slate-400">中性化</span>
+        <fieldset class="mt-4">
+          <legend class="text-xs text-slate-400">样本筛选</legend>
+          <div class="mt-2 flex flex-wrap gap-x-5 gap-y-2">
+            <label v-for="option in evalFilters" :key="option.key" class="inline-flex items-center gap-2 text-sm text-slate-300">
+              <input v-model="evalForm.filters[option.key]" type="checkbox" class="accent-indigo-400" />
+              {{ option.label }}
+            </label>
+          </div>
+          <p class="mt-2 text-xs text-slate-500">按信号日判断。缺少所选字段的股票会从当天的样本中剔除。</p>
+        </fieldset>
+        <div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2" role="group" aria-label="因子处理">
+          <span class="text-xs text-slate-400">因子处理</span>
           <button v-for="option in NEUTRALIZATION_OPTIONS" :key="option.value" type="button" :aria-pressed="evalForm.neutralization === option.value"
             class="rounded-full border px-3 py-1 text-xs transition"
             :class="evalForm.neutralization === option.value ? 'border-indigo-400/40 bg-indigo-500/20 text-indigo-200' : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'"
@@ -772,6 +790,7 @@ onBeforeUnmount(() => {
             {{ evalResult.start_date }} 至 {{ evalResult.end_date }} · {{ evalResult.universe_label }}
             · {{ evalResult.n_groups }} 组 · 持有 {{ evalResult.horizon }} 个交易日
             · {{ NEUTRALIZATION_OPTIONS.find((option) => option.value === evalResult.neutralization)?.label }}
+            <template v-if="reportFilterLabels.length"> · {{ reportFilterLabels.join('、') }}</template>
           </p>
         </div>
         <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">

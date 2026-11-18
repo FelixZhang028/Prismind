@@ -218,6 +218,45 @@ def test_stocks_without_a_classification_are_left_out_and_counted(tmp_path):
     assert notes == ["3 个样本缺少当时的行业分类或市值，没有参与中性化（共 15 个样本）"]
 
 
+def test_industry_rank_and_holding_weights_only_use_known_classification(tmp_path):
+    repo = market(tmp_path)
+    evaluator = FactorEvaluator(repo)
+    bars = repo.get_daily_bars()
+    early, later = pd.Timestamp("2025-03-28"), DAYS[30]
+    values = pd.DataFrame([
+        {"date": day, "symbol": symbol, "value": float(index)}
+        for day in (early, later)
+        for index, symbol in enumerate(SYMBOLS)
+    ])
+    ranks, notes = evaluator._neutralized(values, bars, "industry_rank")
+    assert set(ranks.date) == {later}
+    assert sorted(ranks.value.unique()) == pytest.approx([.1, .3, .5, .7, .9])
+    assert notes and notes[0].startswith("15 个样本缺少")
+
+    report = evaluator.evaluate(
+        momentum(), later.date(), DAYS[-2].date(), horizon=1, n_groups=5,
+        neutralization="industry_rank", diagnostics=True,
+    )
+    mix = report.industry_distribution
+    assert mix["date"] == DAYS[-4].date().isoformat()
+    assert mix["group_count"] == 3 and mix["pool_count"] == 15
+    assert {row["industry"] for row in mix["rows"]} == set(INDUSTRIES)
+    assert all(row["group_count"] == 1 and row["pool_weight"] == pytest.approx(1 / 3) for row in mix["rows"])
+    assert sum(row["group_weight"] for row in mix["rows"]) == pytest.approx(1)
+
+
+def test_neutralization_skips_a_single_underdetermined_day(tmp_path):
+    repo = market(tmp_path)
+    evaluator = FactorEvaluator(repo)
+    bars = repo.get_daily_bars()
+    values = momentum().compute(bars)
+    later = values[values["date"].eq(DAYS[31])]
+    sparse = values[values["date"].eq(DAYS[30])].iloc[:4]
+    neutral, notes = evaluator._neutralized(pd.concat([sparse, later]), bars, "industry")
+    assert set(neutral.date) == {DAYS[31]}
+    assert notes == ["1 个交易日的有效股票不足以估计中性化模型，已跳过"]
+
+
 def test_neutralization_says_what_is_missing_or_why_it_cannot_be_done(tmp_path):
     repo = market(tmp_path)
     evaluator = FactorEvaluator(repo)
@@ -256,7 +295,7 @@ def test_size_neutralization_uses_the_market_cap_known_on_each_day(tmp_path):
     assert abs(np.corrcoef(day.reindex(SYMBOLS), cap.reindex(SYMBOLS))[0, 1]) < 1e-8
 
 
-def test_the_route_accepts_the_four_neutralization_choices(monkeypatch):
+def test_the_route_accepts_neutralization_and_industry_rank_choices(monkeypatch):
     asked = []
     evaluator = SimpleNamespace(evaluate=lambda factor, start, end, **options: asked.append(options["neutralization"]) or (_ for _ in ()).throw(ValueError("stop")))
     monkeypatch.setattr(workspace, "build_factor_evaluator", lambda: evaluator)
@@ -267,12 +306,12 @@ def test_the_route_accepts_the_four_neutralization_choices(monkeypatch):
     app.include_router(workspace.router)
     app.dependency_overrides[get_current_user] = lambda: {"id": 1}
     client = TestClient(app)
-    for choice in ("none", "industry", "size", "both"):
+    for choice in ("none", "industry", "size", "both", "industry_rank"):
         assert client.post("/api/v1/factors/evaluate", json={"factor_name": "momentum_20", "neutralization": choice}).status_code == 422
-    assert asked == ["none", "industry", "size", "both"]
+    assert asked == ["none", "industry", "size", "both", "industry_rank"]
     assert client.post("/api/v1/factors/evaluate", json={"factor_name": "momentum_20"}).status_code == 422 and asked[-1] == "none"
     bad = client.post("/api/v1/factors/evaluate", json={"factor_name": "momentum_20", "neutralization": "sector"})
-    assert bad.status_code == 422 and len(asked) == 5
+    assert bad.status_code == 422 and len(asked) == 6
 
 
 # --------------------------------------------------------------------------- #

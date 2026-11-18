@@ -96,6 +96,7 @@ from quant_platform.data.index_constituents import INDEX_UNIVERSES, IndexUnivers
 from quant_platform.factors.base import FactorDefinition
 from quant_platform.factors.custom import CustomFactor
 from quant_platform.factors.evaluation import FactorEvaluator
+from quant_platform.factors.sample import FactorSampleFilters
 from quant_platform.core.exceptions import ConfigurationError
 from quant_platform.factors.combine import (
     CompositeFactor,
@@ -851,7 +852,8 @@ class FactorEvalIn(BaseModel):
     horizon: int = Field(5, ge=1, le=20)
     n_groups: int = Field(5, ge=5, le=10)
     # 中性化：去掉因子值里能被行业、市值解释的部分。
-    neutralization: Literal["none", "industry", "size", "both"] = "none"
+    neutralization: Literal["none", "industry", "size", "both", "industry_rank"] = "none"
+    filters: FactorSampleFilters = Field(default_factory=FactorSampleFilters)
     # 股票范围：当前股票池，或某个指数当时的成分股（指数代码）。
     universe: str = Field(CURRENT_POOL, max_length=40)
 
@@ -947,7 +949,7 @@ def _evaluate_factor(
     try:
         report = evaluator.evaluate(
             factor, start, end, symbols=symbols, horizon=body.horizon, n_groups=body.n_groups,
-            neutralization=body.neutralization, diagnostics=True,
+            neutralization=body.neutralization, diagnostics=True, filters=body.filters,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=_sanitize_detail(exc)) from exc
@@ -960,6 +962,7 @@ def _evaluate_factor(
             else f"{INDEX_UNIVERSES[body.universe][0]}历史成分股"
         ),
         "neutralization": body.neutralization,
+        "filters": asdict(body.filters),
     }
 
 

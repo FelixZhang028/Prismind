@@ -79,10 +79,12 @@ def new_change_points(existing: pd.DataFrame, snapshot: pd.DataFrame) -> pd.Data
     return changed.drop(columns=["previous"]).reset_index(drop=True)
 
 
-def industry_on(days: pd.DataFrame, changes: pd.DataFrame, level: str = "industry") -> pd.Series:
+def industry_on(
+    days: pd.DataFrame, changes: pd.DataFrame, level: str = "industry", *, infer_early: bool = True,
+) -> pd.Series:
     """Each (symbol, date) row's industry as known that day; aligned with ``days``.
 
-    Before a stock's first recorded classification its first one is used: a company's industry is
+    With infer_early enabled, before a stock's first recorded classification its first one is used: a company's industry is
     known when it lists, the vendor's quarterly snapshots simply pick it up a little later.
     Stocks never classified stay missing. ``level`` is ``industry`` (division) or ``sector``.
     """
@@ -98,7 +100,8 @@ def industry_on(days: pd.DataFrame, changes: pd.DataFrame, level: str = "industr
     asked = pd.DataFrame({"symbol": days["symbol"].to_numpy(), "date": pd.to_datetime(days["date"]).astype("datetime64[ns]").to_numpy(),
                           "_row": range(len(days))}).sort_values("date")
     matched = pd.merge_asof(asked, known, on="date", by="symbol", direction="backward")
-    first = known.drop_duplicates("symbol", keep="first").set_index("symbol")[level]
-    matched[level] = matched[level].where(matched[level].notna(), matched["symbol"].map(first))
+    if infer_early:
+        first = known.drop_duplicates("symbol", keep="first").set_index("symbol")[level]
+        matched[level] = matched[level].where(matched[level].notna(), matched["symbol"].map(first))
     result.iloc[matched["_row"].to_numpy()] = matched[level].to_numpy()
     return result

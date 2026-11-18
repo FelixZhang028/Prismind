@@ -76,9 +76,11 @@ def neutralize_exposures(values: pd.DataFrame, exposures: pd.DataFrame, mode: st
         usable = group.value.notna() & np.isfinite(group.value)
         x = features.loc[usable].to_numpy(dtype=float)
         y = group.loc[usable, "value"].to_numpy(dtype=float)
-        if len(y) <= np.linalg.matrix_rank(x) + 1:
-            raise ValueError("中性化截面样本不足")
+        if len(y) < 3 or len(y) <= np.linalg.matrix_rank(x) + 1:
+            continue
         group = group.loc[usable, ["date", "symbol", "value"]].copy()
         group["value"] = y - x @ np.linalg.lstsq(x, y, rcond=None)[0]
         outputs.append(group)
-    return pd.concat(outputs, ignore_index=True) if outputs else left.iloc[:0]
+    if not outputs:
+        raise ValueError("中性化截面样本不足")
+    return pd.concat(outputs, ignore_index=True)

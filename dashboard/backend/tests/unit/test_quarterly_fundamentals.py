@@ -140,6 +140,31 @@ def test_stale_reports_markers_and_other_stocks_are_not_used():
     assert point_in_time(days, reports_frame(), ["roe_avg"])["roe_avg"].isna().all()
 
 
+def test_revenue_growth_and_cash_flow_wait_for_their_own_input_publications():
+    current = normalize_baostock_quarter("sz.000001", 2025, 2, {
+        "profit": section("2025-08-06", netProfit=-20, MBRevenue=120),
+        "balance": section("2025-08-06", assetToEquity=2.0, liabilityToAsset=0.7),
+        "cash_flow": section("2025-08-18", CFOToNP=-1.5),
+    })
+    assert current["pub_date"] == pd.Timestamp("2025-08-06")
+    assert current["operating_cash_flow"] == 30
+    prior = report("000001.SZ", "2024-06-30", "2025-08-12", revenue=100)
+    days = days_frame("000001.SZ", ["2025-08-05", "2025-08-06", "2025-08-12", "2025-08-18"])
+    data = point_in_time(days, reports_frame(prior, current), ["yoy_revenue", "operating_cash_flow", "liability_to_asset"])
+    assert data["liability_to_asset"].iloc[1:].tolist() == [0.7, 0.7, 0.7]
+    assert data["yoy_revenue"].iloc[:2].isna().all()
+    assert data["yoy_revenue"].iloc[2:].tolist() == pytest.approx([0.2, 0.2])
+    assert data["operating_cash_flow"].iloc[:3].isna().all()
+    assert data["operating_cash_flow"].iloc[3] == 30
+    incomplete = report("000001.SZ", "2025-09-30", "2025-10-20", revenue=100, liability_to_asset=0.66)
+    later = point_in_time(
+        days_frame("000001.SZ", ["2025-10-21"]), reports_frame(prior, current, incomplete),
+        ["yoy_revenue", "operating_cash_flow", "liability_to_asset"],
+    ).iloc[0]
+    assert later["yoy_revenue"] == pytest.approx(0.2)
+    assert later["operating_cash_flow"] == 30 and later["liability_to_asset"] == 0.66
+
+
 # --------------------------------------------------------------------------- #
 # Downloading
 # --------------------------------------------------------------------------- #
@@ -172,8 +197,13 @@ class Vendor:
         published = pd.Timestamp(quarter_end(year, quarter)) + pd.Timedelta(days=25)
         if (year, quarter) < self.first or published.date() > TODAY:
             return pd.DataFrame()
-        values = {"profit": {"roeAvg": 0.02 * quarter, "gpMargin": 0.3, "totalShare": 1e9}, "growth": {"YOYNI": 0.1, "YOYEquity": 0.05},
-                  "balance": {"assetToEquity": 2.0}}[kind]
+        values = {
+            "profit": {"roeAvg": 0.02 * quarter, "gpMargin": 0.3, "totalShare": 1e9, "liqaShare": 6e8,
+                       "MBRevenue": 100 * (year - 2020) + quarter, "netProfit": 10},
+            "growth": {"YOYNI": 0.1, "YOYEquity": 0.05},
+            "balance": {"assetToEquity": 2.0},
+            "cash_flow": {"CFOToNP": 1.2},
+        }[kind]
         return section(published.date().isoformat(), **values)
 
 
@@ -196,9 +226,9 @@ def test_download_covers_each_stocks_periods_and_keeps_what_the_vendor_does_not_
     assert asked == [(2023, 2), (2023, 3), (2023, 4), (2024, 1), (2024, 2), (2024, 3), (2024, 4), (2025, 1), (2025, 2)]
     assert result == {"symbols": 2, "updated": 2, "reports": 12, "failed": {}}
     assert vendor.logins == 1 and seen[0] == ("quarterly_fundamentals", 0, 2) and seen[-1] == ("quarterly_fundamentals", 2, 2)
-    # 没有利润表的季度不再去问另外两张表。
+    # 没有利润表的季度不再去问其他表。
     assert [kind for kind, symbol, year, quarter in vendor.requests if (symbol, year, quarter) == ("000001.SZ", 2023, 2)] == ["profit"]
-    assert [kind for kind, symbol, year, quarter in vendor.requests if (symbol, year, quarter) == ("000001.SZ", 2024, 1)] == ["profit", "growth", "balance"]
+    assert [kind for kind, symbol, year, quarter in vendor.requests if (symbol, year, quarter) == ("000001.SZ", 2024, 1)] == ["profit", "growth", "balance", "cash_flow"]
 
     stored = repo.get_fundamentals(["000001.SZ"])
     markers = stored[stored["pub_date"].isna()]["stat_date"].dt.date.tolist()
@@ -216,6 +246,39 @@ def test_a_second_run_only_asks_for_periods_that_may_have_been_published_since(r
     only = Vendor()
     BaoStockFundamentalsBackfill(repo, only, today=date(2025, 12, 1)).backfill(date(2015, 1, 1), date(2030, 1, 1), symbols=["600519.SH"])
     assert {symbol for kind, symbol, year, quarter in only.requests} == {"600519.SH"}
+
+
+def test_backfill_enriches_existing_reports_without_refetching_or_delaying_core_figures(repo):
+    legacy = report("000001.SZ", "2025-03-31", "2025-04-20", net_profit=40, roe_avg=0.25)
+    repo.save_table(FUNDAMENTALS_TABLE, reports_frame(legacy).drop(columns=["cash_flow_checked", "cash_flow_pub_date", "operating_cash_flow"]))
+    vendor = Vendor()
+    job = BaoStockFundamentalsBackfill(repo, vendor, today=TODAY)
+    day = date(2025, 3, 31)
+    job.backfill(day, day, symbols=["000001.SZ"])
+    assert vendor.requests == [("cash_flow", "000001.SZ", 2025, 1)]
+    saved = repo.get_fundamentals(["000001.SZ"]).iloc[0]
+    assert (saved["roe_avg"], saved["pub_date"], saved["operating_cash_flow"], saved["cash_flow_pub_date"]) == (
+        0.25, pd.Timestamp("2025-04-20"), 48, pd.Timestamp("2025-04-25"),
+    )
+    assert job.plan(day, day, ["000001.SZ"]) == []
+
+
+def test_recent_unpublished_cash_flow_is_checked_again_without_refetching_core_reports(repo):
+    class LateCashFlow(Vendor):
+        def get_quarterly_report(self, kind, symbol, year, quarter):
+            response = super().get_quarterly_report(kind, symbol, year, quarter)
+            return pd.DataFrame() if kind == "cash_flow" else response
+
+    symbols = ["000001.SZ"]
+    day = date(2025, 3, 31)
+    repo.save_table(FUNDAMENTALS_TABLE, reports_frame(report("000001.SZ", day, "2025-04-20", net_profit=40)))
+    late = BaoStockFundamentalsBackfill(repo, LateCashFlow(), today=TODAY)
+    late.backfill(day, day, symbols=symbols)
+    assert late.plan(day, day, symbols) == [("000001.SZ", [(2025, 1)])]
+    fills = Vendor()
+    BaoStockFundamentalsBackfill(repo, fills, today=TODAY).backfill(day, day, symbols=symbols)
+    assert fills.requests == [("cash_flow", "000001.SZ", 2025, 1)]
+    assert repo.get_fundamentals(symbols).iloc[0]["operating_cash_flow"] == 48
 
 
 def test_failures_are_tolerated_until_the_source_is_clearly_down(repo, tmp_path, monkeypatch):
@@ -256,13 +319,17 @@ def test_quality_growth_and_size_factors(repo):
     run(repo, Vendor())
     repo.save_table(INDICATOR_TABLE, pd.DataFrame({"symbol": "000001.SZ", "trade_date": DAYS[-5:], "pe_ttm": 10.0, "pb_mrq": 1.5,
                                                    "ps_ttm": 2.0, "pcf_ttm": 8.0, "turnover_rate": 1.0, "source": "baostock"}))
-    fields = ["pe_ttm", "pb_mrq", "ps_ttm", "gross_margin", "asset_to_equity", "yoy_net_profit", "yoy_equity", "total_shares"]
+    fields = ["pe_ttm", "pb_mrq", "ps_ttm", "gross_margin", "liability_to_asset", "yoy_net_profit", "yoy_equity", "total_shares",
+              "turnover_rate", "total_market_cap", "float_market_cap", "yoy_revenue", "operating_cash_flow"]
     loaded = repo.get_daily_bars(["000001.SZ"], DAYS[-5].date(), DAYS[-1].date(), extras=fields)
     value = lambda name: factor(name).compute(loaded)["value"].iloc[-1]  # noqa: E731
     assert value("roe_ttm") == pytest.approx(1.5 / 10.0) and value("net_margin_ttm") == pytest.approx(2.0 / 10.0)
     assert value("gross_margin") == pytest.approx(0.3) and value("yoy_net_profit") == pytest.approx(0.1) and value("yoy_equity") == pytest.approx(0.05)
     assert value("debt_ratio") == pytest.approx(0.5)                               # 权益乘数 2：一半是负债
     assert value("ln_market_cap") == pytest.approx(np.log(10.0 * 1e9))
+    assert value("total_market_cap") == 1e10 and value("float_market_cap") == 6e9
+    assert value("turnover_rate") == 1.0 and value("operating_cash_flow") == 12
+    assert value("yoy_revenue") == pytest.approx(501 / 401 - 1)
     assert (factor("debt_ratio").direction, factor("ln_market_cap").direction, factor("roe_ttm").direction) == (-1, -1, 1)
     assert {factor(name).category for name in ("roe_ttm", "net_margin_ttm", "gross_margin", "debt_ratio")} == {"质量"}
     assert {factor(name).category for name in ("yoy_net_profit", "yoy_equity")} == {"成长"} and factor("ln_market_cap").category == "规模"

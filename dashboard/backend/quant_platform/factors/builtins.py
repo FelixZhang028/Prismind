@@ -157,12 +157,6 @@ def _reported(name: str) -> Callable[[pd.DataFrame], pd.DataFrame]:
     return lambda bars: melt_wide(_indicator(bars, name))
 
 
-def _debt_ratio(bars: pd.DataFrame) -> pd.DataFrame:
-    # 权益乘数 = 总资产 / 净资产，所以负债 / 总资产 = 1 - 1 / 权益乘数；净资产为负时没有意义。
-    multiplier = _indicator(bars, "asset_to_equity")
-    return melt_wide(1.0 - 1.0 / multiplier.where(multiplier > 0))
-
-
 def _ln_market_cap(bars: pd.DataFrame) -> pd.DataFrame:
     value = pivot_field(bars, "raw_close") * _indicator(bars, "total_shares")
     return melt_wide(np.log(value.where(value > 0)))
@@ -345,7 +339,7 @@ def builtin_factors() -> list[FactorDefinition]:
         BuiltinFactor(
             name="cfp_ttm",
             display_name="现金流市值比",
-            description="市现率（TTM）的倒数：每 1 元股价对应的过去十二个月经营现金流净额，越高越便宜；现金流为负的公司为负。",
+            description="BaoStock 滚动市现率的倒数。分子是过去十二个月现金及现金等价物净增加额，分母是总市值。",
             formula="1 / pcf_ttm",
             required_fields=("pcf_ttm",),
             min_history=1,
@@ -389,13 +383,36 @@ def builtin_factors() -> list[FactorDefinition]:
         BuiltinFactor(
             name="debt_ratio",
             display_name="资产负债率",
-            description="最新已公告财报的负债相对总资产的比例，由权益乘数换算；杠杆越高财务风险越大，反向使用。不同行业差别很大（银行天然很高）。",
-            formula="1 - 1 / asset_to_equity（最新已公告财报，反向使用）",
-            required_fields=("asset_to_equity",),
+            description="最新已公告财报的负债占总资产比例。历史报告缺少直接字段时，用有效权益乘数换算。反向使用。",
+            formula="liability_to_asset（最新已公告财报，反向使用）",
+            required_fields=("liability_to_asset",),
             min_history=1,
             direction=-1,
             category="质量",
-            func=_debt_ratio,
+            version="1.1.0",
+            func=_reported("liability_to_asset"),
+        ),
+        BuiltinFactor(
+            name="operating_cash_flow",
+            display_name="经营活动现金净流量（推算）",
+            description="用同期已公告的净利润和经营现金净流量/净利润比率推算报告期累计净额，单位为元。缺少任一数据或净利润为零时留空。",
+            formula="CFOToNP × net_profit（同期财报，两项均公告后可用）",
+            required_fields=("operating_cash_flow",),
+            min_history=1,
+            direction=1,
+            category="质量",
+            func=_reported("operating_cash_flow"),
+        ),
+        BuiltinFactor(
+            name="yoy_revenue",
+            display_name="主营营业收入同比增长",
+            description="用最近一对已公告的本期和上年同期主营营业收入计算同比增长。上年同期营收须为正。",
+            formula="revenue / prior_year_same_period_revenue - 1",
+            required_fields=("yoy_revenue",),
+            min_history=1,
+            direction=1,
+            category="成长",
+            func=_reported("yoy_revenue"),
         ),
         BuiltinFactor(
             name="yoy_net_profit",
@@ -429,6 +446,39 @@ def builtin_factors() -> list[FactorDefinition]:
             direction=-1,
             category="规模",
             func=_ln_market_cap,
+        ),
+        BuiltinFactor(
+            name="total_market_cap",
+            display_name="总市值",
+            description="未复权收盘价乘以当日已公告的最新总股本，单位为元。财报股本更新有滞后。",
+            formula="raw_close × total_shares（反向使用）",
+            required_fields=("total_market_cap",),
+            min_history=1,
+            direction=-1,
+            category="规模",
+            func=_reported("total_market_cap"),
+        ),
+        BuiltinFactor(
+            name="float_market_cap",
+            display_name="流通市值",
+            description="未复权收盘价乘以当日已公告的最新流通股本，单位为元。财报股本更新有滞后。",
+            formula="raw_close × float_shares（反向使用）",
+            required_fields=("float_market_cap",),
+            min_history=1,
+            direction=-1,
+            category="规模",
+            func=_reported("float_market_cap"),
+        ),
+        BuiltinFactor(
+            name="turnover_rate",
+            display_name="日换手率",
+            description="成交量占流通股本的比例，数据源单位为百分比（1 表示 1%）。反向使用。",
+            formula="turnover_rate（反向使用）",
+            required_fields=("turnover_rate",),
+            min_history=1,
+            direction=-1,
+            category="换手",
+            func=_reported("turnover_rate"),
         ),
         BuiltinFactor(
             name="turnover_20",

@@ -11,6 +11,13 @@ const pct = (value) => value == null ? null : value * 100
 const fmt = (value) => value == null ? '—' : value.toFixed(3)
 
 const irDates = computed(() => datesOf(props.report.daily_ic))
+const rankIcCoverage = computed(() => {
+  const dates = props.report.daily_ic.filter((row) => row.rank_ic != null).map(({ date }) => date)
+  if (!dates.length) return '所选区间内没有有效 Rank IC 观测。'
+  const last = dates[dates.length - 1]
+  const span = dates[0] === last ? last : `${dates[0]} 至 ${last}`
+  return `有效 Rank IC 覆盖 ${span}（${dates.length} / ${irDates.value.length} 个交易日）。`
+})
 const irSeries = computed(() => [
   { label: 'IC IR', color: '#818cf8', points: props.report.daily_ic.map((row) => row.ic_ir) },
   { label: 'Rank IC IR', color: '#a78bfa', points: props.report.daily_ic.map((row) => row.rank_ic_ir) },
@@ -43,10 +50,23 @@ const decayRows = computed(() => props.report.decay.map((row) => ({
   ir: fmt(row.rank_ic_ir),
   observations: row.observations,
 })))
+const industryColumns = [
+  { key: 'industry', label: '行业（证监会）' },
+  { key: 'group_count', label: '组内股票数', align: 'right' },
+  { key: 'groupWeight', label: '最高组权重', align: 'right' },
+  { key: 'poolWeight', label: '同日入组样本权重', align: 'right' },
+]
+const industry = computed(() => props.report.industry_distribution)
+const industryRows = computed(() => industry.value?.rows.map((row) => ({
+  ...row,
+  groupWeight: `${pct(row.group_weight).toFixed(1)}%`,
+  poolWeight: `${pct(row.pool_weight).toFixed(1)}%`,
+})) || [])
 </script>
 
 <template>
   <SectionCard title="滚动 IC IR" hint="最近 60 个交易日的 IC 均值除以标准差。至少有 20 个有效观测才计算。">
+    <p class="mb-3 text-xs text-slate-400">{{ rankIcCoverage }}</p>
     <LineChart :series="irSeries" :dates="irDates" :height="190" :baseline="0" />
   </SectionCard>
 
@@ -59,6 +79,12 @@ const decayRows = computed(() => props.report.decay.map((row) => ({
 
   <SectionCard title="头尾组累计收益差" :hint="`每期以 G${report.n_groups} 收益减去 G1 收益，按固定名义本金累计。`">
     <LineChart :series="spreadSeries" :dates="navDates" :height="190" unit="percent" :baseline="0" />
+  </SectionCard>
+
+  <SectionCard v-if="industry" title="最高组行业分布" :hint="`最近一个持有窗口完整的信号日 ${industry.date}。G${report.n_groups} 共 ${industry.group_count} 只，同日入组样本共 ${industry.pool_count} 只。以当日已记录的行业按等权计算。`">
+    <div class="max-h-80 overflow-y-auto">
+      <DataTable :columns="industryColumns" :rows="industryRows" />
+    </div>
   </SectionCard>
 
   <SectionCard title="最高组换手率" hint="按分组调仓周期比较最高组成员。新增成员数占本期最高组人数的比例。">

@@ -26,6 +26,7 @@ _QUARTERLY_QUERIES = {
     "profit": "query_profit_data",
     "growth": "query_growth_data",
     "balance": "query_balance_data",
+    "cash_flow": "query_cash_flow_data",
 }
 
 
@@ -208,7 +209,7 @@ class BaoStockDataProvider(DataProvider):
         )
 
     def get_quarterly_report(self, kind: str, symbol: str, year: int, quarter: int) -> pd.DataFrame:
-        """One quarterly report section (profit, growth or balance); empty when not published."""
+        """One quarterly report section; empty when not published."""
 
         self.login()
         name = _QUARTERLY_QUERIES[kind]

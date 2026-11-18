@@ -17,9 +17,11 @@ import pyarrow.parquet as pq
 from quant_platform.core.files import replace_file
 from quant_platform.data.corporate_actions import DIVIDEND_YIELD, trailing_dividend_yield
 from quant_platform.data.fundamentals import (
-    FUNDAMENTAL_COLUMNS,
     FUNDAMENTALS_TABLE,
+    MARKET_CAP_FIELDS,
     STORED_COLUMNS,
+    fundamental_columns,
+    market_capitalization,
     point_in_time,
 )
 from quant_platform.data.indicators import INDICATOR_COLUMNS, INDICATOR_TABLE
@@ -137,7 +139,7 @@ class ParquetMarketDataRepository(MarketDataRepository):
         bars = self._get_daily_bars(symbols, start_date, end_date)
         asked = set(extras)
         daily = [column for column in INDICATOR_COLUMNS if column in asked]
-        quarterly = [column for column in FUNDAMENTAL_COLUMNS if column in asked]
+        quarterly = fundamental_columns(asked)
         industry = [column for column in INDUSTRY_COLUMNS if column in asked]
         dividends = [DIVIDEND_YIELD] if DIVIDEND_YIELD in asked else []
         if not (daily or quarterly or industry or dividends):
@@ -154,9 +156,13 @@ class ParquetMarketDataRepository(MarketDataRepository):
             bars = bars.merge(stored, on=["symbol", "trade_date"], how="left")
         if quarterly:
             reports = self.get_fundamentals(symbols)
-            matched = point_in_time(bars, reports, quarterly)
+            inputs = list(dict.fromkeys(MARKET_CAP_FIELDS.get(column, column) for column in quarterly))
+            matched = point_in_time(bars, reports, inputs)
             for column in quarterly:
-                bars[column] = matched[column].to_numpy()
+                if column in MARKET_CAP_FIELDS:
+                    bars[column] = market_capitalization(bars["raw_close"], matched[MARKET_CAP_FIELDS[column]]).to_numpy()
+                else:
+                    bars[column] = matched[column].to_numpy()
         if dividends:
             bars[DIVIDEND_YIELD] = trailing_dividend_yield(bars, self.read_table("corporate_actions"))
         return bars
