@@ -153,13 +153,17 @@ def factor_report_to_dict(report: FactorReport) -> dict[str, Any]:
         frame = report.daily_ic.copy()
         frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
         for record in frame.to_dict(orient="records"):
-            daily_ic.append(
-                {
-                    "date": record["date"].date().isoformat(),
-                    "ic": _round(record.get("ic"), 4),
-                    "rank_ic": _round(record.get("rank_ic"), 4),
-                }
-            )
+            point = {
+                "date": record["date"].date().isoformat(),
+                "ic": _round(record.get("ic"), 4),
+                "rank_ic": _round(record.get("rank_ic"), 4),
+            }
+            if "rank_ic_ir" in record:
+                point.update(
+                    ic_ir=_round(record["ic_ir"], 4),
+                    rank_ic_ir=_round(record["rank_ic_ir"], 4),
+                )
+            daily_ic.append(point)
 
     group_mean_returns: dict[str, float] = {}
     if not report.group_mean_returns.empty:
@@ -185,6 +189,22 @@ def factor_report_to_dict(report: FactorReport) -> dict[str, Any]:
         "turnover_mean": _round(report.turnover_mean, 4),
         "daily_ic": daily_ic,
         "group_mean_returns": group_mean_returns,
+        "group_nav": [
+            {"date": row["date"].date().isoformat(),
+             **{key: _round(value, 6) for key, value in row.items() if key != "date"}}
+            for row in report.group_nav.to_dict(orient="records")
+        ],
+        "nav_periods": report.nav_periods,
+        "nav_skipped": report.nav_skipped,
+        "rebalance_turnover": [
+            {"date": day.date().isoformat(), "turnover": _round(value, 6)}
+            for day, value in report.rebalance_turnover.itertuples(index=False, name=None)
+        ],
+        "decay": [
+            {"horizon": int(row["horizon"]), "rank_ic": _round(row["rank_ic_mean"], 4),
+             "rank_ic_ir": _round(row["rank_ic_ir"], 4), "observations": int(row["observations"])}
+            for row in report.decay.to_dict(orient="records")
+        ],
         # 每条说明各自以句号结尾，接在一起时不再加分号，免得出现「。；」。
         "notes": "".join(note if note.endswith(("。", "！", "？")) else note + "。" for note in report.notes),
     }

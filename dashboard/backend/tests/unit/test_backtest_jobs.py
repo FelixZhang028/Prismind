@@ -73,7 +73,7 @@ def test_cancelled_job_cannot_publish_and_success_is_atomic(db):
         jobs.JOB_ID.reset(token)
 
 
-@pytest.mark.parametrize("action", ["cancel", "timeout", "stop", "crash"])
+@pytest.mark.parametrize("action", ["cancel", "timeout", "factor_timeout", "stop", "crash"])
 def test_real_child_exits_before_compute_slot_is_released(db, monkeypatch, action):
     real_popen = subprocess.Popen
     children = []
@@ -83,7 +83,11 @@ def test_real_child_exits_before_compute_slot_is_released(db, monkeypatch, actio
         return child
     monkeypatch.setattr(jobs.subprocess, "Popen", spawn)
     monkeypatch.setattr(compute, "timeout_seconds", lambda: 0.3 if action == "timeout" else 20)
-    job = queued()
+    if action == "factor_timeout":
+        monkeypatch.setenv("FELLOWQUANT_FACTOR_JOB_TIMEOUT", "1")
+        job = jobs.enqueue(1, {"kind": "factor"})
+    else:
+        job = queued()
     scheduler = jobs.BacktestScheduler()
     thread = threading.Thread(target=scheduler._execute, args=({"id": job["id"], "user_id": 1},))
     thread.start()
@@ -97,7 +101,10 @@ def test_real_child_exits_before_compute_slot_is_released(db, monkeypatch, actio
         assert not thread.is_alive()
         assert children[0].poll() is not None
         assert compute.running()["total"] == 0
-        expected = {"cancel": "CANCELLED", "timeout": "TIMED_OUT", "stop": "FAILED", "crash": "FAILED"}[action]
+        expected = {
+            "cancel": "CANCELLED", "timeout": "TIMED_OUT", "factor_timeout": "TIMED_OUT",
+            "stop": "FAILED", "crash": "FAILED",
+        }[action]
         assert jobs.get_job(job["id"], 1)["state"] == expected
         with compute.computing({"id": 1}):
             pass
@@ -159,6 +166,55 @@ def test_task_routes_do_not_expose_another_users_payload(db):
         with pytest.raises(HTTPException) as exc:
             route(task["id"], {"id": 2})
         assert exc.value.status_code == 404
+
+
+def test_factor_task_uses_submitted_custom_factor_and_symbols(db, monkeypatch):
+    from datetime import date
+    from app.quant.backtest_worker import execute
+    from app.routes.backtest_jobs import JobIn, get_factor_report, submit
+
+    dates = date(2025, 1, 1), date(2025, 3, 31)
+    monkeypatch.setattr(workspace, "_clamped_range", lambda start, end: dates)
+    monkeypatch.setattr(workspace, "_factor_symbols", lambda user: ["600000.SH"])
+    monkeypatch.setattr(workspace, "_evaluate_factor", lambda request, factor, start, end, repo, symbols: {
+        "factor_name": factor.name, "window": factor.window, "symbols": symbols, "start": start.isoformat(),
+    })
+    with database.get_conn() as conn:
+        conn.execute(
+            """INSERT INTO custom_factors (user_id,name,display_name,field,operator,window,created_at)
+               VALUES (1,'test_momentum','测试动量','adjusted_close','momentum',20,?)""", (database._now(),),
+        )
+    task = submit(JobIn(kind="factor", request={"factor_name": "test_momentum"}), {"id": 1})
+    monkeypatch.setenv("FELLOWQUANT_FACTOR_JOB_TIMEOUT", "2400")
+    assert jobs.list_jobs(1)["items"] == []
+    assert jobs.list_jobs(1, category="factor")["items"][0]["timeout_seconds"] == 2400
+    with database.get_conn() as conn:
+        conn.execute("DELETE FROM custom_factors WHERE user_id=1")
+        conn.execute("UPDATE backtest_jobs SET state='RUNNING' WHERE id=?", (task["id"],))
+    monkeypatch.setattr(workspace, "_factor_symbols", lambda user: ["600001.SH"])
+    execute(task["id"])
+
+    assert jobs.get_job(task["id"], 1)["state"] == "SUCCEEDED"
+    assert get_factor_report(task["id"], {"id": 1}) == {
+        "factor_name": "test_momentum", "window": 20, "symbols": ["600000.SH"], "start": "2025-01-01",
+    }
+    with pytest.raises(HTTPException) as exc:
+        get_factor_report(task["id"], {"id": 2})
+    assert exc.value.status_code == 404
+
+
+def test_cancelled_factor_task_cannot_publish_a_report(db):
+    task = jobs.enqueue(1, {"kind": "factor"})
+    with database.get_conn() as conn:
+        conn.execute("UPDATE backtest_jobs SET state='RUNNING' WHERE id=?", (task["id"],))
+    jobs.cancel(task["id"], 1)
+    with pytest.raises(InterruptedError):
+        jobs.save_factor_report(task["id"], {"factor_name": "momentum_20"})
+    jobs.finish(task["id"], "CANCELLED", "已取消")
+    assert jobs.get_job(task["id"], 1)["state"] == "CANCELLED"
+    with pytest.raises(HTTPException) as exc:
+        jobs.factor_report(task["id"], 1)
+    assert exc.value.status_code == 404
 
 
 def test_concurrent_imports_do_not_overwrite_each_other(db, monkeypatch):

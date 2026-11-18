@@ -85,6 +85,11 @@ CREATE TABLE IF NOT EXISTS backtest_jobs (
     FOREIGN KEY(result_id) REFERENCES backtests(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS backtest_jobs_queue ON backtest_jobs(state, created_at);
+CREATE TABLE IF NOT EXISTS factor_job_reports (
+    job_id TEXT PRIMARY KEY,
+    report TEXT NOT NULL,
+    FOREIGN KEY(job_id) REFERENCES backtest_jobs(id) ON DELETE CASCADE
+);
 """
 
 

@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.quant.result_adapter import factor_report_to_dict
 from app.routes import workspace
 from app.routes.auth import get_current_user
 from quant_platform.data.index_constituents import (
@@ -77,6 +78,51 @@ def test_an_evaluation_only_uses_each_days_members(tmp_path):
     everyone = FactorEvaluator(repo).evaluate(factor, DAYS[25].date(), DAYS[-1].date(), symbols=SYMBOLS, horizon=5, n_groups=5)
     assert report.rank_ic_mean != pytest.approx(everyone.rank_ic_mean)
     assert not any("成分股" in note for note in everyone.notes)
+
+
+def test_diagnostics_align_rolling_ic_nav_and_rebalance_turnover(tmp_path):
+    repo = market(tmp_path)
+    end = DAYS[-2]
+    report = FactorEvaluator(repo).evaluate(
+        default_registry().get("momentum_20"), DAYS[20].date(), end.date(),
+        symbols=SYMBOLS, horizon=5, n_groups=10, diagnostics=True,
+    )
+    payload = factor_report_to_dict(report)
+    daily = report.daily_ic
+    valid = daily.dropna(subset=["rank_ic"])
+    assert daily.date.tolist() == list(DAYS[20:-1])
+    assert valid.iloc[:19].rank_ic_ir.isna().all()
+    assert valid.iloc[19].rank_ic_ir == pytest.approx(
+        valid.iloc[:20].rank_ic.mean() / valid.iloc[:20].rank_ic.std()
+    )
+    assert payload["daily_ic"][-1]["rank_ic_ir"] is None
+    assert [row["horizon"] for row in payload["decay"]] == [1, 5, 10, 20]
+    five_day = payload["decay"][1]
+    assert five_day == {"horizon": 5, "rank_ic": payload["rank_ic_mean"],
+                        "rank_ic_ir": round(report.rank_ic_ir, 4), "observations": len(valid)}
+
+    dates = pd.DatetimeIndex([DAYS[21], *DAYS[26:-1:5]])
+    assert report.group_nav.date.tolist() == list(dates)
+    assert report.group_nav.iloc[0].G10 == 1
+    assert report.nav_periods == len(dates) - 1 and report.nav_skipped == 0
+    assert report.rebalance_turnover.date.tolist() == list(DAYS[20:-1:5])
+    assert pd.isna(report.rebalance_turnover.iloc[0].turnover)
+    assert report.rebalance_turnover.turnover.dropna().between(0, 1).all()
+
+
+def test_group_nav_compounds_nonoverlapping_periods_and_marks_missing_groups():
+    start = DAYS[0]
+    rows = [(start, 1, .10), (start, 2, .30),
+            (DAYS[1], 1, -.50), (DAYS[1], 2, .80),
+            (DAYS[2], 1, .20), (DAYS[4], 1, -.05), (DAYS[4], 2, .10)]
+    returns = pd.DataFrame(rows, columns=["date", "group", "ret"])
+    nav, valid, skipped = FactorEvaluator._group_nav(returns, DAYS[:8], 2, 2)
+    assert (valid, skipped) == (2, 1)
+    assert nav.date.tolist() == list(DAYS[[1, 3, 5, 7]])
+    assert nav.iloc[2].drop("date").isna().all()
+    assert nav.iloc[-1].G1 == pytest.approx(1.10 * .95)
+    assert nav.iloc[-1].G2 == pytest.approx(1.30 * 1.10)
+    assert nav.iloc[-1].long_short == pytest.approx(.35)
 
 
 def test_alpha101_ranks_only_among_that_days_members(tmp_path):

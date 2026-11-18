@@ -1,4 +1,4 @@
-"""Asynchronous entry points for ordinary, package and screen backtests."""
+"""Asynchronous entry points for backtests and single-factor evaluation."""
 from dataclasses import asdict
 from datetime import date, timedelta
 from typing import Any, Literal
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/v1/backtest-jobs", tags=["backtests"])
 
 
 class JobIn(BaseModel):
-    kind: Literal["backtest", "package", "screen"] = "backtest"
+    kind: Literal["backtest", "package", "screen", "factor"] = "backtest"
     request: dict[str, Any]
     package_id: str | None = Field(None, max_length=160)
 
@@ -28,6 +28,8 @@ def prepare(body: JobIn, user: dict) -> dict:
     package = None
     package_id = body.package_id
     kind = body.kind
+    if kind == "factor":
+        return workspace.prepare_factor_job(workspace.FactorEvalIn.model_validate(body.request), user)
     if kind == "backtest":
         request = BacktestIn.model_validate(body.request)
         if request.strategy.startswith("package:"):
@@ -100,18 +102,24 @@ def submit(body: JobIn, user: dict = Depends(get_current_user)):
     try:
         payload = prepare(body, user)
     except (ValidationError, ConfigurationError) as exc:
-        raise HTTPException(422, "回测参数或策略定义无效，请检查后重试") from exc
+        message = "因子评估参数无效，请检查后重试" if body.kind == "factor" else "回测参数或策略定义无效，请检查后重试"
+        raise HTTPException(422, message) from exc
     return jobs.enqueue(user["id"], payload)
 
 
 @router.get("")
-def list_tasks(user: dict = Depends(get_current_user)):
-    return jobs.list_jobs(user["id"])
+def list_tasks(user: dict = Depends(get_current_user), category: Literal["backtest", "factor"] = "backtest"):
+    return jobs.list_jobs(user["id"], category=category)
 
 
 @router.get("/{job_id}")
 def get_task(job_id: str, user: dict = Depends(get_current_user)):
     return jobs.get_job(job_id, user["id"])
+
+
+@router.get("/{job_id}/factor-report")
+def get_factor_report(job_id: str, user: dict = Depends(get_current_user)):
+    return jobs.factor_report(job_id, user["id"])
 
 
 @router.post("/{job_id}/cancel")

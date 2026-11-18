@@ -49,6 +49,12 @@ def timeout_seconds() -> int:
     return _setting("FELLOWQUANT_COMPUTE_TIMEOUT", 600)
 
 
+def job_timeout_seconds(kind: str) -> int:
+    if kind == "factor":
+        return _setting("FELLOWQUANT_FACTOR_JOB_TIMEOUT", max(1800, timeout_seconds()))
+    return timeout_seconds()
+
+
 def cache_size() -> int:
     return _setting("FELLOWQUANT_COMPUTE_CACHE", 64)
 
