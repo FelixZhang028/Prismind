@@ -12,7 +12,7 @@ from fastapi import HTTPException
 
 from ..database import get_conn
 from . import backtest_jobs as jobs, runtime
-from quant_platform.core.progress import reporting
+from quant_platform.core.progress import report, reporting
 
 
 def watch_owner(jid, stopped):
@@ -49,12 +49,18 @@ def execute(jid):
         return
     user = dict(user)
     payload = json.loads(row["payload"])
-    runtime.TASK_SETTINGS = {**payload["snapshot"], "paths": paths}
+    if payload["kind"] != "factor":
+        runtime.TASK_SETTINGS = {**payload["snapshot"], "paths": paths}
     token = jobs.JOB_ID.set(jid)
     try:
         with reporting(jobs.reporter(jid)):
             body = payload["request"]
-            if payload["kind"] == "backtest":
+            if payload["kind"] == "factor":
+                request = workspace.FactorEvalIn.model_validate(body)
+                result = workspace.run_factor_job(request, user, payload["snapshot"])
+                report("保存因子评估报告")
+                jobs.save_factor_report(jid, result)
+            elif payload["kind"] == "backtest":
                 backtests.submit_backtest(backtests.BacktestIn.model_validate(body), user)
             else:
                 if payload["kind"] == "package":

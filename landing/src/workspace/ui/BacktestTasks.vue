@@ -5,8 +5,13 @@ import { openResearch } from '../researchNavigation.js'
 import { backtestTimestamp } from '../runRecords.js'
 import SectionCard from './SectionCard.vue'
 
-const props = defineProps({ focusJob: { type: String, default: '' }, refreshKey: { type: Number, default: 0 } })
-const emit = defineEmits(['completed'])
+const props = defineProps({
+  focusJob: { type: String, default: '' },
+  refreshKey: { type: Number, default: 0 },
+  category: { type: String, default: 'backtest' },
+})
+const emit = defineEmits(['completed', 'view'])
+const title = computed(() => props.category === 'factor' ? '因子评估任务' : '回测任务')
 const jobs = ref([])
 const expanded = ref(false)
 const previewLimit = 3
@@ -32,7 +37,7 @@ async function refresh() {
   loading = true
   const version = generation
   try {
-    const data = await listBacktestJobs()
+    const data = await listBacktestJobs(props.category)
     if (props.focusJob && !(data.items || []).some((j) => j.id === props.focusJob)) {
       try { data.items = [...(data.items || []), await getBacktestJob(props.focusJob)] }
       catch (e) { if (e.status !== 404) throw e }
@@ -62,6 +67,10 @@ async function cancel(job) {
   catch (e) { error.value = e.message }
   finally { cancelling.value = '' }
 }
+function viewResult(job) {
+  if (props.category === 'factor') emit('view', job)
+  else openResearch('backtest-review', { run: job.result_id })
+}
 onMounted(start)
 onActivated(start)
 onDeactivated(stop)
@@ -70,15 +79,15 @@ watch(() => [props.refreshKey, props.focusJob], refresh)
 </script>
 
 <template>
-  <SectionCard title="回测任务" hint="可以切换页面或关闭浏览器；回来后仍能查看任务。每人最多保留 5 个待完成任务。">
+  <SectionCard :title="title" hint="切换页面或关闭浏览器后，任务仍会继续。回测和因子评估合计最多有 5 个待完成任务。">
     <p v-if="error" role="alert" class="mb-3 text-sm text-amber-300">{{ error }}</p>
-    <p v-if="!jobs.length && !error" class="text-sm text-slate-400">暂无回测任务</p>
+    <p v-if="!jobs.length && !error" class="text-sm text-slate-400">暂无{{ title }}</p>
     <div class="space-y-3">
       <article v-for="job in visibleJobs" :key="job.id" class="rounded-xl border border-white/10 p-3" :class="job.id === focusJob ? 'bg-indigo-500/10' : ''">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <p class="text-sm text-white">{{ job.label }} <span class="ml-2 text-slate-400">{{ labels[job.state] }}</span></p>
           <div class="flex gap-3 text-sm">
-            <button v-if="job.state === 'SUCCEEDED'" class="text-indigo-300" @click="openResearch('backtest-review', { run: job.result_id })">查看结果</button>
+            <button v-if="job.state === 'SUCCEEDED'" class="text-indigo-300" @click="viewResult(job)">查看结果</button>
             <button v-if="active(job)" :disabled="job.state === 'CANCELLING' || cancelling === job.id" class="text-rose-300 disabled:opacity-50" @click="cancel(job)">取消任务</button>
           </div>
         </div>

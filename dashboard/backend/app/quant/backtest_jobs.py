@@ -58,8 +58,9 @@ def public_job(row, conn) -> dict:
         result["queue_position"] = conn.execute(
             "SELECT COUNT(*) FROM backtest_jobs WHERE state='QUEUED' AND (created_at < ? OR (created_at = ? AND id <= ?))",
             (row["created_at"], row["created_at"], row["id"])).fetchone()[0]
-    result["timeout_seconds"] = compute.timeout_seconds()
     payload = json.loads(row["payload"])
+    result["kind"] = payload.get("kind", "backtest")
+    result["timeout_seconds"] = compute.job_timeout_seconds(result["kind"])
     result["label"] = payload.get("label", "策略回测")
     return result
 
@@ -72,10 +73,40 @@ def get_job(jid: str, user_id: int) -> dict:
         return public_job(row, conn)
 
 
-def list_jobs(user_id: int) -> dict:
+def list_jobs(user_id: int, *, category: str = "backtest") -> dict:
+    factor_jobs = int(category == "factor")
     with get_conn() as conn:
-        rows = conn.execute("SELECT * FROM backtest_jobs WHERE user_id=? ORDER BY CASE WHEN state IN ('QUEUED','RUNNING','CANCELLING') THEN 0 ELSE 1 END, created_at DESC LIMIT 30", (user_id,)).fetchall()
+        rows = conn.execute(
+            """SELECT * FROM backtest_jobs WHERE user_id=?
+               AND (COALESCE(json_extract(payload, '$.kind'), 'backtest') = 'factor') = ?
+               ORDER BY CASE WHEN state IN ('QUEUED','RUNNING','CANCELLING') THEN 0 ELSE 1 END,
+                        created_at DESC, id DESC LIMIT 30""", (user_id, factor_jobs),
+        ).fetchall()
         return {"items": [public_job(row, conn) for row in rows]}
+
+
+def factor_report(jid: str, user_id: int) -> dict:
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT r.report FROM factor_job_reports r JOIN backtest_jobs j ON j.id=r.job_id
+               WHERE j.id=? AND j.user_id=? AND j.state='SUCCEEDED'""", (jid, user_id),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, "因子评估报告不存在或尚未完成")
+    return json.loads(row["report"])
+
+
+def save_factor_report(jid: str, report: dict) -> None:
+    result = json.dumps(report, ensure_ascii=False, allow_nan=False)
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        changed = conn.execute(
+            """UPDATE backtest_jobs SET state='SUCCEEDED',stage='已完成',finished_at=?
+               WHERE id=? AND state='RUNNING'""", (_now(), jid),
+        ).rowcount
+        if not changed:
+            raise InterruptedError("任务已停止，报告未发布")
+        conn.execute("INSERT INTO factor_job_reports(job_id,report) VALUES (?,?)", (jid, result))
 
 
 def cancel(jid: str, user_id: int) -> dict:
@@ -186,8 +217,11 @@ class BacktestScheduler:
                 try:
                     with get_conn() as conn:
                         changed = conn.execute("UPDATE backtest_jobs SET state='RUNNING',stage='加载数据',started_at=? WHERE id=? AND state='QUEUED'", (_now(), jid)).rowcount
-                    if not changed:
-                        return
+                        if not changed:
+                            return
+                        row = conn.execute("SELECT payload FROM backtest_jobs WHERE id=?", (jid,)).fetchone()
+                    kind = json.loads(row["payload"]).get("kind", "backtest")
+                    timeout = compute.job_timeout_seconds(kind)
                     env = os.environ.copy()
                     env["FELLOWQUANT_DATA_DIR"] = os.path.dirname(database.DB_PATH)
                     env["FELLOWQUANT_JOB_PATHS"] = json.dumps({"config": str(runtime.CONFIG_PATH), "market": str(runtime.MARKET_ROOT), "runtime": str(runtime.RUNTIME_ROOT)})
@@ -206,8 +240,8 @@ class BacktestScheduler:
                             outcome = ("CANCELLED", "已取消")
                         elif self.stop_event.is_set():
                             outcome = ("FAILED", "服务停止，计算已中断，请重新提交")
-                        elif time.monotonic() - started >= compute.timeout_seconds():
-                            outcome = ("TIMED_OUT", "计算超时，已停止。请缩小股票范围或回测区间后重试。")
+                        elif time.monotonic() - started >= timeout:
+                            outcome = ("TIMED_OUT", "计算超时，已停止。请缩小股票范围或日期区间后重试。")
                         if outcome:
                             # Mark before termination so the worker cannot publish late.
                             finish(jid, *outcome)

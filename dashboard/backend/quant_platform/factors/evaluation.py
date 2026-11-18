@@ -17,7 +17,7 @@ from datetime import date
 
 import pandas as pd
 
-from quant_platform.core import deadline
+from quant_platform.core import deadline, progress
 from quant_platform.data.extras import extra_columns
 from quant_platform.data.fundamentals import MISSING_FUNDAMENTALS_MESSAGE, point_in_time
 from quant_platform.data.index_constituents import UNIVERSE_COLUMN, only_members
@@ -25,6 +25,10 @@ from quant_platform.data.industry import EXPOSURES_TABLE, MISSING_INDUSTRY_MESSA
 from quant_platform.data.repositories.parquet_repository import ParquetMarketDataRepository
 from quant_platform.factors.base import FactorDefinition, pivot_field
 from quant_platform.factors.statistics import annual_ic, ic_statistics, neutralize_exposures
+
+
+ROLLING_IC_WINDOW = 60
+ROLLING_IC_MIN_OBSERVATIONS = 20
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,10 @@ class FactorReport:
     significance: dict = field(default_factory=dict)
     annual: pd.DataFrame = field(default_factory=pd.DataFrame)
     decay: pd.DataFrame = field(default_factory=pd.DataFrame)
+    group_nav: pd.DataFrame = field(default_factory=pd.DataFrame)
+    rebalance_turnover: pd.DataFrame = field(default_factory=pd.DataFrame)
+    nav_periods: int = 0
+    nav_skipped: int = 0
 
 
 class FactorEvaluator:
@@ -114,6 +122,7 @@ class FactorEvaluator:
         n_groups: int = 5,
         neutralization: str = "none",
         decay_horizons: tuple[int, ...] = (1, 5, 10, 20),
+        diagnostics: bool = False,
     ) -> FactorReport:
         """评估因子在 [start_date, end_date] 的横截面选股能力。"""
 
@@ -124,14 +133,15 @@ class FactorEvaluator:
         if neutralization not in {"none", "industry", "size", "both"}:
             raise ValueError("未知中性化方式")
 
-        # 因子值严格只用 <= end_date 的行情；未来收益另取全量价格。
-        # 因子用到估值、换手率或财务数据时，把这几列接到行情上；用不到就不读那些表。
+        # 因子值和未来收益均使用截止结束日期的行情。
+        progress.report("加载行情")
         extra = extra_columns(factor.required_fields)
         factor_bars = self.repository.get_daily_bars(
             symbols=symbols, end_date=end_date, **({"extras": extra} if extra else {})
         )
         if factor_bars.empty:
             raise ValueError("评估区间内没有行情数据")
+        progress.report("计算因子值")
         values = factor.compute(factor_bars)
         deadline.check()
         values["date"] = pd.to_datetime(values["date"]).dt.normalize()
@@ -144,20 +154,23 @@ class FactorEvaluator:
             values, universe_note = only_members(values, factor_bars)
             neutral_notes.append(universe_note)
         if neutralization != "none":
-            values, neutral_notes = self._neutralized(values, factor_bars, neutralization)
+            values, exposure_notes = self._neutralized(values, factor_bars, neutralization)
+            neutral_notes.extend(exposure_notes)
         values["adjusted"] = pd.to_numeric(values["value"], errors="coerce") * factor.direction
 
         values["adjusted"] = values["adjusted"].replace([float("inf"), -float("inf")], float("nan"))
         # Assign membership before inspecting future returns, including unlabelled tail dates.
+        progress.report("计算分组与 IC")
         values = self._assign_groups(values, n_groups)
-        returns = self._forward_returns(symbols, horizon, end_date=end_date, bars=factor_bars)
+        close = self._close_prices(factor_bars).loc[pd.Timestamp(start_date):pd.Timestamp(end_date)]
+        dates = close.index
+        entry = close.shift(-1)
+        returns = self._forward_returns(close, entry, horizon)
         merged = values.merge(returns, on=["date", "symbol"], how="left")
 
         daily_ic = self._daily_ic(merged.dropna(subset=["adjusted", "fwd_ret"]))
         group_returns, group_means, long_short = self._group_returns(merged, n_groups)
-        dates = pd.DatetimeIndex(pd.to_datetime(factor_bars["trade_date"]).unique()).normalize()
-        dates = dates[(dates >= pd.Timestamp(start_date)) & (dates <= pd.Timestamp(end_date))]
-        turnover = self._top_turnover(values, n_groups, dates=dates.sort_values())
+        turnover = self._top_turnover(values, n_groups, dates=dates)
 
         rank_ic = daily_ic["rank_ic"].dropna()
         half = len(rank_ic) // 2
@@ -177,20 +190,45 @@ class FactorEvaluator:
             )
 
         ic = daily_ic["ic"].dropna()
+        progress.report("计算不同持有期的因子衰减")
         decay_rows = []
         for period in sorted(set(decay_horizons)):
+            deadline.check()
             if period < 1:
                 raise ValueError("衰减持有期必须为正数")
-            forward = self._forward_returns(symbols, period, end_date=end_date, bars=factor_bars)
-            sample = values.merge(forward, on=["date", "symbol"], how="left")
-            # Same terminal cutoff for all horizons; no labels after the evaluation period.
-            sample = sample.dropna(subset=["adjusted", "fwd_ret"])
-            series = self._daily_ic(sample)
-            decay_rows.append({"horizon": period, **ic_statistics(series.rank_ic, period)})
+            if period == horizon:
+                decay_ic = rank_ic
+            else:
+                forward = self._forward_returns(close, entry, period)
+                sample = values[["date", "symbol", "adjusted"]].merge(forward, on=["date", "symbol"])
+                decay_ic = self._daily_ic(sample.dropna(subset=["adjusted"])).rank_ic
+            decay_rows.append({"horizon": period, **ic_statistics(decay_ic, period)})
+
+        annual = annual_ic(daily_ic, horizon)
+        group_nav, rebalance_turnover = pd.DataFrame(), pd.DataFrame()
+        nav_periods = nav_skipped = 0
+        if diagnostics:
+            progress.report("生成分组净值和换手曲线")
+            group_nav, nav_periods, nav_skipped = self._group_nav(group_returns, dates, horizon, n_groups)
+            signals = dates[::horizon]
+            rebalance_turnover = self._top_turnover(
+                values[values["date"].isin(signals)], n_groups, dates=signals,
+            ).set_index("date").reindex(signals).rename_axis("date").reset_index()
+            daily_ic = daily_ic.set_index("date").reindex(dates).rename_axis("date").reset_index()
+            for metric in ("ic", "rank_ic"):
+                series = daily_ic[metric]
+                rolling = series.rolling(ROLLING_IC_WINDOW, min_periods=ROLLING_IC_MIN_OBSERVATIONS)
+                std = rolling.std()
+                daily_ic[f"{metric}_ir"] = rolling.mean() / std.where(std.gt(1e-12) & series.notna())
+        deadline.check()
         return FactorReport(
             significance=ic_statistics(rank_ic, horizon),
-            annual=annual_ic(daily_ic, horizon),
+            annual=annual,
             decay=pd.DataFrame(decay_rows),
+            group_nav=group_nav,
+            rebalance_turnover=rebalance_turnover,
+            nav_periods=nav_periods,
+            nav_skipped=nav_skipped,
             factor_name=factor.name,
             display_name=factor.display_name,
             horizon=horizon,
@@ -212,36 +250,50 @@ class FactorEvaluator:
             notes=notes,
         )
 
-    def _forward_returns(
-        self,
-        symbols: list[str] | None,
-        horizon: int,
-        *,
-        end_date: date | None = None,
-        bars: pd.DataFrame | None = None,
-    ) -> pd.DataFrame:
-        """t+1 收盘买入、t+horizon+1 收盘卖出；不填补缺失价格。"""
-
-        if bars is None:
-            bars = self.repository.get_daily_bars(symbols=symbols, end_date=end_date)
+    @staticmethod
+    def _close_prices(bars: pd.DataFrame) -> pd.DataFrame:
         price_field = (
             "adjusted_close"
             if "adjusted_close" in bars.columns and bars["adjusted_close"].notna().any()
             else "raw_close"
         )
-        close = pivot_field(bars, price_field)
+        close = pivot_field(bars[["trade_date", "symbol", price_field]], price_field)
         # Preserve every observed market date, even when all prices on it are missing.
         calendar = pd.DatetimeIndex(
             pd.to_datetime(bars["trade_date"]).dt.normalize().unique()
         ).sort_values()
         close = close.reindex(calendar)
-        close = close.where((close > 0) & (close < float("inf")))
-        entry = close.shift(-1)
-        exit_ = close.shift(-(horizon + 1))
-        fwd = exit_ / entry - 1.0
+        return close.where((close > 0) & (close < float("inf")))
+
+    @staticmethod
+    def _forward_returns(close: pd.DataFrame, entry: pd.DataFrame, horizon: int) -> pd.DataFrame:
+        """t+1 收盘买入、t+horizon+1 收盘卖出；不填补缺失价格。"""
+        fwd = close.shift(-(horizon + 1)) / entry - 1.0
         long = fwd.stack(future_stack=True).rename("fwd_ret").reset_index()
         long.columns = pd.Index(["date", "symbol", "fwd_ret"])
         return long.dropna(subset=["fwd_ret"])
+
+    @staticmethod
+    def _group_nav(
+        group_returns: pd.DataFrame, dates: pd.DatetimeIndex, horizon: int, n_groups: int
+    ) -> tuple[pd.DataFrame, int, int]:
+        """按不重叠持有期复利，收益记在平仓日，缺失分组的调仓期留空。"""
+        positions = range(0, len(dates) - horizon - 1, horizon)
+        groups = list(range(1, n_groups + 1))
+        returns = group_returns.pivot(index="date", columns="group", values="ret").reindex(
+            index=dates[list(positions)], columns=groups,
+        )
+        covered = returns.dropna()
+        skipped = len(returns) - len(covered)
+        if covered.empty:
+            return pd.DataFrame(), 0, skipped
+        nav = (1 + covered).cumprod().rename(columns={group: f"G{group}" for group in groups})
+        # 固定名义本金的头尾组收益差，逐期相加。
+        nav["long_short"] = (covered[n_groups] - covered[1]).cumsum()
+        nav = nav.reindex(returns.index)
+        nav.index = dates[[position + horizon + 1 for position in positions]]
+        nav.loc[dates[1]] = [1.0] * n_groups + [0.0]
+        return nav.sort_index().rename_axis("date").reset_index(), len(covered), skipped
 
     @staticmethod
     def _daily_ic(merged: pd.DataFrame) -> pd.DataFrame:

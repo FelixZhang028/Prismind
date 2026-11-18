@@ -524,7 +524,15 @@ export function getBacktestCatalog() {
 }
 
 // Durable jobs are independent of the current page and browser connection.
-export function listBacktestJobs() { return request('/api/v1/backtest-jobs', { auth: true, timeoutMs: 15000 }) }
+export function listBacktestJobs(category = 'backtest') {
+  return request(`/api/v1/backtest-jobs?category=${encodeURIComponent(category)}`, { auth: true, timeoutMs: 15000 })
+}
+export function submitFactorJob(payload) {
+  return request('/api/v1/backtest-jobs', { method: 'POST', body: { kind: 'factor', request: payload }, auth: true, timeoutMs: 30000 })
+}
+export function getFactorJobReport(id) {
+  return request(`/api/v1/backtest-jobs/${encodeURIComponent(id)}/factor-report`, { auth: true, timeoutMs: 30000 })
+}
 export function cancelBacktestJob(id) { return request(`/api/v1/backtest-jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST', auth: true, timeoutMs: 15000 }) }
 export function archiveRuns(runIds, archived = true) { return request('/api/v1/runs/archive', { method: 'POST', body: { run_ids: runIds, archived }, auth: true }) }
 

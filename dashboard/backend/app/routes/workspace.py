@@ -17,6 +17,7 @@ from contextlib import nullcontext
 import os
 import random
 import re
+from dataclasses import asdict
 from dataclasses import replace as dc_replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -92,6 +93,8 @@ from quant_platform.application.data_jobs import exclusive
 from quant_platform.application.factor_research_service import research_combination
 from quant_platform.data.extras import extra_columns, require_extra_data
 from quant_platform.data.index_constituents import INDEX_UNIVERSES, IndexUniverseRepository
+from quant_platform.factors.base import FactorDefinition
+from quant_platform.factors.custom import CustomFactor
 from quant_platform.factors.evaluation import FactorEvaluator
 from quant_platform.core.exceptions import ConfigurationError
 from quant_platform.factors.combine import (
@@ -774,11 +777,14 @@ def _factor_symbols(user: dict) -> list[str] | None:
     return list(symbols)
 
 
-def _factor_scope(user: dict, universe: str, start: date, end: date) -> tuple[Any, list[str] | None]:
+def _factor_scope(
+    user: dict, universe: str, start: date, end: date, *, submitted_symbols: list[str] | None = None
+) -> tuple[Any, list[str] | None]:
     """因子研究用的行情和股票：当前股票池，或某个指数在这段时间里当过成分股的全部股票（每天标明是不是成分股）。"""
 
     if universe == CURRENT_POOL:
-        return market_repository(), _factor_symbols(user)
+        symbols = submitted_symbols if submitted_symbols is not None else _factor_symbols(user)
+        return market_repository(), symbols
     if universe not in INDEX_UNIVERSES:
         raise HTTPException(status_code=422, detail="不支持这个股票范围，请选择当前股票池或列表里的指数。")
     try:
@@ -925,30 +931,73 @@ def factor_universes(user: dict = Depends(get_current_user)):
     return {"items": market_options()}
 
 
-@router.post("/factors/evaluate", summary="单因子评估")
-def factor_evaluate(body: FactorEvalIn, user: dict = Depends(get_current_user)):
+def _registered_factor(user: dict, name: str) -> FactorDefinition:
     registry = build_factor_registry(user)
     try:
-        factor = registry.get(body.factor_name)
+        return registry.get(name)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"因子不存在：{body.factor_name}")
+        raise HTTPException(status_code=404, detail=f"因子不存在：{name}") from None
+
+
+def _evaluate_factor(
+    body: FactorEvalIn, factor: FactorDefinition, start: date, end: date,
+    repository: Any, symbols: list[str] | None,
+) -> dict[str, Any]:
+    evaluator = build_factor_evaluator() if body.universe == CURRENT_POOL else FactorEvaluator(repository)
+    try:
+        report = evaluator.evaluate(
+            factor, start, end, symbols=symbols, horizon=body.horizon, n_groups=body.n_groups,
+            neutralization=body.neutralization, diagnostics=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=_sanitize_detail(exc)) from exc
+    return {
+        **factor_report_to_dict(report),
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "universe_label": (
+            "提交时的研究股票池" if body.universe == CURRENT_POOL
+            else f"{INDEX_UNIVERSES[body.universe][0]}历史成分股"
+        ),
+        "neutralization": body.neutralization,
+    }
+
+
+def prepare_factor_job(body: FactorEvalIn, user: dict) -> dict:
+    factor = _registered_factor(user, body.factor_name)
+    start, end = _clamped_range(body.start_date, body.end_date)
+    if body.universe != CURRENT_POOL and body.universe not in INDEX_UNIVERSES:
+        raise HTTPException(422, "不支持这个股票范围，请选择当前股票池或列表里的指数。")
+    symbols = _factor_symbols(user) if body.universe == CURRENT_POOL else None
+    return {
+        "kind": "factor",
+        "label": factor.display_name or factor.name,
+        "request": body.model_dump() | {"start_date": start.isoformat(), "end_date": end.isoformat()},
+        "snapshot": {
+            "symbols": symbols,
+            "custom_factor": asdict(factor) if isinstance(factor, CustomFactor) else None,
+        },
+    }
+
+
+def run_factor_job(body: FactorEvalIn, user: dict, snapshot: dict) -> dict[str, Any]:
+    custom = snapshot["custom_factor"]
+    factor = CustomFactor(**custom) if custom is not None else _registered_factor(user, body.factor_name)
+    start, end = date.fromisoformat(body.start_date), date.fromisoformat(body.end_date)
+    repository, symbols = _factor_scope(user, body.universe, start, end, submitted_symbols=snapshot["symbols"])
+    return _evaluate_factor(body, factor, start, end, repository, symbols)
+
+
+@router.post("/factors/evaluate", summary="单因子评估")
+def factor_evaluate(body: FactorEvalIn, user: dict = Depends(get_current_user)):
+    factor = _registered_factor(user, body.factor_name)
     start, end = _clamped_range(body.start_date, body.end_date)
     repository, symbols = _factor_scope(user, body.universe, start, end)
 
-    def evaluate() -> dict[str, Any]:
-        evaluator = build_factor_evaluator() if body.universe == CURRENT_POOL else FactorEvaluator(repository)
-        try:
-            report = evaluator.evaluate(
-                factor, start, end, symbols=symbols,
-                horizon=body.horizon, n_groups=body.n_groups, neutralization=body.neutralization,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=_sanitize_detail(exc))
-        return factor_report_to_dict(report)
-
     # 同样的因子、范围和日期，在同一份数据上算过就直接返回。
     request = {"body": body.model_dump(), "range": [start, end], "symbols": symbols, "factor": repr(factor)}
-    return cached("factor_evaluate", user, request, market_repository().root, evaluate)
+    return cached("factor_evaluate", user, request, market_repository().root,
+                  lambda: _evaluate_factor(body, factor, start, end, repository, symbols))
 
 
 @router.post("/factors/composite", summary="多因子合成并评估")

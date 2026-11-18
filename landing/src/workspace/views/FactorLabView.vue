@@ -6,16 +6,19 @@ import {
   compositeFactors,
   createCustomFactor,
   deleteCustomFactor,
-  evaluateFactor,
   factorUniverses,
+  getFactorJobReport,
   listFactors,
   researchFactors,
+  submitFactorJob,
 } from '../../api.js'
 import { CURRENT_POOL, defaultFactorUniverse, factorUniverseNote, marketChoices } from '../marketPresentation.js'
 import MetricCard from '../ui/MetricCard.vue'
 import SectionCard from '../ui/SectionCard.vue'
 import DataTable from '../ui/DataTable.vue'
 import LineChart from '../ui/LineChart.vue'
+import BacktestTasks from '../ui/BacktestTasks.vue'
+import FactorDiagnostics from '../ui/FactorDiagnostics.vue'
 import FactorFilter from '../ui/FactorFilter.vue'
 import FactorLibraryTable from '../ui/FactorLibraryTable.vue'
 import { factorsBySource, filterFactors } from '../factorFilters.js'
@@ -266,14 +269,16 @@ const evalForm = reactive({
 const evalLoading = ref(false)
 const evalResult = ref(null)
 const evalError = ref('')
+const evalJob = ref('')
+const evalReportLoading = ref(false)
+let reportRequest = 0
 
 async function runEvaluate() {
   if (!evalForm.factor_name) return props.notify('请选择因子')
   evalLoading.value = true
   evalError.value = ''
-  evalResult.value = null
   try {
-    evalResult.value = await evaluateFactor({
+    const job = await submitFactorJob({
       factor_name: evalForm.factor_name,
       horizon: Number(evalForm.horizon),
       n_groups: Number(evalForm.n_groups),
@@ -282,12 +287,39 @@ async function runEvaluate() {
       end_date: evalForm.end_date,
       universe: universe.value,
     })
-    props.notify('评估完成')
+    reportRequest += 1
+    evalReportLoading.value = false
+    evalResult.value = null
+    evalJob.value = job.id
+    props.notify('已提交，可在「因子评估任务」查看进度')
   } catch (e) {
     evalError.value = e.message || '评估失败'
     props.notify(e.message || '评估失败')
   } finally {
     evalLoading.value = false
+  }
+}
+
+async function viewFactorReport(job) {
+  const request = ++reportRequest
+  evalJob.value = job.id
+  evalError.value = ''
+  evalResult.value = null
+  evalReportLoading.value = true
+  try {
+    const result = await getFactorJobReport(job.id)
+    if (request === reportRequest) evalResult.value = result
+  } catch (e) {
+    if (request === reportRequest) evalError.value = e.message || '无法读取评估报告'
+  } finally {
+    if (request === reportRequest) evalReportLoading.value = false
+  }
+}
+
+function onFactorCompleted(job) {
+  if ((!evalJob.value || job.id === evalJob.value) && !evalReportLoading.value && !evalResult.value) {
+    props.notify('因子评估已完成')
+    viewFactorReport(job)
   }
 }
 
@@ -559,12 +591,12 @@ function buildReportView(report) {
     { label: 'IC 均值', value: fmtNum(report.ic_mean, 3), sub: 'Pearson IC', ...signTone(report.ic_mean) },
     { label: 'Rank IC 均值', value: fmtNum(report.rank_ic_mean, 3), sub: 'Spearman IC', ...signTone(report.rank_ic_mean) },
     { label: 'Rank IC IR', value: fmtNum(report.rank_ic_ir, 3), sub: 'IC 稳定性', ...signTone(report.rank_ic_ir) },
-    { label: '多空收益', value: fmtPct(report.long_short_mean, 2), sub: `持有 ${report.horizon} 日`, ...signTone(report.long_short_mean) },
+    { label: '平均头尾组收益差', value: fmtPct(report.long_short_mean, 2), sub: `持有 ${report.horizon} 个交易日`, ...signTone(report.long_short_mean) },
   ]
   const stability = [
-    { label: '前半段 IC', value: fmtNum(report.first_half_ic, 3), sub: '样本前半段', ...signTone(report.first_half_ic) },
-    { label: '后半段 IC', value: fmtNum(report.second_half_ic, 3), sub: '样本后半段', ...signTone(report.second_half_ic) },
-    { label: '平均换手率', value: fmtPct(report.turnover_mean, 2), sub: '组合调仓换手', up: null, tone: '' },
+    { label: '前半段 Rank IC', value: fmtNum(report.first_half_ic, 3), sub: '样本前半段', ...signTone(report.first_half_ic) },
+    { label: '后半段 Rank IC', value: fmtNum(report.second_half_ic, 3), sub: '样本后半段', ...signTone(report.second_half_ic) },
+    { label: '日均成员更替率', value: fmtPct(report.turnover_mean, 2), sub: '最高组相邻交易日', up: null, tone: '' },
   ]
   const daily = report.daily_ic || []
   const series = [
@@ -579,7 +611,7 @@ function buildReportView(report) {
   }))
   const g = report.group_mean_returns || {}
   const groupRows = [Object.fromEntries(groupCols.map(({ key }) => [key, g[key] == null ? '—' : fmtPct(g[key], 2)]))]
-  return { metrics, stability, series, groupCols, groupRows, notes: report.notes }
+  return { metrics, stability, series, dates: daily.map((row) => row.date), groupCols, groupRows, notes: report.notes }
 }
 
 const evalView = computed(() => buildReportView(evalResult.value))
@@ -718,7 +750,7 @@ onBeforeUnmount(() => {
             :disabled="evalLoading"
             class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70"
           >
-            {{ evalLoading ? '评估中…' : '开始评估' }}
+            {{ evalLoading ? '提交中…' : '开始评估' }}
           </button>
           <button
             v-if="evalForm.factor_name"
@@ -727,29 +759,40 @@ onBeforeUnmount(() => {
           >
             因子详情
           </button>
-          <p v-if="evalError" class="text-sm text-rose-300">{{ evalError }}</p>
         </div>
       </SectionCard>
 
+      <BacktestTasks category="factor" :focus-job="evalJob" @completed="onFactorCompleted" @view="viewFactorReport" />
+      <p v-if="evalError" role="alert" class="text-sm text-rose-300">{{ evalError }}</p>
+      <p v-if="evalReportLoading" role="status" class="text-sm text-slate-400">正在读取评估报告…</p>
       <template v-if="evalView">
+        <div>
+          <h2 class="text-xl font-semibold text-white">{{ evalResult.display_name || evalResult.factor_name }}评估报告</h2>
+          <p class="mt-1 text-sm text-slate-400">
+            {{ evalResult.start_date }} 至 {{ evalResult.end_date }} · {{ evalResult.universe_label }}
+            · {{ evalResult.n_groups }} 组 · 持有 {{ evalResult.horizon }} 个交易日
+            · {{ NEUTRALIZATION_OPTIONS.find((option) => option.value === evalResult.neutralization)?.label }}
+          </p>
+        </div>
         <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
           <MetricCard v-for="m in evalView.metrics" :key="m.label" :label="m.label" :value="m.value" :sub="m.sub" :up="m.up" :tone="m.tone" />
         </section>
         <p v-if="evalView.notes" class="rounded-xl border border-amber-400/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-200" role="note">{{ evalView.notes }}</p>
 
-        <SectionCard title="稳定性" hint="样本分段 IC 与调仓换手">
+        <SectionCard title="稳定性" hint="样本分段 Rank IC 与最高组日度成员更替率">
           <div class="grid gap-5 sm:grid-cols-3">
             <MetricCard v-for="s in evalView.stability" :key="s.label" :label="s.label" :value="s.value" :sub="s.sub" :up="s.up" :tone="s.tone" />
           </div>
         </SectionCard>
 
-        <SectionCard title="Rank IC 时序" hint="日度 IC / Rank IC 曲线">
-          <LineChart :series="evalView.series" :height="180" />
+        <SectionCard title="IC 时序" hint="日度 Pearson IC 和 Rank IC">
+          <LineChart :series="evalView.series" :dates="evalView.dates" :height="180" :baseline="0" />
         </SectionCard>
 
         <SectionCard title="分层收益" hint="按因子值排序分为 N 组，各组平均收益 · 基于历史数据，仅供研究参考">
           <DataTable :columns="evalView.groupCols" :rows="evalView.groupRows" empty="暂无数据" />
         </SectionCard>
+        <FactorDiagnostics :report="evalResult" />
       </template>
     </template>
 
