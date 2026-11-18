@@ -164,6 +164,9 @@ export function getBacktest(id) {
 export function paperAccounts() {
   return request('/api/v1/paper-accounts', { auth: true })
 }
+export function getPaperBacktestReference(packageId) {
+  return request(`/api/v1/paper-accounts/backtest-reference/${encodeURIComponent(packageId)}`, { auth: true })
+}
 export function createPaperAccount(payload) {
   return request('/api/v1/paper-accounts', { method: 'POST', body: payload, auth: true })
 }

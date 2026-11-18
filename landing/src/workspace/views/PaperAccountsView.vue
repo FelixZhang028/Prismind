@@ -1,10 +1,10 @@
 <script setup>
 import { computed, onActivated, reactive, ref, watch } from 'vue'
-import { advancePaperAccount, createPaperAccount, deletePaperAccount, getBacktest, getBacktestCatalog, getPaperAccount, listPackages, paperAccounts } from '../../api.js'
+import { advancePaperAccount, createPaperAccount, deletePaperAccount, getBacktest, getBacktestCatalog, getPaperAccount, getPaperBacktestReference, listPackages, paperAccounts } from '../../api.js'
 import { REBALANCE_OPTIONS } from '../preferences.js'
 import { openResearch } from '../researchNavigation.js'
 import { benchmarkCards, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
-import { CURRENT_POOL, marketChoices, usableMarket } from '../marketPresentation.js'
+import { CURRENT_POOL, marketChoices, marketLabel, usableMarket } from '../marketPresentation.js'
 import { accountsLeft, checkMark, checkTone, paperPrefill, returnText, returnTone, statusLabel, statusNote, statusTone } from '../paperPresentation.js'
 import SectionCard from '../ui/SectionCard.vue'
 import FormField from '../ui/FormField.vue'
@@ -46,10 +46,32 @@ async function loadList() {
 // ---------- 新建 ----------
 const packages = ref([])
 const markets = ref([])
-const marketOptions = computed(() => marketChoices(markets.value))
+const marketOptions = computed(() => marketChoices(markets.value).map(option => {
+  const entry = markets.value.find(item => item.value === option.value)
+  return entry?.available && entry.usable_through && today.value > entry.usable_through
+    ? { ...option, label: `${option.label}（成分股待更新）`, disabled: true }
+    : option
+}))
 const form = reactive({ package_id: '', name: '', market: CURRENT_POOL, initial_cash: 1000000, top_n: 10, rebalance: 'weekly' })
-// 指数：每个调仓日只在当天的成分股里选（回测页的“开始日期不能早于…”这里用不到，开始日期总是今天）。
-const formMarketNote = computed(() => (form.market === CURRENT_POOL ? '' : '每个调仓日只在当天的指数成分股里选股。'))
+const selectedMarket = computed(() => markets.value.find(item => item.value === form.market))
+const selectedPackage = computed(() => packages.value.find(item => item.package_id === form.package_id))
+const latestBacktest = ref(null)
+const referenceBacktest = ref(null)
+const referenceLoading = ref(false)
+const referenceError = ref('')
+const prefillLoading = ref(false)
+let selection = 0
+let appliedRoute = ''
+const referenceSettings = computed(() => paperPrefill(referenceBacktest.value?.config))
+const marketAvailable = (value) => marketOptions.value.some(option => option.value === value && !option.disabled)
+const settingFields = [
+  { key: 'top_n', label: '最多持股', format: value => `${value} 只` },
+  { key: 'rebalance', label: '调仓频率', format: rebalanceLabel },
+  { key: 'market', label: '股票范围', format: value => marketLabel(value, markets.value) },
+  { key: 'initial_cash', label: '初始资金', format: value => money(value) },
+]
+const differences = computed(() => settingFields.filter(({ key }) =>
+  referenceSettings.value?.[key] != null && String(form[key]) !== String(referenceSettings.value[key])))
 const creating = ref(false)
 const createSection = ref(null)
 // 把新建表单滚到眼前：从别的页面带着策略过来、或点了空列表里的按钮时。
@@ -61,9 +83,51 @@ const packageOptions = computed(() => [
   ...packages.value.map((item) => ({ value: item.package_id, label: item.name })),
 ])
 
-function choosePackage() {
-  const item = packages.value.find((p) => p.package_id === form.package_id)
+function choosePackage(id) {
+  const version = ++selection
+  form.package_id = id
+  const item = selectedPackage.value
   if (item) Object.assign(form, { top_n: item.top_n, rebalance: item.rebalance })
+  latestBacktest.value = null
+  referenceBacktest.value = null
+  referenceError.value = ''
+  prefillLoading.value = false
+  referenceLoading.value = !!item
+  if (item) loadBacktestReference(id, version)
+  return version
+}
+
+async function loadBacktestReference(id, version) {
+  try {
+    const { backtest } = await getPaperBacktestReference(id)
+    if (version !== selection) return
+    latestBacktest.value = backtest
+    referenceBacktest.value ??= backtest
+  } catch {
+    if (version === selection) referenceError.value = '最近一次回测设置加载失败。'
+  } finally {
+    if (version === selection) referenceLoading.value = false
+  }
+}
+
+function applyBacktestSettings(backtest) {
+  const settings = paperPrefill(backtest?.config)
+  if (settings?.package_id !== form.package_id) return
+  const { package_id, market, ...parameters } = settings
+  referenceBacktest.value = backtest
+  Object.assign(form, parameters)
+  if (market && marketAvailable(market)) form.market = market
+}
+
+function backtestSummary(backtest) {
+  const settings = paperPrefill(backtest?.config)
+  return settingFields.filter(({ key }) => settings?.[key] != null)
+    .map(({ label, key, format }) => `${label} ${format(settings[key])}`).join(' · ')
+}
+
+function backtestTime(backtest) {
+  const date = new Date(backtest.created_at)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN')
 }
 
 async function loadOptions() {
@@ -79,23 +143,31 @@ async function loadOptions() {
 
 // 从回测结果页过来：带上那次回测的策略和设置。
 async function applyPrefill() {
-  if (props.routeContext.mode !== 'new') return
+  if (props.routeContext.mode !== 'new') { appliedRoute = ''; return }
   const reference = String(props.routeContext.strategy || '')
-  if (reference.startsWith('package:')) {
-    form.package_id = reference.slice('package:'.length)
-    choosePackage()
-  }
+  const packageId = reference.startsWith('package:') ? reference.slice('package:'.length) : ''
+  if (!packages.value.some(item => item.package_id === packageId)) return
+  const run = String(props.routeContext.run || '').replace(/^run-/, '')
+  const route = `${packageId}/${run}`
+  if (appliedRoute === route) return
+  appliedRoute = route
+  const version = choosePackage(packageId)
   showCreate()
-  if (!props.routeContext.run) return
+  if (!run) return
+  prefillLoading.value = true
   try {
-    const backtest = await getBacktest(String(props.routeContext.run).replace(/^run-/, ''))
-    const prefill = paperPrefill(backtest.result?.effective_config)
-    if (prefill) Object.assign(form, prefill, { market: usableMarket(prefill.market || form.market, markets.value) })
-  } catch { /* 读不到那次回测就用策略自己的设置 */ }
+    const backtest = await getBacktest(run)
+    if (version === selection && props.routeContext.mode === 'new')
+      applyBacktestSettings({ id: backtest.id, created_at: backtest.created_at, config: backtest.result?.effective_config })
+  } catch {
+    if (version === selection) props.notify('这次回测设置加载失败，表单使用策略保存值。')
+  } finally {
+    if (version === selection) prefillLoading.value = false
+  }
 }
 
 async function onCreate() {
-  if (!form.package_id) return props.notify('请选择一个规则策略')
+  if (!selectedPackage.value || prefillLoading.value || !marketAvailable(form.market)) return
   creating.value = true
   try {
     const account = await createPaperAccount({
@@ -342,19 +414,43 @@ onActivated(async () => {
       </div>
       <template v-else>
         <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <FormField label="规则策略" type="select" v-model="form.package_id" :options="packageOptions" @update:model-value="choosePackage" />
-          <FormField label="股票范围" type="select" v-model="form.market" :options="marketOptions" />
+          <FormField label="规则策略" type="select" :model-value="form.package_id" :options="packageOptions" @update:model-value="choosePackage" />
+          <FormField label="股票范围" type="select" v-model="form.market" :options="marketOptions" :disabled="prefillLoading" />
           <FormField label="名称（可不填）" v-model="form.name" placeholder="默认用策略名和日期" />
-          <FormField label="初始资金" type="number" v-model="form.initial_cash" :min="10000" :step="10000" />
-          <FormField label="最多持股" type="number" v-model="form.top_n" :min="1" :max="50" :step="1" />
-          <FormField label="调仓频率" type="select" v-model="form.rebalance" :options="rebalances" />
+          <FormField label="初始资金" type="number" v-model="form.initial_cash" :min="10000" :step="10000" :disabled="prefillLoading" />
+          <FormField label="最多持股" type="number" v-model="form.top_n" :min="1" :max="50" :step="1" :disabled="prefillLoading" />
+          <FormField label="调仓频率" type="select" v-model="form.rebalance" :options="rebalances" :disabled="prefillLoading" />
         </div>
-        <p v-if="formMarketNote" class="mt-3 text-xs text-slate-400">{{ formMarketNote }}</p>
+        <div v-if="selectedPackage" class="mt-4 space-y-2 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300" aria-live="polite">
+          <p>策略保存值 · 最多持股 {{ selectedPackage.top_n }} 只 · {{ rebalanceLabel(selectedPackage.rebalance) }}调仓</p>
+          <p v-if="referenceLoading">正在加载最近一次回测…</p>
+          <p v-else-if="referenceError">{{ referenceError }}</p>
+          <div v-else-if="latestBacktest" class="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <p>最近一次回测 · {{ backtestTime(latestBacktest) }} · {{ backtestSummary(latestBacktest) }}</p>
+            <button type="button" class="text-indigo-300 hover:text-indigo-200 disabled:opacity-60" :disabled="prefillLoading" @click="applyBacktestSettings(latestBacktest)">使用这次回测设置</button>
+          </div>
+          <p v-else>暂无可对照的回测。</p>
+          <p v-if="referenceBacktest && referenceBacktest.id !== latestBacktest?.id">
+            带入的回测 · {{ backtestTime(referenceBacktest) }} · {{ backtestSummary(referenceBacktest) }}
+          </p>
+          <p v-if="referenceSettings?.market && !marketAvailable(referenceSettings.market)" class="text-amber-200">
+            回测使用的股票范围当前不可选，请核对表单里的股票范围。
+          </p>
+          <ul v-if="differences.length" class="space-y-1 text-amber-200">
+            <li v-for="{ key, label, format } in differences" :key="key">与回测设置不同 · {{ label }} {{ format(form[key]) }}，回测为 {{ format(referenceSettings[key]) }}</li>
+          </ul>
+        </div>
+        <div v-if="selectedMarket?.start_date" class="mt-3 space-y-1 text-xs text-slate-400">
+          <p>每个调仓日只在当天的指数成分股里选股。历史名单从 {{ selectedMarket.start_date }} 开始，核对到 {{ selectedMarket.end_date }}。</p>
+          <p v-for="period in selectedMarket.partial_membership" :key="period.start_date" class="text-amber-200">
+            {{ period.start_date }} 至 {{ period.end_date }} 的本地记录有 {{ period.count }} 只成分股。
+          </p>
+        </div>
         <p class="mt-3 text-xs text-slate-400">
           创建时会把策略规则、股票范围（选股票池时是现在的股票池）和现在的风控设置复制一份锁住，以后修改它们都不影响这个账户。风控可以先在「策略回测」页的风险设置里改好。
         </p>
         <div class="mt-5 flex justify-end">
-          <button data-guide="paper-create" :disabled="creating || !form.package_id || left <= 0"
+          <button data-guide="paper-create" :disabled="creating || prefillLoading || !selectedPackage || !marketAvailable(form.market) || left <= 0"
             class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70"
             @click="onCreate">
             {{ creating ? '创建中…' : left <= 0 ? '已达到数量上限' : '创建模拟账户' }}

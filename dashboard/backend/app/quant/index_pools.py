@@ -5,13 +5,13 @@ from dataclasses import dataclass
 import pandas as pd
 
 from quant_platform.data.index_constituents import (
-    CHECKS_TABLE, CONSTITUENTS_TABLE, checked_range, members_on, stored_lists,
+    CHECKS_TABLE, CONSTITUENTS_TABLE, CSI_800, CSI_800_COMPONENTS, checked_range, members_on, stored_lists,
 )
 
 COMPONENT_COUNTS = {"000300.SH": 300, "000905.SH": 500}
 INDEX_POOLS = {
     "000300.SH": ("沪深 300", ("000300.SH",), 300),
-    "000906.SH": ("中证 800", ("000300.SH", "000905.SH"), 800),
+    CSI_800: ("中证 800", CSI_800_COMPONENTS, 800),
 }
 # CSI 800 combines the CSI 300 and CSI 500 samples on the same date:
 # https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000906_Index_Methodology_cn.pdf

@@ -44,7 +44,7 @@ from .workspace import _data_jobs, _friendly_engine_error, _stored_package
 from quant_platform.application.data_jobs import exclusive
 from quant_platform.application.strategy_studio_service import StrategyPackage, StrategyStudioService
 from quant_platform.core.exceptions import ConfigurationError
-from quant_platform.data.index_constituents import INDEX_UNIVERSES, index_name
+from quant_platform.data.index_constituents import CHECKS_TABLE, CSI_800, INDEX_UNIVERSES, index_name, require_coverage
 from quant_platform.risk.config import RiskLimits
 
 logger = logging.getLogger("uvicorn.error")
@@ -395,6 +395,28 @@ def list_accounts(user: dict = Depends(get_current_user)):
     return {"items": [_summary(row) for row in rows], "limit": limit, "today": china_today().isoformat()}
 
 
+@router.get("/backtest-reference/{package_id}", summary="所选策略最近一次成功回测的设置")
+def latest_backtest_reference(package_id: str, user: dict = Depends(get_current_user)):
+    # The package reference is immutable in completed runs; strategy names can be reused.
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT id, created_at, json_extract(result, '$.effective_config') AS config
+               FROM backtests
+               WHERE user_id = ? AND status = '完成'
+                 AND CASE WHEN json_valid(result) THEN
+                     json_extract(result, '$.effective_config.strategy_reference') = ?
+                 END
+               ORDER BY id DESC LIMIT 1""",
+            (user["id"], f"package:{package_id}"),
+        ).fetchone()
+    if row is None:
+        return {"backtest": None}
+    config = json.loads(row["config"])
+    fields = ("strategy_reference", "market", "initial_capital", "max_positions", "rebalance")
+    return {"backtest": {"id": row["id"], "created_at": row["created_at"],
+                         "config": {field: config.get(field) for field in fields}}}
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, summary="新建模拟账户（从今天开始）")
 def create_account(body: PaperAccountIn, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
@@ -415,14 +437,16 @@ def create_account(body: PaperAccountIn, user: dict = Depends(get_current_user))
     except (ValueError, ConfigurationError) as exc:
         raise HTTPException(status_code=422, detail=f"策略定义无效：{exc}")
 
+    today = china_today()
     service = build_backtest_service(user)
     try:
         use_market(service, body.market)
+        if body.market == CSI_800:
+            require_coverage(market_repository().read_table(CHECKS_TABLE), body.market, today, today)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     universe = service.configs["universe"].get("universe") or {}
     risk = dc_replace(user_risk_limits(user["id"]), max_positions=package.top_n)
-    today = china_today()
     name = body.name.strip() or f"{row['name']}·{today.isoformat()}"
     account_id = uuid4().hex[:12]
     now = _now()

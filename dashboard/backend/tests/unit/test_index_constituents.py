@@ -19,6 +19,7 @@ from quant_platform.core.exceptions import DataUnavailableError
 from quant_platform.data.index_constituents import (
     CHECKS_TABLE,
     CONSTITUENTS_TABLE,
+    CSI_800,
     checked_range,
     members_on,
     membership,
@@ -217,7 +218,7 @@ def test_status_and_the_background_job(tmp_path, monkeypatch):
         "symbol": HS300, "name": "沪深300", "start_date": None, "end_date": None, "changes": 0, "members": 0}
     run(repo, Vendor(), indexes=[HS300])
     status = DataCenterService.index_constituents_status(service)
-    assert [row["name"] for row in status] == ["沪深300", "上证50", "中证500"]
+    assert [row["name"] for row in status] == ["沪深300", "上证50", "中证500", "中证 800"]
     assert status[0] == {"symbol": HS300, "name": "沪深300", "start_date": "2023-01-02", "end_date": "2025-08-18", "changes": 3, "members": 5}
     assert status[1]["start_date"] is None
 
@@ -263,7 +264,7 @@ def test_the_engine_gets_the_index_as_it_was_and_the_run_remembers_which_index(t
     service, repo = index_service(tmp_path, monkeypatch)
     monkeypatch.setattr(markets, "market_repository", lambda: repo)
     assert [(option["value"], option["available"]) for option in markets.market_options()] == [
-        ("当前股票池", True), (HS300, False), (SZ50, False), (ZZ500, False)]
+        ("当前股票池", True), (HS300, False), (SZ50, False), (ZZ500, False), (CSI_800, False)]
     run(repo, Vendor(), indexes=[HS300])
     options = markets.market_options()
     assert options[1] == {"value": HS300, "label": "沪深300历史成分股", "available": True, "start_date": "2023-01-02", "end_date": "2025-08-18"}
@@ -287,6 +288,33 @@ def test_the_engine_gets_the_index_as_it_was_and_the_run_remembers_which_index(t
     early = request.__class__(**{**request.__dict__, "start_date": date(2022, 6, 1)})
     with pytest.raises(ValueError, match="沪深300的历史成分股从 2023-01-02 开始"):
         service.build_engine(early)
+
+
+def test_csi_800_uses_the_union_in_force_on_each_date_and_the_joint_coverage(tmp_path, monkeypatch):
+    repo = ParquetMarketDataRepository(tmp_path)
+    repo.save_table(CONSTITUENTS_TABLE, pd.concat([
+        lists_frame(HS300, {"2025-01-06": ["A", "B"], "2025-01-20": ["A", "C"]}),
+        lists_frame(ZZ500, {"2025-01-13": ["B", "D"], "2025-01-27": ["D", "E"]}),
+    ], ignore_index=True))
+    checks = pd.DataFrame({
+        "index_symbol": [HS300, ZZ500],
+        "checked_from": pd.to_datetime(["2025-01-06", "2025-01-13"]),
+        "checked_through": pd.to_datetime(["2025-01-27", "2025-02-03"]),
+    })
+    repo.save_table(CHECKS_TABLE, checks)
+    monkeypatch.setattr(markets, "market_repository", lambda: repo)
+    option = next(item for item in markets.market_options() if item["value"] == CSI_800)
+    assert option["available"] and (option["start_date"], option["end_date"]) == ("2025-01-13", "2025-01-27")
+    assert option["partial_membership"][0] == {"start_date": "2025-01-13", "end_date": "2025-01-19", "count": 3}
+    lists = stored_lists(repo.read_table(CONSTITUENTS_TABLE), CSI_800)
+    assert members_on(lists, date(2025, 1, 12)) is None
+    assert members_on(lists, date(2025, 1, 13)) == {"A", "B", "D"}
+    assert members_on(lists, date(2025, 1, 26)) == {"A", "B", "C", "D"}
+    assert members_on(lists, date(2025, 1, 27)) == {"A", "C", "D", "E"}
+    require_coverage(checks, CSI_800, date(2025, 1, 13), date(2025, 1, 31))
+    with pytest.raises(ValueError, match="只核对到"):
+        require_coverage(checks, CSI_800, date(2025, 1, 13), date(2025, 2, 3))
+    assert checked_range(checks.iloc[:1], CSI_800) is None
 
 
 def test_the_submit_route_refuses_an_unknown_stock_range(monkeypatch):

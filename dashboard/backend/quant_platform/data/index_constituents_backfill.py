@@ -20,7 +20,7 @@ from quant_platform.core.exceptions import DataSourceBlocked, DataUnavailableErr
 from quant_platform.data.index_constituents import (
     CHECKS_TABLE,
     CONSTITUENTS_TABLE,
-    INDEX_UNIVERSES,
+    VENDOR_INDEX_UNIVERSES,
     checked_range,
     index_name,
     members_on,
@@ -70,8 +70,8 @@ class BaoStockIndexConstituentsBackfill:
         checks = self.market_repository.read_table(CHECKS_TABLE)
         first, last = week_start(start_date), week_start(min(end_date, self.today))
         plan: list[Piece] = []
-        for index_symbol in indexes or list(INDEX_UNIVERSES):
-            if index_symbol not in INDEX_UNIVERSES:
+        for index_symbol in indexes or list(VENDOR_INDEX_UNIVERSES):
+            if index_symbol not in VENDOR_INDEX_UNIVERSES:
                 raise ValueError(f"不支持的指数：{index_symbol}")
             covered = checked_range(checks, index_symbol)
             if covered is None:
@@ -159,7 +159,7 @@ class BaoStockIndexConstituentsBackfill:
 
     def _fetch(self, index_symbol: str, day: date) -> frozenset[str]:
         self.requests += 1
-        frame = self.provider.get_index_constituents(INDEX_UNIVERSES[index_symbol][1], day)
+        frame = self.provider.get_index_constituents(VENDOR_INDEX_UNIVERSES[index_symbol][1], day)
         members = frozenset(normalize_baostock_constituents(frame, index_symbol, day)["symbol"])
         if not members:
             raise DataUnavailableError(f"{index_name(index_symbol)}在 {day} 没有成分股数据")

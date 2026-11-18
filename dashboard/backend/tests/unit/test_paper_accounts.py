@@ -91,6 +91,30 @@ def create(client, package_id, **extra):
     return response.json()
 
 
+def test_latest_backtest_reference_uses_the_completed_run_owned_by_the_user(api):
+    _, connect, _ = api
+    config = {"strategy_reference": "package:p1", "market": "000906.SH", "max_positions": 30,
+              "rebalance": "monthly", "initial_capital": 500_000, "strategy_parameters": {"unused": True}}
+    with connect() as conn:
+        conn.executemany(
+            """INSERT INTO backtests (user_id, strategy, market, from_date, to_date, status, result, created_at)
+               VALUES (?, '相同策略名', '000906.SH', '2025-01-01', '2025-06-01', ?, ?, '2025-06-02')""",
+            [
+                (1, "完成", json.dumps({"effective_config": config | {"max_positions": 10}})),
+                (1, "完成", json.dumps({"effective_config": config})),
+                (1, "失败", json.dumps({"effective_config": config})),
+                (1, "完成", json.dumps({"effective_config": config | {"strategy_reference": "package:p2"}})),
+                (2, "完成", json.dumps({"effective_config": config | {"max_positions": 45}})),
+                (1, "完成", "invalid JSON"),
+            ],
+        )
+    backtest = paper.latest_backtest_reference("p1", {"id": 1})["backtest"]
+    assert backtest["id"] == 2
+    assert backtest["created_at"] == "2025-06-02"
+    assert backtest["config"] == {key: value for key, value in config.items() if key != "strategy_parameters"}
+    assert paper.latest_backtest_reference("p2", {"id": 2}) == {"backtest": None}
+
+
 def test_a_new_account_starts_today_and_waits_for_two_trading_days(env):
     client, _, _, state = env
     package = save_package(client)
