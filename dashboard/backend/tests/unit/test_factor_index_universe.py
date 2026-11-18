@@ -12,6 +12,7 @@ from app.routes.auth import get_current_user
 from quant_platform.data.index_constituents import (
     CHECKS_TABLE,
     CONSTITUENTS_TABLE,
+    CSI_800,
     UNIVERSE_COLUMN,
     IndexUniverseRepository,
     mark_members,
@@ -115,11 +116,16 @@ def client(tmp_path, monkeypatch):
 
 def test_the_routes_offer_and_accept_an_index(client):
     items = client.get("/api/v1/factors/universes").json()["items"]
-    assert [item["value"] for item in items] == ["当前股票池", HS300, "000016.SH", "000905.SH"]
+    assert [item["value"] for item in items] == ["当前股票池", HS300, "000016.SH", "000905.SH", CSI_800]
     assert items[1]["available"] and not items[2]["available"]
+    assert items[-1] == {"value": CSI_800, "label": "中证 800历史成分股", "available": False,
+                         "start_date": None, "end_date": None}
     body = {"factor_name": "momentum_20", "start_date": DAYS[25].date().isoformat(), "end_date": DAYS[-1].date().isoformat(), "universe": HS300}
     response = client.post("/api/v1/factors/evaluate", json=body)
     assert response.status_code == 200, response.text
     assert "每天只用当天的成分股" in response.json()["notes"]          # 说明是连在一起的一段文字
     assert "还没有上证50" in client.post("/api/v1/factors/evaluate", json={**body, "universe": "000016.SH"}).json()["detail"]
+    response = client.post("/api/v1/factors/evaluate", json={**body, "universe": CSI_800})
+    assert response.status_code == 422
+    assert "还没有中证 800的历史成分股" in response.json()["detail"]
     assert "不支持这个股票范围" in client.post("/api/v1/factors/evaluate", json={**body, "universe": "纳斯达克"}).json()["detail"]
