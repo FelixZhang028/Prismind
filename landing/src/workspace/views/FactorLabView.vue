@@ -24,6 +24,7 @@ import FactorLibraryTable from '../ui/FactorLibraryTable.vue'
 import { factorsBySource, filterFactors } from '../factorFilters.js'
 import { directionText, directionTone, factorNote } from '../factorPresentation.js'
 import { NEUTRALIZATION_OPTIONS } from '../dataPresentation.js'
+import { FACTOR_STANDARDIZATIONS, openFactorBacktest } from '../factorBacktestDraft.js'
 
 const props = defineProps({
   user: { type: Object, default: null },
@@ -36,6 +37,7 @@ function changeCombinationMode(mode) {
   if (mode === 'quick') {
     compForm.factor_names = [...researchForm.factor_names]
     compForm.weight_mode = researchForm.weight_mode === 'manual' ? 'custom' : researchForm.weight_mode
+    compForm.standardization = researchForm.standardization
     Object.assign(compWeights, researchWeights)
     compForm.horizon = researchForm.horizon
     compForm.n_groups = researchForm.n_groups
@@ -46,6 +48,7 @@ function changeCombinationMode(mode) {
   } else {
     researchForm.factor_names = [...compForm.factor_names]
     researchForm.weight_mode = compForm.weight_mode === 'custom' ? 'manual' : compForm.weight_mode
+    researchForm.standardization = compForm.standardization
     Object.assign(researchWeights, compWeights)
     researchForm.horizon = compForm.horizon
     researchForm.n_groups = compForm.n_groups
@@ -85,12 +88,14 @@ const defaultEnd = dateStr(_today)
 // ---------- 因子库 ----------
 const factors = ref([])
 const factorsLoading = ref(false)
+const expressionOptions = ref(null)
 
 async function loadFactors() {
   factorsLoading.value = true
   try {
     const data = await listFactors()
     factors.value = data.factors || []
+    expressionOptions.value = data.expression_options || null
   } catch (e) {
     props.notify(e.message || '加载因子库失败')
   } finally {
@@ -341,6 +346,7 @@ const weightModes = [
 const compForm = reactive({
   factor_names: [],
   weight_mode: 'equal',
+  standardization: 'zscore',
   winsorize: true,
   corr_threshold: 0.7,
   horizon: 5,
@@ -378,7 +384,7 @@ async function runComposite() {
       factor_names: [...compForm.factor_names],
       weight_mode: compForm.weight_mode,
       winsorize: compForm.winsorize,
-      zscore: true,
+      standardization: compForm.standardization,
       fill_method: 'drop',
       corr_threshold: Number(compForm.corr_threshold),
       horizon: Number(compForm.horizon),
@@ -422,6 +428,7 @@ const defaultTestEnd = dateStr(_today)
 const researchForm = reactive({
   factor_names: [],
   weight_mode: 'equal',
+  standardization: 'zscore',
   clip: true,
   missing: 'drop',
   horizon: 5,
@@ -475,6 +482,7 @@ async function runResearch() {
     const payload = {
       factor_names: [...researchForm.factor_names],
       weight_mode: researchForm.weight_mode,
+      standardization: researchForm.standardization,
       clip: researchForm.clip,
       missing: researchForm.missing,
       horizon: Number(researchForm.horizon),
@@ -528,6 +536,8 @@ const directionOptions = [
 const customForm = reactive({
   name: '',
   display_name: '',
+  mode: 'expression',
+  expression: '',
   field: 'adjusted_close',
   operator: 'momentum',
   window: 20,
@@ -552,26 +562,33 @@ async function onSubmitCustom() {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
     return props.notify('标识需以字母或下划线开头，仅含字母/数字/下划线')
   }
-  if (!customForm.window || Number(customForm.window) < 1) return props.notify('请输入有效窗口')
-  if (customForm.operator === 'ma_ratio' && (!customForm.window2 || Number(customForm.window2) <= Number(customForm.window))) {
-    return props.notify('均线比的第二窗口需大于第一窗口')
+  const payload = {
+    name,
+    display_name: customForm.display_name.trim(),
+    direction: Number(customForm.direction),
   }
-  customLoading.value = true
-  try {
-    const payload = {
-      name,
-      display_name: customForm.display_name.trim(),
-      description: '',
+  if (customForm.mode === 'expression') {
+    payload.expression = customForm.expression.trim()
+    if (!payload.expression) return props.notify('请输入公式')
+  } else {
+    if (!customForm.window || Number(customForm.window) < 1) return props.notify('请输入有效窗口')
+    if (customForm.operator === 'ma_ratio' && (!customForm.window2 || Number(customForm.window2) <= Number(customForm.window))) {
+      return props.notify('均线比的第二窗口需大于第一窗口')
+    }
+    Object.assign(payload, {
       field: customForm.field,
       operator: customForm.operator,
       window: Number(customForm.window),
-      direction: Number(customForm.direction),
-    }
+    })
     if (customForm.operator === 'ma_ratio') payload.window2 = Number(customForm.window2)
+  }
+  customLoading.value = true
+  try {
     await createCustomFactor(payload)
     props.notify('自定义因子已添加')
     customForm.name = ''
     customForm.display_name = ''
+    customForm.expression = ''
     customForm.window2 = null
     await loadFactors()
   } catch (e) {
@@ -644,8 +661,11 @@ const corrRows = computed(() => {
 const weightCaption = computed(() => {
   const spec = compResult.value?.composite_spec || []
   if (!spec.length) return ''
-  return spec.map((s) => `${s.name} ${fmtPct(Number(s.weight), 2)}`).join(' · ')
+  return spec.map((s) => `${s.display_name || s.name} ${fmtPct(Number(s.weight), 2)}`).join(' · ')
 })
+const standardizationLabel = (result) => FACTOR_STANDARDIZATIONS.find(
+  (option) => option.value === result.composite_spec?.[0]?.standardization,
+)?.label || 'Z-score'
 
 onMounted(() => {
   loadFactors()
@@ -865,6 +885,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="space-y-4">
+            <FormField label="每日截面标准化" type="select" v-model="compForm.standardization" :options="FACTOR_STANDARDIZATIONS" />
             <label class="flex items-center gap-2.5">
               <input type="checkbox" v-model="compForm.winsorize" class="h-4 w-4 rounded border-white/20 bg-white/5 accent-indigo-500" />
               <span class="text-sm text-slate-300">去极值（Winsorize）</span>
@@ -924,11 +945,12 @@ onBeforeUnmount(() => {
         </SectionCard>
 
         <div class="rounded-xl border border-white/10 bg-white/5 p-4">
-          <p class="text-xs text-slate-400">合成权重</p>
+          <p class="text-xs text-slate-400">合成权重 · {{ standardizationLabel(compResult) }}</p>
           <p class="mt-1 text-sm text-white">{{ weightCaption || '—' }}</p>
           <p v-if="compResult.dropped_factors && compResult.dropped_factors.length" class="mt-1 text-xs text-amber-300">
             已剔除高相关因子：{{ compResult.dropped_factors.join('、') }}
           </p>
+          <button v-if="compResult.composite_spec?.length" type="button" class="mt-3 text-sm text-indigo-300 hover:text-indigo-200" @click="openFactorBacktest(compResult)">用此组合回测 →</button>
         </div>
 
         <template v-if="compView">
@@ -1002,6 +1024,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="space-y-4">
+            <FormField label="每日截面标准化" type="select" v-model="researchForm.standardization" :options="FACTOR_STANDARDIZATIONS" />
             <label class="flex items-center gap-2.5">
               <input type="checkbox" v-model="researchForm.clip" class="h-4 w-4 rounded border-white/20 bg-white/5 accent-indigo-500" />
               <span class="text-sm text-slate-300">去极值（Winsorize）</span>
@@ -1083,20 +1106,21 @@ onBeforeUnmount(() => {
         </SectionCard>
 
         <div class="rounded-xl border border-white/10 bg-white/5 p-4">
-          <p class="text-xs text-slate-400">我的组合权重（训练期确定）</p>
+          <p class="text-xs text-slate-400">我的组合权重（训练期确定） · {{ standardizationLabel(researchResult) }}</p>
           <p class="mt-1 text-sm text-white">
-            <template v-if="researchResult.weights && Object.keys(researchResult.weights).length">
-              <span v-for="(w, n) in researchResult.weights" :key="n" class="mr-4">{{ n }}：{{ (w * 100).toFixed(1) }}%</span>
+            <template v-if="researchResult.composite_spec?.length">
+              <span v-for="factor in researchResult.composite_spec" :key="factor.name" class="mr-4">{{ factor.display_name || factor.name }} {{ fmtPct(factor.weight, 2) }}</span>
             </template>
             <span v-else>—</span>
           </p>
+          <button v-if="researchResult.composite_spec?.length" type="button" class="mt-3 text-sm text-indigo-300 hover:text-indigo-200" @click="openFactorBacktest(researchResult)">用此组合回测 →</button>
         </div>
       </template>
     </template>
 
     <!-- ============ 自定义因子 ============ -->
     <template v-else>
-      <SectionCard title="定义自定义因子" hint="基于字段与算子构造自定义因子，添加后可在因子库与评估中使用">
+      <SectionCard title="定义自定义因子" hint="保存后可用于单因子评估、组合研究和回测">
         <div class="grid gap-4 md:grid-cols-2">
           <label class="block">
             <span class="mb-1 block text-xs text-slate-400">标识</span>
@@ -1106,23 +1130,43 @@ onBeforeUnmount(() => {
             <span class="mb-1 block text-xs text-slate-400">显示名</span>
             <input v-model="customForm.display_name" placeholder="如 自定义动量因子" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/40" />
           </label>
-          <label class="block">
+          <FormField class="md:col-span-2" label="定义方式" type="select" v-model="customForm.mode" :options="[{ value: 'expression', label: '填写公式' }, { value: 'operator', label: '选择字段和算子' }]" />
+          <div v-if="customForm.mode === 'expression'" class="md:col-span-2">
+            <label class="block">
+              <span class="mb-1 block text-xs text-slate-400">公式（最多 300 字符）</span>
+              <textarea v-model="customForm.expression" rows="3" maxlength="300" spellcheck="false" placeholder="ROE / PB" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 font-mono text-sm text-white outline-none focus:border-indigo-400/40" />
+            </label>
+            <p class="mt-2 text-xs text-slate-400">可用括号和四则运算。除数为零或字段缺失时，该股票当天的因子值为空。</p>
+            <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
+              <span class="text-slate-400">套用示例</span>
+              <button v-for="example in ['ROE / PB', 'ret(close, 20) - ret(close, 60)', 'dividend_yield * (1 - volatility(close, 20))']" :key="example" type="button" class="rounded border border-white/10 px-2 py-1 font-mono text-indigo-300 hover:bg-white/10" @click="customForm.expression = example">{{ example }}</button>
+            </div>
+            <details v-if="expressionOptions" class="mt-3 text-xs text-slate-300">
+              <summary class="cursor-pointer">查看可用字段和函数</summary>
+              <p class="mt-2">常用别名 {{ Object.entries(expressionOptions.aliases).map(([name, field]) => `${name} = ${field}`).join('、') }}</p>
+              <p class="mt-2">历史窗口函数 {{ expressionOptions.functions.join('、') }}，格式为函数(字段或表达式, 交易日数)，最多依赖 {{ expressionOptions.max_history }} 个交易日。</p>
+              <ul class="mt-2 grid gap-1 sm:grid-cols-2">
+                <li v-for="field in expressionOptions.fields" :key="field.name"><code>{{ field.name }}</code><span v-if="field.label !== field.name" class="ml-2 text-slate-400">{{ field.label }}</span></li>
+              </ul>
+            </details>
+          </div>
+          <label v-if="customForm.mode === 'operator'" class="block">
             <span class="mb-1 block text-xs text-slate-400">字段</span>
             <select v-model="customForm.field" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/40">
               <option v-for="o in fieldOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
             </select>
           </label>
-          <label class="block">
+          <label v-if="customForm.mode === 'operator'" class="block">
             <span class="mb-1 block text-xs text-slate-400">算子</span>
             <select v-model="customForm.operator" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/40">
               <option v-for="o in operatorOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
             </select>
           </label>
-          <label class="block">
+          <label v-if="customForm.mode === 'operator'" class="block">
             <span class="mb-1 block text-xs text-slate-400">窗口</span>
             <input v-model.number="customForm.window" type="number" min="1" step="1" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/40" />
           </label>
-          <label v-if="customForm.operator === 'ma_ratio'" class="block">
+          <label v-if="customForm.mode === 'operator' && customForm.operator === 'ma_ratio'" class="block">
             <span class="mb-1 block text-xs text-slate-400">第二窗口（需大于窗口）</span>
             <input v-model.number="customForm.window2" type="number" min="1" step="1" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/40" />
           </label>

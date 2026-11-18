@@ -1,7 +1,7 @@
 """多因子合成：加权组合、横截面相关性分析与高相关剔除。
 
 输入输出均为因子标准长表 ``(date, symbol, value)``。合成前每个因子先按日
-横截面 z-score 标准化（乘以各自 ``direction`` 使“值越大越看好”），再按权重
+横截面 z-score 或排名标准化（乘以各自 ``direction`` 使“值越大越看好”），再按权重
 加权求和；权重无需归一化，合成时自动按权重绝对值之和归一。
 
 因果性约定：所有操作只在同一 ``date`` 的横截面上进行，不跨日期引用数据，
@@ -17,6 +17,8 @@ import pandas as pd
 
 from quant_platform.factors.base import FACTOR_COLUMNS, FactorDefinition
 from quant_platform.factors.preprocess import fill_missing, winsorize, zscore
+
+STANDARDIZATIONS = ("zscore", "rank")
 
 
 def prepare_frames(
@@ -53,6 +55,7 @@ def combine_factors(
     directions: dict[str, int] | None = None,
     clip: bool = False,
     missing: str = "zero",
+    standardization: str = "zscore",
 ) -> pd.DataFrame:
     """把多个因子长表合成为一个因子长表。
 
@@ -68,34 +71,35 @@ def combine_factors(
         raise ValueError(f"权重包含未提供的因子: {unknown}")
     if any(not isfinite(float(value)) for value in weights.values()):
         raise ValueError("权重必须为有限数值")
-    frames = prepare_frames(frames, clip=clip, missing=missing)
-    frames = {name: frame for name, frame in frames.items() if weights.get(name, 0.0) != 0}
-    total = sum(abs(float(weights.get(name, 0.0))) for name in frames)
-    if total <= 0:
+    if standardization not in STANDARDIZATIONS:
+        raise ValueError("未知标准化方式")
+    active = {name: frame for name, frame in frames.items() if weights.get(name, 0.0) != 0}
+    if not active:
         raise ValueError("权重之和不能为 0")
+    frames = prepare_frames(active, clip=clip, missing=missing)
+    scale = max(abs(float(weights[name])) for name in frames)
+    total = sum(abs(float(weights[name])) / scale for name in frames)
 
-    merged: pd.DataFrame | None = None
+    weighted = []
     for name, frame in frames.items():
-        weight = float(weights.get(name, 0.0)) / total
+        weight = (float(weights[name]) / scale) / total
         direction = (directions or {}).get(name, 1)
         if direction not in (1, -1):
             raise ValueError(f"因子 {name} 的 direction 只能是 1 或 -1")
-        adjusted = frame.copy()
+        adjusted = frame.dropna(subset=["value"]).copy()
         adjusted["value"] = pd.to_numeric(adjusted["value"], errors="coerce") * direction
-        normalized = zscore(adjusted.dropna(subset=["value"]))
-        normalized = normalized.rename(columns={"value": name})[["date", "symbol", name]]
-        normalized[name] = normalized[name] * weight
-        merged = (
-            normalized
-            if merged is None
-            else merged.merge(normalized, on=["date", "symbol"], how="outer")
-        )
+        if standardization == "rank":
+            groups = adjusted.groupby("date")["value"]
+            count = groups.transform("size")
+            # ties share the average rank, and a singleton contributes zero.
+            adjusted["value"] = (2 * groups.rank() - count - 1) / (count - 1).clip(lower=1)
+            normalized = adjusted
+        else:
+            normalized = zscore(adjusted)
+        weighted.append(normalized.set_index(["date", "symbol"])["value"] * weight)
 
-    assert merged is not None
-    value_cols = [name for name in frames]
-    # 外连接后缺失视为 0（该因子当日无观点），权重已在各列内部归一。
-    merged["value"] = merged[value_cols].fillna(0.0).sum(axis=1)
-    result = merged[["date", "symbol", "value"]].copy()
+    # A missing component contributes zero; symbols with no observations are absent.
+    result = pd.concat(weighted, axis=1).sum(axis=1).rename("value").reset_index()
     result["date"] = pd.to_datetime(result["date"]).dt.normalize()
     return result.sort_values(["date", "symbol"]).reset_index(drop=True)[FACTOR_COLUMNS]
 
@@ -162,6 +166,7 @@ class CompositeFactor(FactorDefinition):
     weights: dict[str, float] = field(default_factory=dict)
     clip: bool = False
     missing: str = "zero"
+    standardization: str = "zscore"
 
     def __post_init__(self) -> None:
         if not self.components:
@@ -185,5 +190,6 @@ class CompositeFactor(FactorDefinition):
         directions = {item.name: item.direction for item in self.components}
         weights = {name: float(self.weights.get(name, 1.0)) for name in frames}
         return combine_factors(
-            frames, weights, directions=directions, clip=self.clip, missing=self.missing
+            frames, weights, directions=directions, clip=self.clip, missing=self.missing,
+            standardization=self.standardization,
         )

@@ -17,7 +17,11 @@ from quant_platform.application.backtest_service import BacktestRequest
 from quant_platform.application.factor_research_service import FrameFactor, research_combination
 from quant_platform.backtest.validity import CURRENT_AUDIT_VERSION
 from quant_platform.factors.builtins import _high_distance_20
+from quant_platform.factors.combine import combine_factors
+from quant_platform.factors.custom import build_custom_factor
 from quant_platform.risk.config import RiskLimits
+from quant_platform.strategies.context import StrategyContext
+from quant_platform.strategies.factor_composite import FactorCompositeParameters, FactorCompositeStrategy
 
 
 @pytest.fixture
@@ -215,6 +219,37 @@ def test_negative_ic_is_not_converted_into_positive_weight():
     from app.quant.result_adapter import factor_report_to_dict
     groups = factor_report_to_dict(result.reports["我的组合"])["group_mean_returns"]
     assert set(groups) == {"G1", "G2", "G3", "G4", "G5"}
+
+
+def test_research_spec_replays_formula_weights_and_rank_scores_in_backtest():
+    repository, dates, symbols, _ = research_fixture()
+    factors = (
+        build_custom_factor("trend_mix", expression="ret(close, 5) - ret(close, 20)", direction=-1),
+        build_custom_factor("momentum_ratio", expression="ret(close, 10)"),
+    )
+    result = research_combination(
+        repository, factors, train_start=dates[0].date(), train_end=dates[59].date(),
+        test_start=dates[60].date(), test_end=dates[-1].date(), mode="manual",
+        custom_weights={"trend_mix": 40, "momentum_ratio": 60}, standardization="rank", symbols=symbols,
+    )
+    spec = json.dumps(result.spec)
+    config = FactorCompositeParameters.from_json(spec)
+    assert config == FactorCompositeParameters.from_json(config.to_json())
+    assert result.weights == pytest.approx({"trend_mix": .4, "momentum_ratio": .6})
+    assert config.standardization == "rank"
+    assert config.components[0].custom_factor.expression == factors[0].expression
+
+    strategy = FactorCompositeStrategy.from_parameters("replay", {"factors_json": spec})
+    today = dates[75]
+    history = repository.get_daily_bars(end_date=dates[-1].date())
+    signals = strategy.generate_signals(StrategyContext.create(today.date(), history, symbols))
+    frames = {factor.name: factor.compute(history).query("date == @today") for factor in factors}
+    expected = combine_factors(
+        frames, result.weights, directions={factor.name: factor.direction for factor in factors},
+        clip=True, missing="drop", standardization="rank",
+    )
+    assert [signal.symbol for signal in signals] == list(expected.sort_values(["value", "symbol"], ascending=[False, True]).symbol)
+    assert {signal.symbol: signal.score for signal in signals} == pytest.approx(dict(zip(expected.symbol, expected.value)))
 
 
 def test_unknown_status_warning_and_missing_execution_cannot_grade_a():
