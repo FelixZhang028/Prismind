@@ -20,11 +20,14 @@ from quant_platform.data.normalizers import canonical_symbol
 CONSTITUENTS_TABLE = "index_constituents"
 CHECKS_TABLE = "index_constituent_checks"
 # 可以用作历史股票池的指数：代码 -> (名称, 厂商接口里的名字)。
-INDEX_UNIVERSES: dict[str, tuple[str, str]] = {
+VENDOR_INDEX_UNIVERSES: dict[str, tuple[str, str]] = {
     "000300.SH": ("沪深300", "hs300"),
     "000016.SH": ("上证50", "sz50"),
     "000905.SH": ("中证500", "zz500"),
 }
+CSI_800 = "000906.SH"
+CSI_800_COMPONENTS = ("000300.SH", "000905.SH")
+INDEX_UNIVERSES = {**VENDOR_INDEX_UNIVERSES, CSI_800: ("中证 800", "zz800")}
 COLUMNS = ["index_symbol", "effective_date", "symbol", "source", "ingested_at"]
 MEMBERSHIP_COLUMNS = ["symbol", "effective_from", "effective_to", "known_at", "source"]
 # 成分股半年调整一次。核对日期比回测结束日早这么多天以内，仍然认为是最新的。
@@ -59,6 +62,18 @@ def normalize_baostock_constituents(frame: pd.DataFrame, index_symbol: str, effe
 def stored_lists(constituents: pd.DataFrame, index_symbol: str) -> dict[date, frozenset[str]]:
     """The stored member lists of one index, by date."""
 
+    if index_symbol == CSI_800:
+        first, second = (stored_lists(constituents, code) for code in CSI_800_COMPONENTS)
+        combined = {}
+        previous = None
+        for day in sorted(first.keys() | second.keys()):
+            left, right = members_on(first, day), members_on(second, day)
+            if left is not None and right is not None:
+                current = left | right
+                if current != previous:
+                    combined[day] = current
+                    previous = current
+        return combined
     if constituents.empty or not {"index_symbol", "effective_date", "symbol"} <= set(constituents.columns):
         return {}
     rows = constituents[constituents["index_symbol"] == index_symbol]
@@ -102,6 +117,12 @@ def membership(constituents: pd.DataFrame, index_symbol: str) -> pd.DataFrame:
 def checked_range(checks: pd.DataFrame, index_symbol: str) -> tuple[date, date] | None:
     """The dates between which the member lists of an index have been checked, or None."""
 
+    if index_symbol == CSI_800:
+        first, second = (checked_range(checks, code) for code in CSI_800_COMPONENTS)
+        if first is None or second is None:
+            return None
+        start, end = max(first[0], second[0]), min(first[1], second[1])
+        return (start, end) if start <= end else None
     if checks.empty or "index_symbol" not in checks.columns:
         return None
     rows = checks[checks["index_symbol"] == index_symbol]
@@ -123,7 +144,11 @@ def require_coverage(checks: pd.DataFrame, index_symbol: str, start_date: date, 
         raise ValueError(
             f"{name}的历史成分股从 {first} 开始，早于这一天不知道当时有哪些成分股。请把开始日期改到 {first} 或之后。"
         )
-    if end_date > last + timedelta(days=MAX_DAYS_SINCE_CHECK):
+    # A Monday snapshot covers that calendar week. The derived index waits
+    # for both sources to be checked before moving on to the next week.
+    final_day = (week_start(last) + timedelta(days=6) if index_symbol == CSI_800
+                 else last + timedelta(days=MAX_DAYS_SINCE_CHECK))
+    if end_date > final_day:
         raise ValueError(f"{name}的成分股只核对到 {last}，可以把回测区间缩短到这一天以前，或等平台更新指数成分股。")
 
 

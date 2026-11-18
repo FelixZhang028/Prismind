@@ -679,7 +679,8 @@ class DataCenterService:
         status = []
         for index_symbol, (name, _) in INDEX_UNIVERSES.items():
             covered = checked_range(checks, index_symbol)
-            lists = stored_lists(constituents, index_symbol) if covered else {}
+            lists = {day: members for day, members in stored_lists(constituents, index_symbol).items()
+                     if day <= covered[1]} if covered else {}
             status.append({
                 "symbol": index_symbol,
                 "name": name,
