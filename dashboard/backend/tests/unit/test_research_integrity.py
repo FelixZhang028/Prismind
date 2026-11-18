@@ -243,7 +243,10 @@ def test_research_spec_replays_formula_weights_and_rank_scores_in_backtest():
     today = dates[75]
     history = repository.get_daily_bars(end_date=dates[-1].date())
     signals = strategy.generate_signals(StrategyContext.create(today.date(), history, symbols))
-    frames = {factor.name: factor.compute(history).query("date == @today") for factor in factors}
+    frames = {}
+    for factor in factors:
+        scores = factor.compute(history)
+        frames[factor.name] = scores.loc[scores["date"].eq(today)]
     expected = combine_factors(
         frames, result.weights, directions={factor.name: factor.direction for factor in factors},
         clip=True, missing="drop", standardization="rank",
