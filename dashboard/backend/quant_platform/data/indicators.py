@@ -9,7 +9,7 @@ Columns:
 - ``pe_ttm``   price / earnings per share, trailing twelve months (negative for a loss)
 - ``pb_mrq``   price / book value per share, most recent quarter
 - ``ps_ttm``   price / sales per share, trailing twelve months
-- ``pcf_ttm``  price / net operating cash flow per share, trailing twelve months
+- ``pcf_ttm``  price / net increase in cash and cash equivalents per share, trailing twelve months
 - ``turnover_rate``  shares traded / free-float shares, in percent
 """
 

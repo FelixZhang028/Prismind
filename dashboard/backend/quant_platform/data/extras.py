@@ -12,7 +12,11 @@ from collections.abc import Iterable
 import pandas as pd
 
 from quant_platform.data.corporate_actions import DIVIDEND_YIELD, MISSING_DIVIDEND_YIELD_MESSAGE
-from quant_platform.data.fundamentals import MISSING_FUNDAMENTALS_MESSAGE, fundamental_columns
+from quant_platform.data.fundamentals import (
+    MISSING_FUNDAMENTALS_MESSAGE,
+    MISSING_OPERATING_CASH_FLOW_MESSAGE,
+    fundamental_columns,
+)
 from quant_platform.data.indicators import MISSING_INDICATORS_MESSAGE, indicator_columns
 from quant_platform.data.industry import MISSING_INDUSTRY_MESSAGE, industry_columns
 
@@ -35,4 +39,6 @@ def require_extra_data(bars: pd.DataFrame, columns: Iterable[str]) -> None:
                            ([DIVIDEND_YIELD] if DIVIDEND_YIELD in wanted else [], MISSING_DIVIDEND_YIELD_MESSAGE)):
         for column in names:
             if column not in bars.columns or not bars[column].notna().any():
+                if column == "operating_cash_flow":
+                    raise ValueError(MISSING_OPERATING_CASH_FLOW_MESSAGE)
                 raise ValueError(message)

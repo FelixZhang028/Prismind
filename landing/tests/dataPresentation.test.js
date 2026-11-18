@@ -96,7 +96,7 @@ test('行业分类的覆盖情况用一句话说明；中性化有四种选择',
     '已有 5,200 只股票的行业分类（2015-03-31 至 2026-10-13，48 个时点）；有 278 只没有分类（多数是已经退市的）。')
   assert.equal(industrySummary({ symbols: 300, missing_symbols: 0, snapshots: 2, start_date: '2026-06-30', end_date: '2026-10-13' }),
     '已有 300 只股票的行业分类（2026-06-30 至 2026-10-13，2 个时点）。')
-  assert.deepEqual(NEUTRALIZATION_OPTIONS.map((option) => option.value), ['none', 'industry', 'size', 'both'])
+  assert.deepEqual(NEUTRALIZATION_OPTIONS.map((option) => option.value), ['none', 'industry_rank', 'industry', 'size', 'both'])
 })
 
 test('指数成分股的覆盖情况每个指数一句话', async () => {

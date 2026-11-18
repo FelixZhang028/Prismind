@@ -1,9 +1,8 @@
 """Download quarterly financial reports from BaoStock, one stock and one quarter at a time.
 
-BaoStock answers one (stock, year, quarter) per request and a row takes three requests
-(profit, growth, balance sheet). Twelve years of one stock is about 150 requests, so the whole
-market takes hours while a stock pool takes seconds to minutes. Runs are resumable: periods
-already stored are not requested again, and what is fetched is saved in batches.
+BaoStock answers one (stock, year, quarter) per request. Runs are resumable: completed periods
+are not requested again and fetched results are saved in batches. Existing reports only need
+one supplementary request for cash flow.
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ from quant_platform.data.fundamentals import (
     BAOSTOCK_FUNDAMENTAL_FIELDS,
     FUNDAMENTALS_TABLE,
     STORED_COLUMNS,
+    cash_flow_fields,
     checked_empty_row,
     normalize_baostock_quarter,
     quarter_end,
@@ -51,10 +51,19 @@ class BaoStockFundamentalsBackfill:
     def plan(self, start_date: date, end_date: date, symbols: list[str] | None = None) -> list[tuple[str, list[tuple[int, int]]]]:
         """Per stock, the (year, quarter) periods to request."""
 
-        bars = self.market_repository.daily_bar_summary()
         stored = self.market_repository.get_fundamentals(symbols)
+        return self._plan(start_date, end_date, symbols, stored)
+
+    @staticmethod
+    def _missing_cash_flow(stored: pd.DataFrame) -> pd.Series:
+        checked = stored.reindex(columns=["cash_flow_checked"])["cash_flow_checked"].eq(True)
+        return stored["pub_date"].notna() & ~checked.fillna(False)
+
+    def _plan(self, start_date: date, end_date: date, symbols: list[str] | None, stored: pd.DataFrame):
+        bars = self.market_repository.daily_bar_summary()
+        complete = stored[~self._missing_cash_flow(stored)]
         have: dict[str, set[date]] = {}
-        for symbol, day in zip(stored["symbol"], pd.to_datetime(stored["stat_date"]), strict=True):
+        for symbol, day in zip(complete["symbol"], pd.to_datetime(complete["stat_date"]), strict=True):
             have.setdefault(str(symbol), set()).add(day.date())
         last = min(end_date, self.today)
         work = []
@@ -74,7 +83,12 @@ class BaoStockFundamentalsBackfill:
     ) -> dict[str, Any]:
         """Fetch and store the missing reports; one stock failing does not stop the rest."""
 
-        work = self.plan(start_date, end_date, symbols)
+        stored = self.market_repository.get_fundamentals(symbols)
+        work = self._plan(start_date, end_date, symbols, stored)
+        pending_cash_flow = {
+            (row["symbol"], pd.Timestamp(row["stat_date"]).date()): row
+            for row in stored[self._missing_cash_flow(stored)].to_dict(orient="records")
+        }
         total = len(work)
         failed: dict[str, str] = {}
         rows: list[dict] = []
@@ -88,7 +102,10 @@ class BaoStockFundamentalsBackfill:
             self.provider.login()
             for symbol, periods in work:
                 try:
-                    fetched = [self._fetch(symbol, year, quarter) for year, quarter in periods]
+                    fetched = [
+                        self._fetch(symbol, year, quarter, pending_cash_flow.get((symbol, quarter_end(year, quarter))))
+                        for year, quarter in periods
+                    ]
                     rows.extend(row for row in fetched if row is not None)
                     reports += sum(1 for row in fetched if row is not None and pd.notna(row["pub_date"]))
                     consecutive_failures = 0
@@ -116,18 +133,26 @@ class BaoStockFundamentalsBackfill:
             self.provider.close()
         return {"symbols": total, "updated": total - len(failed), "reports": reports, "failed": failed}
 
-    def _fetch(self, symbol: str, year: int, quarter: int) -> dict | None:
+    def _fetch(self, symbol: str, year: int, quarter: int, existing: dict | None = None) -> dict | None:
         """One stored row for a period, a checked-empty marker for an old gap, or nothing for a recent gap."""
 
-        responses: dict[str, pd.DataFrame] = {}
-        for endpoint in BAOSTOCK_FUNDAMENTAL_FIELDS:
-            responses[endpoint] = self.provider.get_quarterly_report(endpoint, symbol, year, quarter)
-            if endpoint == "profit" and responses[endpoint].empty:
-                break  # 没有利润表就是这一期没有财报，不用再问另外两张表
-        row = normalize_baostock_quarter(symbol, year, quarter, responses)
-        if row is not None:
-            return row
         settled = quarter_end(year, quarter) < self.today - timedelta(days=SETTLED_AFTER_DAYS)
+        if existing is not None:
+            cash_flow = self.provider.get_quarterly_report("cash_flow", symbol, year, quarter)
+            row = {**existing, **cash_flow_fields(cash_flow, existing.get("net_profit"))}
+        else:
+            responses: dict[str, pd.DataFrame] = {}
+            for endpoint in BAOSTOCK_FUNDAMENTAL_FIELDS:
+                responses[endpoint] = self.provider.get_quarterly_report(endpoint, symbol, year, quarter)
+                if endpoint == "profit" and responses[endpoint].empty:
+                    break  # 没有利润表，这一期先不问其他财报
+            if not responses["profit"].empty:
+                responses["cash_flow"] = self.provider.get_quarterly_report("cash_flow", symbol, year, quarter)
+            row = normalize_baostock_quarter(symbol, year, quarter, responses)
+        if row is not None:
+            if settled:
+                row["cash_flow_checked"] = True
+            return row
         return checked_empty_row(symbol, year, quarter) if settled else None
 
     def _flush(self, rows: list[dict]) -> None:

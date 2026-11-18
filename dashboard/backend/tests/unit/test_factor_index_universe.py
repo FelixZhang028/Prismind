@@ -24,6 +24,7 @@ from quant_platform.factors import alpha101
 from quant_platform.factors.alpha101 import alpha101_factors
 from quant_platform.factors.evaluation import FactorEvaluator
 from quant_platform.factors.registry import default_registry
+from quant_platform.factors.sample import FactorSampleFilters
 
 HS300 = "000300.SH"
 DAYS = pd.bdate_range("2025-01-06", periods=60)
@@ -123,6 +124,36 @@ def test_group_nav_compounds_nonoverlapping_periods_and_marks_missing_groups():
     assert nav.iloc[-1].G1 == pytest.approx(1.10 * .95)
     assert nav.iloc[-1].G2 == pytest.approx(1.30 * 1.10)
     assert nav.iloc[-1].long_short == pytest.approx(.35)
+
+
+def test_filters_follow_each_signal_days_status_and_keep_the_right_listing_anniversary(tmp_path):
+    repo = market(tmp_path)
+    bars = repo.get_daily_bars()
+    bars["is_st"] = False
+    bars["is_suspended"] = False
+    bars["list_date"] = pd.Timestamp("2023-01-01")
+    signal = DAYS[55]
+    on_signal = bars["trade_date"].eq(signal)
+    bars.loc[on_signal & bars["symbol"].eq(SYMBOLS[0]), "is_st"] = True
+    bars.loc[on_signal & bars["symbol"].eq(SYMBOLS[1]), "is_suspended"] = True
+    bars.loc[bars["symbol"].eq(SYMBOLS[2]), "list_date"] = pd.Timestamp("2025-01-01")
+    bars.loc[bars["symbol"].eq(SYMBOLS[3]), "list_date"] = signal - pd.DateOffset(years=1)
+    bars.loc[bars["symbol"].eq(SYMBOLS[4]), "list_date"] = pd.NaT
+    repo.save_table("daily_bars", bars)
+    filters = FactorSampleFilters(exclude_st=True, exclude_suspended=True, exclude_recent_ipos=True)
+    passed, notes = filters.apply(bars, signal.date(), signal.date())
+    assert set(bars.loc[passed & on_signal, "symbol"]) == set(SYMBOLS) - {SYMBOLS[i] for i in (0, 1, 2, 4)}
+    assert "其中 1 个缺少状态或上市日期" in notes[-1]
+    assert pd.isna(FactorEvaluator._close_prices(bars, True).at[signal, SYMBOLS[1]])
+    assert pd.notna(FactorEvaluator._close_prices(bars).at[signal, SYMBOLS[1]])
+
+    report = FactorEvaluator(repo).evaluate(
+        default_registry().get("momentum_20"), signal.date(), DAYS[57].date(),
+        horizon=1, n_groups=5, filters=filters, diagnostics=True,
+    )
+    assert report.industry_distribution["date"] == signal.date().isoformat()
+    assert report.industry_distribution["pool_count"] == 8
+    assert report.industry_distribution["rows"][0]["industry"] == "未分类"
 
 
 def test_alpha101_ranks_only_among_that_days_members(tmp_path):

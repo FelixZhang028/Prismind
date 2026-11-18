@@ -19,11 +19,12 @@ import pandas as pd
 
 from quant_platform.core import deadline, progress
 from quant_platform.data.extras import extra_columns
-from quant_platform.data.fundamentals import MISSING_FUNDAMENTALS_MESSAGE, point_in_time
+from quant_platform.data.fundamentals import MISSING_FUNDAMENTALS_MESSAGE, market_capitalization, point_in_time
 from quant_platform.data.index_constituents import UNIVERSE_COLUMN, only_members
 from quant_platform.data.industry import EXPOSURES_TABLE, MISSING_INDUSTRY_MESSAGE, industry_on
 from quant_platform.data.repositories.parquet_repository import ParquetMarketDataRepository
 from quant_platform.factors.base import FactorDefinition, pivot_field
+from quant_platform.factors.sample import FactorSampleFilters
 from quant_platform.factors.statistics import annual_ic, ic_statistics, neutralize_exposures
 
 
@@ -59,6 +60,7 @@ class FactorReport:
     rebalance_turnover: pd.DataFrame = field(default_factory=pd.DataFrame)
     nav_periods: int = 0
     nav_skipped: int = 0
+    industry_distribution: dict | None = None
 
 
 class FactorEvaluator:
@@ -68,29 +70,31 @@ class FactorEvaluator:
         self.repository = repository
 
     def _neutralized(
-        self, values: pd.DataFrame, bars: pd.DataFrame, neutralization: str
+        self, values: pd.DataFrame, bars: pd.DataFrame, neutralization: str, *, changes: pd.DataFrame | None = None,
     ) -> tuple[pd.DataFrame, list[str]]:
         """去掉因子值里能被行业和（或）市值解释的部分，只用每个交易日当时已知的行业和市值。
 
         没有行业分类或市值的样本不参与，并在说明里写明数量；不会拿空值硬算。
         """
 
-        sample = values[["date", "symbol", "value"]].copy()
+        sample = values[["date", "symbol", "value"]].copy().reset_index(drop=True)
+        sample["value"] = pd.to_numeric(sample["value"], errors="coerce").replace([float("inf"), -float("inf")], float("nan"))
         sample["date"] = pd.to_datetime(sample["date"]).astype("datetime64[ns]")
         exposures = sample[["date", "symbol"]].copy()
         usable = pd.Series(True, index=sample.index)
-        if neutralization in {"industry", "both"}:
-            changes = self.repository.read_table(EXPOSURES_TABLE)
+        if neutralization in {"industry", "both", "industry_rank"}:
+            if changes is None:
+                changes = self.repository.read_table(EXPOSURES_TABLE)
             if changes.empty or "industry" not in changes.columns:
                 raise ValueError(MISSING_INDUSTRY_MESSAGE)
-            exposures["industry"] = industry_on(exposures, changes).to_numpy()
+            exposures["industry"] = industry_on(exposures, changes, infer_early=False).to_numpy()
             usable &= exposures["industry"].notna()
         if neutralization in {"size", "both"}:
             days = bars[["symbol", "trade_date", "raw_close"]].copy()
             days["trade_date"] = pd.to_datetime(days["trade_date"]).astype("datetime64[ns]")
             days = days[days["trade_date"].isin(sample["date"].unique())]
-            shares = point_in_time(days, self.repository.get_fundamentals(), ["total_shares"])["total_shares"].to_numpy()
-            days["market_cap"] = pd.to_numeric(days["raw_close"], errors="coerce").to_numpy() * shares
+            shares = point_in_time(days, self.repository.get_fundamentals(), ["total_shares"])["total_shares"]
+            days["market_cap"] = market_capitalization(days["raw_close"], shares)
             if not days["market_cap"].notna().any():
                 raise ValueError(MISSING_FUNDAMENTALS_MESSAGE)
             exposures = exposures.merge(
@@ -101,14 +105,32 @@ class FactorEvaluator:
         dropped = int((~usable).sum())
         if dropped:
             notes.append(f"{dropped} 个样本缺少当时的行业分类或市值，没有参与中性化（共 {len(sample)} 个样本）")
-        try:
-            result = neutralize_exposures(sample[usable.to_numpy()], exposures[usable.to_numpy()], neutralization)
-        except ValueError as exc:
-            if "样本不足" in str(exc):
+        if not usable.any():
+            raise ValueError("所选区间没有同时满足要求的历史行业或市值数据。")
+        available = sample[usable]
+        if neutralization == "industry_rank":
+            available = available.assign(industry=exposures.loc[usable, "industry"]).dropna(subset=["value"])
+            peers = available.groupby(["date", "industry"], observed=True)["value"]
+            sizes = peers.transform("size")
+            ranks = (peers.rank(method="average") - 0.5) / sizes
+            result = available.loc[sizes.ge(2), ["date", "symbol"]].assign(value=ranks)
+            small_groups = int(sizes.lt(2).sum())
+            if small_groups:
+                notes.append(f"{small_groups} 个样本的当日行业内有效股票不足两只，没有参与行业内排序")
+            if result.empty:
+                raise ValueError("各行业的有效股票太少，无法进行行业内排序。")
+        else:
+            try:
+                result = neutralize_exposures(available, exposures[usable], neutralization)
+            except ValueError as exc:
+                if "样本不足" not in str(exc):
+                    raise
                 raise ValueError(
                     "股票数量太少，做不了中性化：每个交易日的股票数要明显多于行业数。可以扩大股票池，或者不做中性化。"
                 ) from exc
-            raise
+            skipped = available["date"].nunique() - result["date"].nunique()
+            if skipped:
+                notes.append(f"{skipped} 个交易日的有效股票不足以估计中性化模型，已跳过")
         return result, notes
 
     def evaluate(
@@ -123,6 +145,7 @@ class FactorEvaluator:
         neutralization: str = "none",
         decay_horizons: tuple[int, ...] = (1, 5, 10, 20),
         diagnostics: bool = False,
+        filters: FactorSampleFilters = FactorSampleFilters(),
     ) -> FactorReport:
         """评估因子在 [start_date, end_date] 的横截面选股能力。"""
 
@@ -130,7 +153,7 @@ class FactorEvaluator:
             raise ValueError("horizon 必须 >= 1")
         if n_groups < 2:
             raise ValueError("n_groups 必须 >= 2")
-        if neutralization not in {"none", "industry", "size", "both"}:
+        if neutralization not in {"none", "industry", "size", "both", "industry_rank"}:
             raise ValueError("未知中性化方式")
 
         # 因子值和未来收益均使用截止结束日期的行情。
@@ -141,6 +164,11 @@ class FactorEvaluator:
         )
         if factor_bars.empty:
             raise ValueError("评估区间内没有行情数据")
+        notes: list[str] = []
+        is_index = UNIVERSE_COLUMN in factor_bars.columns
+        if filters.active():
+            eligible, notes = filters.apply(factor_bars, start_date, end_date)
+            factor_bars[UNIVERSE_COLUMN] = eligible
         progress.report("计算因子值")
         values = factor.compute(factor_bars)
         deadline.check()
@@ -148,21 +176,27 @@ class FactorEvaluator:
         values = values[
             values["date"].between(pd.Timestamp(start_date), pd.Timestamp(end_date))
         ].copy()
-        neutral_notes: list[str] = []
         if UNIVERSE_COLUMN in factor_bars.columns:
-            # 指数当时的成分股：每天只评估那天在指数里的股票。
             values, universe_note = only_members(values, factor_bars)
-            neutral_notes.append(universe_note)
+            if is_index:
+                notes.append(universe_note)
+        if filters.active() and values.empty:
+            raise ValueError("所选日期和股票范围没有符合筛选条件的有效因子样本。")
+        changes = (
+            self.repository.read_table(EXPOSURES_TABLE)
+            if diagnostics or neutralization in {"industry", "both", "industry_rank"} else None
+        )
         if neutralization != "none":
-            values, exposure_notes = self._neutralized(values, factor_bars, neutralization)
-            neutral_notes.extend(exposure_notes)
+            progress.report("按历史暴露处理因子")
+            values, exposure_notes = self._neutralized(values, factor_bars, neutralization, changes=changes)
+            notes.extend(exposure_notes)
         values["adjusted"] = pd.to_numeric(values["value"], errors="coerce") * factor.direction
 
         values["adjusted"] = values["adjusted"].replace([float("inf"), -float("inf")], float("nan"))
         # Assign membership before inspecting future returns, including unlabelled tail dates.
         progress.report("计算分组与 IC")
         values = self._assign_groups(values, n_groups)
-        close = self._close_prices(factor_bars).loc[pd.Timestamp(start_date):pd.Timestamp(end_date)]
+        close = self._close_prices(factor_bars, filters.exclude_suspended).loc[pd.Timestamp(start_date):pd.Timestamp(end_date)]
         dates = close.index
         entry = close.shift(-1)
         returns = self._forward_returns(close, entry, horizon)
@@ -177,8 +211,7 @@ class FactorEvaluator:
         first_half = float(rank_ic.iloc[:half].mean()) if half else float("nan")
         second_half = float(rank_ic.iloc[half:].mean()) if len(rank_ic) > half else float("nan")
 
-        notes: list[str] = list(neutral_notes)
-        if len(daily_ic) < 20:
+        if len(rank_ic) < 20:
             notes.append("有效截面不足 20 日，统计结论仅供参考")
         if values["group"].isna().any():
             notes.append(
@@ -207,9 +240,11 @@ class FactorEvaluator:
         annual = annual_ic(daily_ic, horizon)
         group_nav, rebalance_turnover = pd.DataFrame(), pd.DataFrame()
         nav_periods = nav_skipped = 0
+        industry_distribution = None
         if diagnostics:
             progress.report("生成分组净值和换手曲线")
             group_nav, nav_periods, nav_skipped = self._group_nav(group_returns, dates, horizon, n_groups)
+            industry_distribution = self._industry_distribution(values, dates, horizon, n_groups, changes)
             signals = dates[::horizon]
             rebalance_turnover = self._top_turnover(
                 values[values["date"].isin(signals)], n_groups, dates=signals,
@@ -229,6 +264,7 @@ class FactorEvaluator:
             rebalance_turnover=rebalance_turnover,
             nav_periods=nav_periods,
             nav_skipped=nav_skipped,
+            industry_distribution=industry_distribution,
             factor_name=factor.name,
             display_name=factor.display_name,
             horizon=horizon,
@@ -251,13 +287,17 @@ class FactorEvaluator:
         )
 
     @staticmethod
-    def _close_prices(bars: pd.DataFrame) -> pd.DataFrame:
+    def _close_prices(bars: pd.DataFrame, exclude_suspended: bool = False) -> pd.DataFrame:
         price_field = (
             "adjusted_close"
             if "adjusted_close" in bars.columns and bars["adjusted_close"].notna().any()
             else "raw_close"
         )
-        close = pivot_field(bars[["trade_date", "symbol", price_field]], price_field)
+        prices = bars[["trade_date", "symbol", price_field]]
+        if exclude_suspended:
+            tradable = bars.get("is_suspended", pd.Series(pd.NA, index=bars.index)).eq(False)
+            prices = prices.assign(**{price_field: prices[price_field].where(tradable)})
+        close = pivot_field(prices, price_field)
         # Preserve every observed market date, even when all prices on it are missing.
         calendar = pd.DatetimeIndex(
             pd.to_datetime(bars["trade_date"]).dt.normalize().unique()
@@ -294,6 +334,29 @@ class FactorEvaluator:
         nav.index = dates[[position + horizon + 1 for position in positions]]
         nav.loc[dates[1]] = [1.0] * n_groups + [0.0]
         return nav.sort_index().rename_axis("date").reset_index(), len(covered), skipped
+
+    @staticmethod
+    def _industry_distribution(
+        values: pd.DataFrame, dates: pd.DatetimeIndex, horizon: int, n_groups: int, changes: pd.DataFrame,
+    ) -> dict | None:
+        """Snapshot the last formed top group with a full holding window, before using prices."""
+
+        signals = dates[:max(0, len(dates) - horizon - 1):horizon]
+        latest = values.loc[values["group"].eq(n_groups) & values["date"].isin(signals), "date"].max()
+        if pd.isna(latest):
+            return None
+        sample = values.loc[values["date"].eq(latest) & values["group"].notna(), ["date", "symbol", "group"]].copy()
+        sample["industry"] = industry_on(sample, changes, infer_early=False).fillna("未分类")
+        sample["top"] = sample["group"].eq(n_groups)
+        counts = sample.groupby("industry").agg(pool_count=("symbol", "size"), group_count=("top", "sum"))
+        group_count = int(sample["top"].sum())
+        counts["group_weight"] = counts["group_count"] / group_count
+        counts["pool_weight"] = counts["pool_count"] / len(sample)
+        rows = counts.sort_values(["group_count", "pool_count", "industry"], ascending=[False, False, True])
+        return {
+            "date": latest.date().isoformat(), "group_count": group_count, "pool_count": len(sample),
+            "rows": rows.reset_index().to_dict(orient="records"),
+        }
 
     @staticmethod
     def _daily_ic(merged: pd.DataFrame) -> pd.DataFrame:

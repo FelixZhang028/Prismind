@@ -196,6 +196,7 @@ def factor_report_to_dict(report: FactorReport) -> dict[str, Any]:
         ],
         "nav_periods": report.nav_periods,
         "nav_skipped": report.nav_skipped,
+        "industry_distribution": report.industry_distribution,
         "rebalance_turnover": [
             {"date": day.date().isoformat(), "turnover": _round(value, 6)}
             for day, value in report.rebalance_turnover.itertuples(index=False, name=None)
