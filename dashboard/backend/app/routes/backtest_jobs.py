@@ -6,6 +6,9 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from quant_platform.core.exceptions import ConfigurationError
+from quant_platform.strategies.factor_composite import FactorCompositeParameters, FactorCompositeStrategy
+
 from ..database import get_conn
 from ..quant import backtest_jobs as jobs, runtime
 from ..quant.markets import CURRENT_POOL
@@ -72,7 +75,9 @@ def prepare(body: JobIn, user: dict) -> dict:
         parameters = defaults.strategy_parameters if plugin == defaults.strategy_plugin else metadata.defaults()
         try:
             values["strategy_parameters"] = metadata.validate_parameters({**parameters, **request.strategy_parameters})
-        except ValueError as exc:
+            if plugin == FactorCompositeStrategy.plugin_name:
+                FactorCompositeParameters.from_json(values["strategy_parameters"]["factors_json"])
+        except (ValueError, ConfigurationError) as exc:
             raise HTTPException(422, str(exc)) from None
         label = metadata.display_name
     market = values.get("market", CURRENT_POOL)
@@ -98,7 +103,6 @@ def prepare(body: JobIn, user: dict) -> dict:
 @router.post("", status_code=202)
 def submit(body: JobIn, user: dict = Depends(get_current_user)):
     from pydantic import ValidationError
-    from quant_platform.core.exceptions import ConfigurationError
     try:
         payload = prepare(body, user)
     except (ValidationError, ConfigurationError) as exc:

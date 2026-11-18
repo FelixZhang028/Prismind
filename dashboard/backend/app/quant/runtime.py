@@ -235,6 +235,7 @@ def build_factor_registry(user: dict) -> FactorRegistry:
                 window=row["window"],
                 window2=row["window2"],
                 direction=row["direction"],
+                expression=row["expression"],
             )
         except ValueError:
             continue

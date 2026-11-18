@@ -87,7 +87,7 @@ class BacktestEngine:
         self.evaluation_mode = evaluation_mode
         self.fixed_universe = fixed_universe
         self.benchmark_symbol = benchmark_symbol
-        self.warmup_days = warmup_days
+        self.warmup_days = max(warmup_days, getattr(strategy, "min_history", 1) - 1)
         self.annualization = annualization
 
     def run(

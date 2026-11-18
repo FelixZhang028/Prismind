@@ -12,7 +12,8 @@ from quant_platform.core import deadline
 from quant_platform.data.extras import extra_columns
 from quant_platform.data.index_constituents import UNIVERSE_COLUMN
 from quant_platform.factors.base import FactorDefinition
-from quant_platform.factors.combine import combine_factors, correlation_matrix, prepare_frames, drop_highly_correlated
+from quant_platform.factors.combine import STANDARDIZATIONS, combine_factors, correlation_matrix, prepare_frames, drop_highly_correlated
+from quant_platform.factors.custom import CustomFactor, custom_factor_to_dict
 from quant_platform.factors.evaluation import FactorEvaluator, FactorReport
 
 
@@ -62,6 +63,7 @@ def research_combination(
     custom_weights: dict[str, float] | None = None,
     clip: bool = True,
     missing: str = "drop",
+    standardization: str = "zscore",
     horizon: int = 5,
     n_groups: int = 5,
     symbols: list[str] | None = None,
@@ -77,6 +79,8 @@ def research_combination(
         raise ValueError("权重包含未选择的因子。")
     if missing not in {"drop", "median"}:
         raise ValueError("研究组合请选择剔除缺失或中位数填充。")
+    if standardization not in STANDARDIZATIONS:
+        raise ValueError("未知标准化方式")
 
     extra = extra_columns(field for factor in components for field in factor.required_fields)
 
@@ -95,9 +99,10 @@ def research_combination(
             values["date"] = pd.to_datetime(values["date"]).dt.normalize()
             frames[factor.name] = universe.merge(values, on=["date", "symbol"], how="left")
         sessions = pd.DatetimeIndex(pd.to_datetime(bars.trade_date).unique()).sort_values()
-        return prepare_frames(frames, clip=clip, missing=missing), sessions
+        return frames, sessions
 
     train_frames, sessions = frames_until(train_end)
+    train_frames = prepare_frames(train_frames, clip=clip, missing=missing)
     sessions = sessions[sessions >= pd.Timestamp(train_start)]
     # Labels enter on t+1 and exit on t+horizon+1. Purge all signals whose
     # labels would cross train_end, including correlation-based selection.
@@ -137,21 +142,24 @@ def research_combination(
         if not isfinite(weight) or weight < 0:
             raise ValueError("权重必须是非负有限数值；因子方向由因子定义统一处理。")
         weights[factor.name] = weight
-    total = sum(weights.values())
-    if total <= 0:
+    scale = max(weights.values())
+    if scale <= 0:
         raise ValueError("没有正权重：请调整手动权重，或改用等权；训练期负 IC 不会自动取绝对值。")
+    weights = {name: value / scale for name, value in weights.items()}
+    total = sum(weights.values())
     weights = {name: value / total for name, value in weights.items()}
 
     # The test set is accessed only after all weights are fixed.
     frames, _ = frames_until(test_end)
     frames = {f.name: frames[f.name] for f in components}
+    cleaned = prepare_frames(frames, clip=clip, missing=missing)
     directions = {factor.name: factor.direction for factor in components}
     candidates = {
         f"单因子 · {factor.display_name} ({factor.name})": FrameFactor(
             name=factor.name,
             display_name=factor.display_name,
             direction=factor.direction,
-            values=frames[factor.name],
+            values=cleaned[factor.name],
         )
         for factor in components
     }
@@ -162,7 +170,10 @@ def research_combination(
         candidates[label] = FrameFactor(
             name=label,
             display_name=label,
-            values=combine_factors(frames, model_weights, directions=directions, missing="drop"),
+            values=combine_factors(
+                frames, model_weights, directions=directions, clip=clip, missing=missing,
+                standardization=standardization,
+            ),
         )
     reports = {}
     rows = []
@@ -186,7 +197,12 @@ def research_combination(
     if not any(row["有效 IC 天数"] for row in rows):
         raise ValueError("测试期没有有效 IC 样本，请检查日期、股票数量和因子是否为常数。")
     spec = [
-        {"name": f.name, "version": f.version, "weight": weights[f.name], "direction": f.direction, "clip": clip, "missing": missing}
+        {
+            "name": f.name, "display_name": f.display_name or f.name, "version": f.version,
+            "weight": weights[f.name], "direction": f.direction,
+            "clip": clip, "missing": missing, "standardization": standardization,
+            **({"custom_factor": custom_factor_to_dict(f)} if isinstance(f, CustomFactor) else {}),
+        }
         for f in components
     ]
     return CombinationResult(weights, correlation, pd.DataFrame(rows), reports, spec, dropped, signal_end, purge)

@@ -1,4 +1,4 @@
-"""自定义因子：由用户在因子研究室中通过结构化参数定义的因子。
+"""自定义因子：由用户在因子研究室中通过结构化参数或公式定义的因子。
 
 与内置因子一致，输出 ``(date, symbol, value)`` 三列长表；实现只使用
 rolling / shift 等因果算子，满足防未来函数约定。自定义因子可直接交给
@@ -14,12 +14,14 @@ from pathlib import Path
 
 import pandas as pd
 
+from quant_platform.data.extras import extra_columns, require_extra_data
 from quant_platform.factors.base import (
     FACTOR_COLUMNS,
     FactorDefinition,
     melt_wide,
     pivot_field,
 )
+from quant_platform.factors.expression import parse_factor_expression
 
 _PRICE = "adjusted_close"
 
@@ -117,14 +119,22 @@ def _make_formula(field: str, operator: str, window: int, window2: int | None) -
 
 @dataclass(frozen=True)
 class CustomFactor(FactorDefinition):
-    """由结构化参数（字段 / 算子 / 窗口 / 方向）驱动的自定义因子。"""
+    """用同一个持久化格式保存结构化因子和公式因子。"""
 
     field: str = "adjusted_close"
     operator: str = "momentum"
     window: int = 20
     window2: int | None = None
+    expression: str | None = None
 
     def __post_init__(self) -> None:
+        if self.direction not in (1, -1):
+            raise ValueError("direction 只能是 1 或 -1")
+        if self.expression is not None:
+            parsed = parse_factor_expression(self.expression)
+            object.__setattr__(self, "min_history", parsed.min_history)
+            object.__setattr__(self, "required_fields", parsed.fields)
+            return
         if self.field not in FIELDS:
             raise ValueError(f"未知字段: {self.field}")
         op = OPERATORS.get(self.operator)
@@ -145,6 +155,13 @@ class CustomFactor(FactorDefinition):
         return tuple(dict.fromkeys(fields))
 
     def compute(self, bars: pd.DataFrame) -> pd.DataFrame:
+        if self.expression is not None:
+            parsed = parse_factor_expression(self.expression)
+            require_extra_data(bars, extra_columns(parsed.fields))
+            missing = [field for field in parsed.fields if field not in bars.columns]
+            if missing:
+                raise ValueError(f"行情数据缺少字段: {', '.join(missing)}")
+            return melt_wide(parsed.compute({field: pivot_field(bars, field) for field in parsed.fields}))
         x = _wide(bars, self.field)
         operator = self.operator
         if operator == "momentum":
@@ -188,10 +205,26 @@ def build_custom_factor(
     window: int = 20,
     window2: int | None = None,
     direction: int | None = None,
+    expression: str | None = None,
 ) -> CustomFactor:
     """校验并构造一个自定义因子，自动补全公式、最小历史与所需字段。"""
     if not name or not name.strip():
         raise ValueError("因子标识不能为空")
+    if expression is not None:
+        if not isinstance(expression, str) or not expression.strip():
+            raise ValueError("请输入因子公式")
+        expression = expression.strip()
+        return CustomFactor(
+            name=name.strip(),
+            display_name=display_name.strip() or name.strip(),
+            description=description.strip(),
+            formula=expression,
+            direction=1 if direction is None else direction,
+            category="自定义",
+            source="自定义",
+            version="custom-expression-v1",
+            expression=expression,
+        )
     op = OPERATORS.get(operator)
     if op is None:
         raise ValueError(f"未知算子: {operator}")
@@ -232,6 +265,7 @@ def custom_factor_to_dict(factor: CustomFactor) -> dict[str, object]:
         "window": factor.window,
         "window2": factor.window2,
         "direction": factor.direction,
+        **({"expression": factor.expression} if factor.expression is not None else {}),
     }
 
 
@@ -241,11 +275,12 @@ def custom_factor_from_dict(data: dict[str, object]) -> CustomFactor:
         name=str(data["name"]),
         display_name=str(data.get("display_name", "")),
         description=str(data.get("description", "")),
-        field=str(data["field"]),
-        operator=str(data["operator"]),
-        window=int(data["window"]),
+        field=str(data.get("field", "adjusted_close")),
+        operator=str(data.get("operator", "momentum")),
+        window=int(data.get("window", 20)),
         window2=int(data["window2"]) if data.get("window2") is not None else None,
         direction=int(data["direction"]) if data.get("direction") is not None else None,
+        expression=data.get("expression"),
     )
 
 

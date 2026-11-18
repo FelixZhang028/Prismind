@@ -20,6 +20,7 @@ import { pendingAuditRun } from '../auditLink.js'
 import { benchmarkCards, benchmarkChoices, benchmarkCoverageNote, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
 import { CURRENT_POOL, marketChoices, marketLabel, marketNote, usableMarket } from '../marketPresentation.js'
 import { paperPrefill, returnTone } from '../paperPresentation.js'
+import { FACTOR_STANDARDIZATIONS, takeFactorBacktestDraft } from '../factorBacktestDraft.js'
 
 const props = defineProps({
   routeContext: { type: Object, default: () => ({}) },
@@ -37,6 +38,18 @@ const catalogLoading = ref(false)
 const catalogErrors = ref([])
 const strategyParameters = reactive({})
 const selectedStrategy = computed(() => strategyOptions.value.find((s) => s.value === form.strategy))
+const factorComposition = computed(() => {
+  if (form.strategy !== 'factor_composite') return []
+  try {
+    const rows = JSON.parse(strategyParameters.factors_json || '[]')
+    return Array.isArray(rows) ? rows.filter((row) => row?.name && Number(row.weight ?? 1) !== 0) : []
+  } catch {
+    return []
+  }
+})
+const factorStandardization = computed(() => FACTOR_STANDARDIZATIONS.find(
+  (option) => option.value === factorComposition.value[0]?.standardization,
+)?.label || 'Z-score')
 const poolPreset = ref(null)
 const benchmarkCoverage = ref(null)
 const riskEditor = ref(null)
@@ -285,9 +298,19 @@ async function loadCatalog() {
     form.market = usableMarket(form.market, markets.value)
     const requested = props.routeContext.strategy
     if (requested) {
+      const keepCombination = requested === 'factor_composite' && form.strategy === requested && factorComposition.value.length
       form.strategy = strategyOptions.value.some((s) => s.value === requested) ? requested : ''
       if (!form.strategy) catalogErrors.value.unshift('选中的策略已删除或无法加载，请重新选择。')
-      chooseStrategy()
+      if (!keepCombination) chooseStrategy()
+      if (form.strategy === 'factor_composite' && props.routeContext.mode === 'factor-combination') {
+        const draft = takeFactorBacktestDraft()
+        if (draft) {
+          form.market = draft.market
+          form.from_date = draft.from_date
+          form.to_date = draft.to_date
+          strategyParameters.factors_json = JSON.stringify(draft.factors)
+        }
+      }
     } else if (!strategyOptions.value.some((s) => s.value === form.strategy)) {
       form.strategy = catalog.default
       chooseStrategy()
@@ -356,7 +379,19 @@ onActivated(async () => {
       <p v-if="presetNote" class="mt-2 text-xs" :class="form.from_date < poolPreset?.snapshot_date ? 'text-amber-300' : 'text-slate-400'">{{ presetNote }}</p>
       <p v-if="coverageNote.text" class="mt-2 text-xs" :class="coverageNote.outside ? 'text-amber-300' : 'text-slate-400'">{{ coverageNote.text }}</p>
       <p v-for="(error, i) in catalogErrors" :key="i" role="alert" class="mt-3 text-sm text-amber-300">{{ error }}</p>
-      <div v-if="selectedStrategy?.parameters?.length" class="mt-5 grid gap-4 border-t border-white/10 pt-5 md:grid-cols-2 xl:grid-cols-4">
+      <div v-if="factorComposition.length" class="mt-5 rounded-xl border border-white/10 bg-white/5 p-4">
+        <p class="text-sm font-semibold text-white">因子组合 · {{ factorStandardization }}</p>
+        <ul class="mt-2 grid gap-2 text-sm text-slate-300 sm:grid-cols-2">
+          <li v-for="(factor, index) in factorComposition" :key="index" class="break-words">
+            {{ factor.display_name || factor.name }} · {{ fmtPct((factor.weight ?? 1) * 100) }}<span v-if="factor.direction === -1"> · 反向</span>
+            <code v-if="factor.custom_factor?.expression" class="ml-1 text-xs text-slate-400">{{ factor.custom_factor.expression }}</code>
+          </li>
+        </ul>
+      </div>
+      <p v-else-if="form.strategy === 'factor_composite'" class="mt-5 text-sm text-slate-400">
+        可在<a class="mx-1 cursor-pointer text-indigo-300 hover:text-indigo-200" href="?view=factor-lab" @click.prevent="openResearch('factor-lab')">因子研究</a>运行组合评估，再将权重和公式带入回测。
+      </p>
+      <div v-if="selectedStrategy?.parameters?.length && !factorComposition.length" class="mt-5 grid gap-4 border-t border-white/10 pt-5 md:grid-cols-2 xl:grid-cols-4">
         <FormField v-for="p in selectedStrategy.parameters" :key="p.name" v-model="strategyParameters[p.name]" :label="p.label" :type="p.choices?.length ? 'select' : p.kind === 'boolean' ? 'checkbox' : ['integer', 'number'].includes(p.kind) ? 'number' : 'text'" :options="(p.choices || []).map((v) => ({ value: v, label: v }))" :min="p.minimum" :max="p.maximum" :step="p.kind === 'integer' ? 1 : 'any'" :hint="p.description" />
       </div>
       <details :open="riskOpen" class="mt-5 rounded-xl border border-white/10 bg-white/5" @toggle="riskOpen = $event.target.open">

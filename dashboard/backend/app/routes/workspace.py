@@ -94,7 +94,9 @@ from quant_platform.application.factor_research_service import research_combinat
 from quant_platform.data.extras import extra_columns, require_extra_data
 from quant_platform.data.index_constituents import INDEX_UNIVERSES, IndexUniverseRepository
 from quant_platform.factors.base import FactorDefinition
-from quant_platform.factors.custom import CustomFactor
+from quant_platform.factors.custom import CustomFactor, build_custom_factor, custom_factor_to_dict
+from quant_platform.factors.expression import ALIASES, EXPRESSION_FIELDS, MAX_HISTORY, WINDOW_FUNCTIONS
+from quant_platform.factors.registry import default_registry
 from quant_platform.factors.evaluation import FactorEvaluator
 from quant_platform.factors.sample import FactorSampleFilters
 from quant_platform.core.exceptions import ConfigurationError
@@ -864,6 +866,7 @@ class FactorCompositeIn(BaseModel):
     weights: dict[str, float] | None = None
     winsorize: bool = True
     zscore: bool = False
+    standardization: Literal["zscore", "rank"] = "zscore"
     fill_method: str = "drop"
     corr_threshold: float = 0.7
     start_date: str = ""
@@ -885,6 +888,7 @@ class FactorResearchIn(BaseModel):
     weights: dict[str, float] | None = None
     clip: bool = True
     missing: str = "drop"  # drop | median
+    standardization: Literal["zscore", "rank"] = "zscore"
     horizon: int = Field(5, ge=1, le=20)
     n_groups: int = Field(5, ge=5, le=10)
     universe: str = Field(CURRENT_POOL, max_length=40)
@@ -894,11 +898,12 @@ class CustomFactorIn(BaseModel):
     name: str = Field(..., pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     display_name: str = ""
     description: str = ""
-    field: str
-    operator: str
-    window: int = Field(..., ge=1)
+    field: str = "adjusted_close"
+    operator: str = "momentum"
+    window: int = Field(20, ge=1)
     window2: int | None = None
     direction: int = Field(1, ge=-1, le=1)
+    expression: str | None = None
 
 
 @router.get("/factors", summary="因子库")
@@ -925,7 +930,15 @@ def list_factors(user: dict = Depends(get_current_user)):
         }
         for factor in registry.list()
     ]
-    return {"factors": factors}
+    return {
+        "factors": factors,
+        "expression_options": {
+            "fields": [{"name": field, "label": field_description(field)[0]} for field in EXPRESSION_FIELDS],
+            "aliases": ALIASES,
+            "functions": WINDOW_FUNCTIONS,
+            "max_history": MAX_HISTORY,
+        },
+    }
 
 
 @router.get("/factors/universes", summary="因子研究可以用的股票范围")
@@ -1034,6 +1047,7 @@ def _factor_composite(body: FactorCompositeIn, components: tuple, repository: An
             test_start=test_start, test_end=end,
             mode="manual" if body.weight_mode == "custom" else body.weight_mode,
             custom_weights=body.weights, clip=body.winsorize, missing=body.fill_method,
+            standardization=body.standardization,
             horizon=body.horizon, n_groups=body.n_groups,
             symbols=symbols, corr_threshold=body.corr_threshold,
         )
@@ -1043,12 +1057,13 @@ def _factor_composite(body: FactorCompositeIn, components: tuple, repository: An
     return {
         "correlation_matrix": corr, "dropped_factors": result.dropped,
         "weights": result.weights, "composite_spec": result.spec,
+        "universe": body.universe,
         "report": factor_report_to_dict(result.reports["我的组合"]),
         "evaluation_mode": "out_of_sample", "train_start": start.isoformat(),
         "train_end": train_end.isoformat(), "test_start": test_start.isoformat(), "test_end": end.isoformat(),
         "train_signal_end": result.train_signal_end.isoformat(), "purged_sessions": result.purged_sessions,
         "universe_symbols": symbols,
-        "note": _scope_note(body.universe) + "权重、方向及相关性剔除在训练期冻结；报告只评价测试期。负 IC 不取绝对值。合成前固定按日标准化。",
+        "note": _scope_note(body.universe) + "权重、方向及相关性剔除在训练期冻结；报告只评价测试期。训练期负 IC 的因子权重为零。",
     }
 
 
@@ -1106,6 +1121,7 @@ def _factor_research(body: FactorResearchIn, components: list, repository: Any, 
             custom_weights=body.weights,
             clip=body.clip,
             missing=body.missing,
+            standardization=body.standardization,
             horizon=body.horizon,
             n_groups=body.n_groups,
             symbols=symbols,
@@ -1137,24 +1153,32 @@ def _factor_research(body: FactorResearchIn, components: list, repository: Any, 
         "correlation_matrix": corr,
         "comparison": comparison,
         "composite_spec": result.spec,
+        "universe": body.universe,
         "reports": {label: factor_report_to_dict(report) for label, report in result.reports.items()},
     }
 
 
 @router.post("/factors/custom", status_code=status.HTTP_201_CREATED, summary="创建自定义因子")
 def factor_custom_create(body: CustomFactorIn, user: dict = Depends(get_current_user)):
-    if body.operator == "ma_ratio" and (not body.window2 or body.window2 <= body.window):
+    if body.expression is None and body.operator == "ma_ratio" and (not body.window2 or body.window2 <= body.window):
         raise HTTPException(status_code=422, detail="ma_ratio 算子的第二窗口需大于第一窗口")
+    if body.name in default_registry():
+        raise HTTPException(status_code=409, detail="该标识已被内置因子使用")
+    try:
+        factor = build_custom_factor(**body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     with get_conn() as conn:
-        exists = conn.execute("SELECT id FROM custom_factors WHERE user_id = ? AND name = ?", (user["id"], body.name)).fetchone()
-        if exists:
-            raise HTTPException(status_code=409, detail="因子标识已存在")
-        conn.execute(
-            "INSERT INTO custom_factors (user_id, name, display_name, description, field, operator, window, window2, direction, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (user["id"], body.name, body.display_name, body.description, body.field, body.operator, body.window,
-             body.window2, body.direction, _now()),
+        saved = conn.execute(
+            """INSERT INTO custom_factors
+               (user_id, name, display_name, description, field, operator, window, window2, direction, expression, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id, name) DO NOTHING""",
+            (user["id"], factor.name, factor.display_name, factor.description, factor.field, factor.operator,
+             factor.window, factor.window2, factor.direction, factor.expression, _now()),
         )
-    return {"created": body.model_dump()}
+        if saved.rowcount == 0:
+            raise HTTPException(status_code=409, detail="因子标识已存在")
+    return {"created": custom_factor_to_dict(factor)}
 
 
 @router.delete("/factors/custom/{name}", status_code=status.HTTP_204_NO_CONTENT, summary="删除自定义因子")
