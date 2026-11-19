@@ -32,14 +32,25 @@ class AShareUniverse(Universe):
     def prepare(self, bars: pd.DataFrame) -> None:
         """Compute trailing filters once; no future rows influence each date."""
         frame = bars.sort_values(["symbol", "trade_date"]).copy()
+        frame["trade_date"] = pd.to_datetime(frame["trade_date"]).dt.normalize()
         frame["history_count"] = frame.groupby("symbol").cumcount() + 1
         frame["average_amount"] = frame.groupby("symbol")["amount"].transform(
             lambda values: pd.to_numeric(values, errors="coerce").rolling(20, min_periods=1).mean()
         )
-        required = max(self.config.minimum_history_days, self.config.minimum_listing_days)
-        mask = frame.history_count.ge(required) & frame.average_amount.ge(
+        mask = frame["history_count"].ge(self.config.minimum_history_days) & frame["average_amount"].ge(
             self.config.minimum_average_amount
         )
+        if self.config.minimum_listing_days > 0:
+            if "list_date" in frame.columns:
+                listed_on = pd.to_datetime(frame["list_date"], errors="coerce").dt.normalize()
+                listed_days = (frame["trade_date"] - listed_on).dt.days
+                has_list_date = listed_on.notna()
+                listing_ok = listed_days.ge(self.config.minimum_listing_days).where(
+                    has_list_date, frame["history_count"].ge(self.config.minimum_listing_days)
+                )
+            else:
+                listing_ok = frame["history_count"].ge(self.config.minimum_listing_days)
+            mask &= listing_ok.fillna(False)
         mask &= frame["symbol"].isin(self.symbols)
         for column, expected in (("quality_status", "OK"), ("is_listed", True)):
             mask &= frame.get(column, pd.Series(index=frame.index, dtype=object)).eq(expected)
@@ -68,13 +79,19 @@ class AShareUniverse(Universe):
             history["symbol"].isin(self.symbols) & (history["trade_date"] <= cutoff)
         ].sort_values(["symbol", "trade_date"])
         eligible: list[str] = []
-        required_days = max(self.config.minimum_history_days, self.config.minimum_listing_days)
         for symbol, group in available.groupby("symbol", observed=True):
-            if len(group) < required_days:
+            if len(group) < self.config.minimum_history_days:
                 continue
             latest = group.iloc[-1]
             if pd.Timestamp(latest["trade_date"]) != cutoff:
                 continue
+            if self.config.minimum_listing_days > 0:
+                listed_on = pd.to_datetime(latest.get("list_date"), errors="coerce")
+                if pd.notna(listed_on):
+                    if (cutoff - listed_on.normalize()).days < self.config.minimum_listing_days:
+                        continue
+                elif len(group) < self.config.minimum_listing_days:
+                    continue
             if str(latest.get("quality_status", "UNKNOWN_STATUS")) != "OK":
                 continue
             suspended = latest.get("is_suspended", pd.NA)

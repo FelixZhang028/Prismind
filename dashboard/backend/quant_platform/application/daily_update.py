@@ -182,7 +182,8 @@ class DailyUpdate:
         ends = summary.loc[summary.index.astype(str).isin(listed), "end"]
         if ends.empty:
             return True
-        return float((pd.to_datetime(ends) >= pd.Timestamp(day)).mean()) < CAUGHT_UP_SHARE
+        covered = int((pd.to_datetime(ends) >= pd.Timestamp(day)).sum())
+        return (covered / len(listed)) < CAUGHT_UP_SHARE
 
     def _security_master(self, today: date, state: dict[str, Any]) -> dict[str, Any]:
         master = self.service.full_market_backfill().refresh_security_master()
@@ -261,9 +262,25 @@ class DailyUpdate:
         with self.lock():
             return fetch()
 
+    @staticmethod
+    def _step_outcome(outcome: dict[str, Any], label: str) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            key: value for key, value in outcome.items() if isinstance(value, (int, float, str))
+        }
+        failed = outcome.get("failed")
+        if isinstance(failed, dict) and failed:
+            summary["failed_count"] = len(failed)
+            summary["errors"] = [
+                f"{key} 的{label}：{redact_text(str(reason))[:200]}"
+                for key, reason in failed.items()
+            ]
+        else:
+            summary["failed_count"] = 0
+        return summary
+
     def _corporate_actions(self, today: date, state: dict[str, Any]) -> dict[str, Any]:
         outcome = self.service.backfill_corporate_action_gaps(progress=self.progress)
-        return {key: value for key, value in outcome.items() if isinstance(value, (int, float, str))}
+        return self._step_outcome(outcome, "分红送转")
 
     def _benchmarks(self, today: date, state: dict[str, Any]) -> dict[str, Any]:
         # 先查一遍已存的指数行情：不可能的点位（例如下载时把同代码的股票当成了指数）删掉重新下载。
@@ -295,11 +312,11 @@ class DailyUpdate:
 
     def _index_constituents(self, today: date, state: dict[str, Any]) -> dict[str, Any]:
         outcome = self.service.backfill_index_constituents(HISTORY_START, today, progress=self.progress)
-        return {key: value for key, value in outcome.items() if isinstance(value, (int, float, str))}
+        return self._step_outcome(outcome, "指数成分股")
 
     def _industry(self, today: date, state: dict[str, Any]) -> dict[str, Any]:
         outcome = self.service.backfill_industry(HISTORY_START, today, progress=self.progress)
-        return {key: value for key, value in outcome.items() if isinstance(value, (int, float, str))}
+        return self._step_outcome(outcome, "行业快照")
 
     def _derived(self, today: date, state: dict[str, Any]) -> dict[str, Any]:
         backfill = self.service.full_market_backfill()

@@ -87,7 +87,12 @@ class BacktestEngine:
         self.evaluation_mode = evaluation_mode
         self.fixed_universe = fixed_universe
         self.benchmark_symbol = benchmark_symbol
-        self.warmup_days = max(warmup_days, getattr(strategy, "min_history", 1) - 1)
+        min_history_days = getattr(getattr(universe, "config", None), "minimum_history_days", 0)
+        self.warmup_days = max(
+            warmup_days,
+            getattr(strategy, "min_history", 1) - 1,
+            min_history_days + 20 if min_history_days > 0 else 0,
+        )
         self.annualization = annualization
 
     def run(
@@ -138,6 +143,11 @@ class BacktestEngine:
             bars.loc[known, "is_listed"] = (
                 (bars.trade_date >= listed) & (delisted.isna() | (bars.trade_date <= delisted))
             )[known]
+            if "list_date" not in bars.columns:
+                bars["list_date"] = listed
+            else:
+                existing_list = pd.to_datetime(bars["list_date"], errors="coerce")
+                bars["list_date"] = existing_list.where(existing_list.notna(), listed)
         if not self.fixed_universe:
             absent = set(universe_symbols) - set(bars.symbol)
             if absent:
@@ -384,12 +394,19 @@ class BacktestEngine:
                 pending[next_date] = corrective_orders
                 continue
             # 回撤停止线的「停止新开仓」交给下面的目标检查：不买新股票，但已有持仓照常卖出或减少，
-            # 否则持仓会一直冻结。单日亏损等其他原因的暂停仍然跳过这一天，并记下来。
+            # 否则持仓会一直冻结。单日亏损或行业缺失同时命中时仍跳过这一天，并记下来。
             drawdown_stop = (
                 self.risk_limits.drawdown_action == "stop_new"
                 and snapshot.drawdown <= -self.risk_limits.max_drawdown
             )
-            if daily_risk.action == PortfolioRiskAction.STOP_NEW and not drawdown_stop:
+            other_stop_new = (
+                daily_return <= -self.risk_limits.max_daily_loss
+                or (
+                    self.risk_limits.max_industry_weight < 1
+                    and any(not industry_map.get(symbol) for symbol in weights)
+                )
+            )
+            if daily_risk.action == PortfolioRiskAction.STOP_NEW and (not drawdown_stop or other_stop_new):
                 if trade_date in rebalance_dates and index + 1 < len(dates):
                     risk_interventions.append(
                         {"trade_date": trade_date, "decision": "REJECT", "reasons": daily_risk.reasons}

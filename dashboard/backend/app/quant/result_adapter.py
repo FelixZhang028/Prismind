@@ -10,6 +10,7 @@ import pandas as pd
 from quant_platform.application.backtest_service import BacktestRun
 from quant_platform.factors.evaluation import FactorReport
 
+from .run_evidence import relative_run_dir
 from .symbols import to_bare
 
 # 回测成交明细最多内嵌的条数（完整明细见 data/runtime/runs/<run_id>/）。
@@ -73,7 +74,7 @@ def backtest_run_to_result(run: BacktestRun, names: dict[str, str] | None = None
         "metrics_reliable": bool(summary.get("metrics_reliable", False)),
         "run_id": run.result.run_id,
         "run_kind": getattr(run, "config_snapshot", {}).get("app", {}).get("backtest", {}).get("run_kind", "single"),
-        "output_dir": str(run.output_dir),
+        "output_dir": relative_run_dir(run.output_dir),
         "trades": fills_to_trades(run.result.fills),
         "positions": final_positions(run.result.positions, names=names, as_of=nav_dates[-1] if nav_dates else None),
     }

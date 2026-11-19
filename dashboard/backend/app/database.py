@@ -24,9 +24,12 @@
 使用 Python 标准库 sqlite3，无需额外依赖。
 数据库文件：backend/data/app.db
 """
+import json
 import os
+import re
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
 from .security import email_key, gen_salt, hash_password
 
@@ -435,6 +438,7 @@ def init_db() -> None:
             conn.execute("ALTER TABLE custom_factors ADD COLUMN expression TEXT")
         if "preset" not in {row[1] for row in conn.execute("PRAGMA table_info(universe)")}:
             conn.execute("ALTER TABLE universe ADD COLUMN preset TEXT")
+        _migrate_output_dirs(conn)
 
     # No public default credentials. Bootstrap only when explicitly configured.
     email = os.getenv("FELLOWQUANT_ADMIN_EMAIL", "").strip().lower()
@@ -449,6 +453,41 @@ def init_db() -> None:
                 conn.execute(
                     "INSERT INTO users (name, email, password_hash, salt, created_at, is_admin) VALUES (?,?,?,?,?,?)",
                     ("管理员", email, hash_password(password, salt), salt, _now(), 1),
+                )
+
+
+def _migrate_output_dirs(conn: sqlite3.Connection) -> None:
+    """将历史记录中能对应到当前 runtime/runs 的绝对 output_dir 迁为相对路径 runs/<id>。"""
+
+    runs_root = Path(DB_PATH).resolve().parent / "runtime" / "runs"
+    if not runs_root.is_dir():
+        return
+    safe_id = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    for table in ("backtests", "paper_accounts"):
+        rows = conn.execute(
+            f"SELECT id, result FROM {table} WHERE result IS NOT NULL AND result LIKE '%output_dir%'"
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(row["result"])
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            raw = payload.get("output_dir")
+            if not isinstance(raw, str) or raw.startswith("runs/"):
+                continue
+            parts = [segment for segment in re.split(r"[\\/]+", raw.strip()) if segment]
+            if len(parts) < 2 or parts[-2] != "runs":
+                continue
+            run_id = parts[-1]
+            if run_id in {".", ".."} or not safe_id.fullmatch(run_id):
+                continue
+            if (runs_root / run_id).is_dir():
+                payload["output_dir"] = f"runs/{run_id}"
+                conn.execute(
+                    f"UPDATE {table} SET result = ? WHERE id = ?",
+                    (json.dumps(payload, ensure_ascii=False), row["id"]),
                 )
 
 

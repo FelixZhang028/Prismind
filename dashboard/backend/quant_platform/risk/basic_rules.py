@@ -182,28 +182,64 @@ def evaluate_daily_portfolio_risk(
 
     adjusted = dict(clean)
     reasons: list[str] = []
-    action = PortfolioRiskAction.NONE
+    stop_new_reasons: list[str] = []
+    missing_industry = False
+
     if daily_return <= -limits.max_daily_loss:
-        return DailyPortfolioRisk(
-            RiskDecision.REJECT,
-            PortfolioRiskAction.STOP_NEW,
-            ("单日亏损达到限制：收盘后停止生成下一交易日新委托",),
-            (),
-            current_total,
-            current_max,
-            current_drawdown,
-        )
+        stop_new_reasons.append("单日亏损达到限制：收盘后停止生成下一交易日新委托")
     if limits.max_industry_weight < 1:
         if any(not (industry_map or {}).get(symbol) for symbol in clean):
+            missing_industry = True
+            stop_new_reasons.append("持仓缺少当时可得行业，暂停新委托")
+    drawdown_breached = current_drawdown <= -limits.max_drawdown
+    if drawdown_breached and limits.drawdown_action == "stop_new":
+        stop_new_reasons.append(f"账户回撤达到 {limits.max_drawdown:.0%}，停止新开仓")
+
+    # 优先级：清仓 > 减仓 > 停止新委托 > 仓位再平衡。
+    if drawdown_breached and limits.drawdown_action == "liquidate":
+        if clean:
             return DailyPortfolioRisk(
-                RiskDecision.REJECT,
-                PortfolioRiskAction.STOP_NEW,
-                ("持仓缺少当时可得行业，暂停新委托",),
+                RiskDecision.ADJUST,
+                PortfolioRiskAction.LIQUIDATE,
+                (*stop_new_reasons, f"账户回撤达到 {limits.max_drawdown:.0%}，执行清仓"),
                 (),
                 current_total,
                 current_max,
                 current_drawdown,
             )
+        if stop_new_reasons:
+            return DailyPortfolioRisk(
+                RiskDecision.REJECT,
+                PortfolioRiskAction.STOP_NEW,
+                tuple(stop_new_reasons),
+                (),
+                current_total,
+                current_max,
+                current_drawdown,
+            )
+        return DailyPortfolioRisk(
+            RiskDecision.PASS,
+            PortfolioRiskAction.NONE,
+            (),
+            (),
+            current_total,
+            current_max,
+            current_drawdown,
+        )
+
+    if stop_new_reasons and not (drawdown_breached and limits.drawdown_action == "reduce"):
+        return DailyPortfolioRisk(
+            RiskDecision.REJECT,
+            PortfolioRiskAction.STOP_NEW,
+            tuple(stop_new_reasons),
+            (),
+            current_total,
+            current_max,
+            current_drawdown,
+        )
+
+    action = PortfolioRiskAction.NONE
+    if limits.max_industry_weight < 1 and not missing_industry:
         totals: dict[str, float] = {}
         for symbol, weight in clean.items():
             industry = industry_map[symbol]
@@ -214,17 +250,6 @@ def evaluate_daily_portfolio_risk(
                 adjusted[symbol] *= limits.max_industry_weight / total
         if adjusted != clean:
             reasons.append("行业集中度超限，降低行业仓位")
-    drawdown_breached = current_drawdown <= -limits.max_drawdown
-    if drawdown_breached and limits.drawdown_action == "stop_new":
-        return DailyPortfolioRisk(
-            RiskDecision.REJECT,
-            PortfolioRiskAction.STOP_NEW,
-            (f"账户回撤达到 {limits.max_drawdown:.0%}，停止新开仓",),
-            (),
-            current_total,
-            current_max,
-            current_drawdown,
-        )
 
     if limits.daily_position_limits:
         ranked = sorted(adjusted.items(), key=lambda item: item[1], reverse=True)
@@ -246,31 +271,36 @@ def evaluate_daily_portfolio_risk(
             adjusted = {symbol: weight * scale for symbol, weight in adjusted.items()}
             reasons.append(f"实际总仓位超过 {total_cap:.0%}，自动减仓")
 
-    if drawdown_breached:
-        if limits.drawdown_action == "liquidate":
-            adjusted = {}
-            reasons.append(f"账户回撤达到 {limits.max_drawdown:.0%}，执行清仓")
-            action = PortfolioRiskAction.LIQUIDATE
-        elif limits.drawdown_action == "reduce":
-            target_total = min(
-                current_total,
-                limits.drawdown_target_weight,
-                limits.max_total_weight,
-                1.0 - limits.minimum_cash_ratio,
-            )
-            adjusted_total = sum(adjusted.values())
-            if adjusted_total > target_total + RISK_WEIGHT_TOLERANCE:
-                scale = target_total / adjusted_total if adjusted_total > 0 else 0.0
-                adjusted = {symbol: weight * scale for symbol, weight in adjusted.items()}
-            reasons.append(
-                f"账户回撤达到 {limits.max_drawdown:.0%}，仓位降至不高于 {target_total:.0%}"
-            )
-            action = PortfolioRiskAction.REDUCE
+    if drawdown_breached and limits.drawdown_action == "reduce":
+        target_total = min(
+            current_total,
+            limits.drawdown_target_weight,
+            limits.max_total_weight,
+            1.0 - limits.minimum_cash_ratio,
+        )
+        adjusted_total = sum(adjusted.values())
+        if adjusted_total > target_total + RISK_WEIGHT_TOLERANCE:
+            scale = target_total / adjusted_total if adjusted_total > 0 else 0.0
+            adjusted = {symbol: weight * scale for symbol, weight in adjusted.items()}
+        reasons.append(
+            f"账户回撤达到 {limits.max_drawdown:.0%}，仓位降至不高于 {target_total:.0%}"
+        )
+        action = PortfolioRiskAction.REDUCE
 
     changed = set(adjusted) != set(clean) or any(
         abs(adjusted.get(symbol, 0.0) - weight) > 1e-9 for symbol, weight in clean.items()
     )
     if not changed:
+        if stop_new_reasons:
+            return DailyPortfolioRisk(
+                RiskDecision.REJECT,
+                PortfolioRiskAction.STOP_NEW,
+                tuple(stop_new_reasons),
+                (),
+                current_total,
+                current_max,
+                current_drawdown,
+            )
         return DailyPortfolioRisk(
             RiskDecision.PASS,
             PortfolioRiskAction.NONE,
@@ -282,6 +312,7 @@ def evaluate_daily_portfolio_risk(
         )
     if action == PortfolioRiskAction.NONE:
         action = PortfolioRiskAction.REBALANCE
+    all_reasons = (*stop_new_reasons, *reasons)
     targets = tuple(
         TargetPosition(strategy_id, trade_date, symbol, weight)
         for symbol, weight in sorted(adjusted.items())
@@ -290,7 +321,7 @@ def evaluate_daily_portfolio_risk(
     return DailyPortfolioRisk(
         RiskDecision.ADJUST,
         action,
-        tuple(reasons),
+        all_reasons,
         targets,
         current_total,
         current_max,

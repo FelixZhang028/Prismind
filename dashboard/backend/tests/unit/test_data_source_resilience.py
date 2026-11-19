@@ -94,7 +94,8 @@ class CalendarProvider(Provider):
 
 def test_during_the_day_it_catches_up_to_the_last_published_trading_day(tmp_path):
     yesterday = TODAY - timedelta(days=1)
-    service = Service(CalendarProvider([TODAY - timedelta(days=3), yesterday]))     # 本地只到 10-15
+    all_listed = ("A.SZ", "B.SZ", "C.SZ", "D.SZ", "E.SZ")
+    service = Service(CalendarProvider([TODAY - timedelta(days=3), yesterday]), stored=all_listed)     # 本地已覆盖全部在市股票到 10-15
     result = DailyUpdate(service, tmp_path / "state.json").run(TODAY + timedelta(days=0))
     # 本地 summary 到 2026-10-15，最近发布的交易日是 10-15：已经是最新的
     assert result["market"] == "not_ready" and result.get("up_to_date") is True and "caught_up" not in result
