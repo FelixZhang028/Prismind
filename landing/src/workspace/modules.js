@@ -9,6 +9,7 @@ export const groups = [
   // 研究：看一类情况（事件研究）、按条件找股票（条件选股）、看一只股票（AI 个股分析）、看行情。
   { label: '研究', en: 'Research', step: 1, items: [
     { key: 'event-study', label: '事件研究', hint: '某种情况出现以后，股票之后通常怎么走' },
+    { key: 'market-sentiment', label: '市场情绪', hint: '大盘宽度、量能、涨跌停生态和历史异动统计' },
     { key: 'stock-screen', label: '条件选股', hint: '按自己设的条件，从全市场筛出今天符合的股票' },
     { key: 'agent-lab', label: 'AI 个股分析', ai: true, hint: '用平台数据整理一只股票，AI 解读每条都注明依据' },
     { key: 'market-chart', label: '行情图表', hint: 'K 线、均线、成交量和技术指标' },
@@ -90,7 +91,7 @@ export function itemLabel(key) {
 
 // 内容宽度与外壳独立：研究页为图表留空间，账户/设置保持紧凑。
 const wideViews = new Set([
-  'market-chart', 'event-study', 'stock-screen',
+  'market-chart', 'market-sentiment', 'event-study', 'stock-screen',
   'factor-lab', 'backtest-review', 'research', 'audit-report',
   'strategy-forensics', 'strategy-studio', 'run-library', 'paper-accounts',
 ])
@@ -105,6 +106,7 @@ const investmentKnowledgeView = defineAsyncComponent(() => import('./views/Inves
 export const views = {
   [overviewKey]: defineAsyncComponent(() => import('./views/OverviewView.vue')),
   'market-chart': defineAsyncComponent(() => import('./views/MarketChartView.vue')),
+  'market-sentiment': defineAsyncComponent(() => import('./views/MarketSentimentView.vue')),
   'strategy-hub': defineAsyncComponent(() => import('./views/StrategyHubView.vue')),
   'strategy-studio': defineAsyncComponent(() => import('./views/StrategyStudioView.vue')),
   'factor-lab': defineAsyncComponent(() => import('./views/FactorLabView.vue')),

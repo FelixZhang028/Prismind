@@ -51,7 +51,7 @@ from ..quant.research_runs import (
     tunable_parameters,
     walk_forward_range,
 )
-from ..quant import audit, daily_schedule, home, rate_limit
+from ..quant import audit, daily_schedule, home, market_sentiment, rate_limit
 from ..quant.backtest_jobs import backtest_slot, save_result
 from ..quant.universe_import import MAX_POOL_SIZE, merge_codes
 from ..quant.compute import cached, computing
@@ -2102,6 +2102,18 @@ def workspace_home(user: dict = Depends(get_current_user)):
     payload["ai"] = {"available": platform_ai.platform_model() is not None,
                      "usage": {kind: platform_ai.usage(user, kind) for kind in ("chat", "brief")}}
     return clean(payload)
+
+
+@router.get("/market/sentiment", summary="日频市场情绪、宽度、涨跌停生态与历史异动统计")
+def market_sentiment_report(
+    window: int = Query(default=60, description="趋势图展示的交易日数量（60 / 120 / 250）"),
+    user: dict = Depends(get_current_user),
+):
+    from quant_platform.ai_research.report import clean
+
+    if window not in (60, 120, 250):
+        raise HTTPException(status_code=422, detail="时间窗口只支持 60、120 或 250 个交易日")
+    return clean(market_sentiment.get_sentiment(market_repository(), window=window))
 
 
 def _industry_names() -> list[str]:

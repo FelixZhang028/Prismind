@@ -19,6 +19,7 @@ from quant_platform.ai_research.report import period_name
 from quant_platform.application.benchmarks import BENCHMARK_NAMES
 
 from ..database import get_conn
+from . import market_sentiment
 from .runtime import market_repository, security_names
 from .stock_financials import DEADLINES, _deadline
 from .symbols import to_bare, to_canonical
@@ -214,5 +215,6 @@ def build(user: dict[str, Any], universe: list[str], today: date) -> dict[str, A
         out.update(breadth=breadth(table, day), industries=industries(table, day), pool=pool(table, universe, names))
     else:
         out.update(breadth=None, industries=None, pool=pool(pd.DataFrame(columns=["name"]), universe, names))
+    out["sentiment"] = market_sentiment.home_summary(repository)
     out["report_seasons"] = report_seasons(repository, out["breadth"]["total"] if out.get("breadth") else 0, today)
     return out
