@@ -288,6 +288,7 @@ async function resumeJob(job) {
     start_date: job.start_date,
     end_date: job.end_date,
     datasets: job.datasets || ['bars', 'actions', 'derived'],
+    ...(job.fundamentals_index ? { scope: job.fundamentals_index } : {}),
   })
 }
 

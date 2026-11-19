@@ -1,10 +1,12 @@
 <script setup>
 import { computed } from 'vue'
+import { neutralizationCoverageSummary } from '../neutralizationPresentation.js'
 import DataTable from './DataTable.vue'
 import LineChart from './LineChart.vue'
 import SectionCard from './SectionCard.vue'
 
 const props = defineProps({ report: { type: Object, required: true } })
+const coverage = computed(() => neutralizationCoverageSummary(props.report.neutralization_coverage))
 const groupColors = ['#38bdf8', '#818cf8', '#a78bfa', '#f472b6', '#fb7185', '#fb923c', '#facc15', '#a3e635', '#34d399', '#2dd4bf']
 const datesOf = (rows) => rows.map(({ date }) => date)
 const pct = (value) => value == null ? null : value * 100
@@ -69,6 +71,32 @@ const industryRows = computed(() => industry.value?.rows.map((row) => ({
 </script>
 
 <template>
+  <SectionCard
+    v-if="coverage"
+    title="中性化覆盖率与实际日期范围"
+    :hint="`所选区间 ${coverage.requestedRange}，回归 / 处理实际使用 ${coverage.effectiveRange}。仅统计同时具备所需历史暴露的样本，不用未来数据补齐。`"
+  >
+    <div class="mb-4 flex flex-wrap gap-2">
+      <div
+        v-for="item in coverage.metrics"
+        :key="item.label"
+        class="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs"
+      >
+        <span class="text-slate-400">{{ item.label }}：</span>
+        <span class="font-medium text-white">{{ item.value }}</span>
+      </div>
+    </div>
+    <p
+      v-if="coverage.insufficient"
+      class="mb-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+    >
+      {{ coverage.warning }}
+    </p>
+    <div class="max-h-80 overflow-y-auto">
+      <DataTable :columns="coverage.columns" :rows="coverage.rows" empty="暂无按年覆盖率数据" />
+    </div>
+  </SectionCard>
+
   <SectionCard title="滚动 IC IR" hint="最近 60 个交易日的 IC 均值除以标准差。至少有 20 个有效观测才计算。">
     <p class="mb-3 text-xs text-slate-400">{{ rankIcCoverage }}</p>
     <LineChart :series="irSeries" :dates="irDates" :height="190" :baseline="0" />

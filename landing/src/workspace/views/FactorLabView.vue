@@ -23,6 +23,7 @@ import FactorFilter from '../ui/FactorFilter.vue'
 import FactorLibraryTable from '../ui/FactorLibraryTable.vue'
 import { factorsBySource, filterFactors } from '../factorFilters.js'
 import { directionText, directionTone, factorNote } from '../factorPresentation.js'
+import { neutralizationCoverageSummary } from '../neutralizationPresentation.js'
 import { NEUTRALIZATION_OPTIONS } from '../dataPresentation.js'
 import { FACTOR_STANDARDIZATIONS, openFactorBacktest } from '../factorBacktestDraft.js'
 
@@ -651,6 +652,7 @@ function buildReportView(report) {
 }
 
 const evalView = computed(() => buildReportView(evalResult.value))
+const evalCoverage = computed(() => neutralizationCoverageSummary(evalResult.value?.neutralization_coverage))
 const compView = computed(() => buildReportView(compResult.value?.report))
 
 // 相关性矩阵
@@ -823,6 +825,17 @@ onBeforeUnmount(() => {
             · {{ NEUTRALIZATION_OPTIONS.find((option) => option.value === evalResult.neutralization)?.label }}
             <template v-if="reportFilterLabels.length"> · {{ reportFilterLabels.join('、') }}</template>
           </p>
+          <p v-if="evalCoverage && !evalCoverage.insufficient" class="mt-1 text-xs text-slate-400">
+            回归 / 中性化实际有效日期：{{ evalCoverage.effectiveRange }}（联合覆盖率 {{ evalCoverage.jointText }}）
+          </p>
+        </div>
+        <div
+          v-if="evalCoverage?.insufficient"
+          role="alert"
+          class="rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-3.5 text-sm text-amber-100"
+        >
+          <p class="font-semibold text-amber-200">中性化覆盖不足，请勿当作全区间结论</p>
+          <p class="mt-1 text-xs leading-relaxed text-amber-100/90">{{ evalCoverage.warning }}</p>
         </div>
         <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
           <MetricCard v-for="m in evalView.metrics" :key="m.label" :label="m.label" :value="m.value" :sub="m.sub" :up="m.up" :tone="m.tone" />
