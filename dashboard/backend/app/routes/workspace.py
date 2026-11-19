@@ -2145,6 +2145,7 @@ class EventStudyIn(BaseModel):
     end: str = Field("", max_length=10)
     cooldown: int = 20
     keep_st: bool = False
+    entry: str = Field("close", max_length=20)
 
 
 @router.post("/event-study", summary="事件研究：满足条件以后，全市场历史上通常怎么样（和全部交易日对照）")

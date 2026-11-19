@@ -230,7 +230,10 @@ class BacktestService:
         backtest_section = require_mapping(app, "backtest")
         # 空值或显式留空表示关闭基准对比；缺省沿用沪深 300。
         benchmark_symbol = str(backtest_section.get("benchmark", "000300.SH") or "")
-        warmup_days = int(backtest_section.get("warmup_days", 120))
+        warmup_days = max(
+            int(backtest_section.get("warmup_days", 120)),
+            universe.config.minimum_history_days + 20 if universe.config.minimum_history_days > 0 else 0,
+        )
         registry = default_registry()
         engine = BacktestEngine(
             repository=repository,

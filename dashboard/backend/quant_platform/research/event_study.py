@@ -37,6 +37,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy.stats import t as student_t
 
 from quant_platform.data.fundamentals import FUNDAMENTALS_TABLE, point_in_time
 from quant_platform.data.index_constituents import INDEX_UNIVERSES, membership
@@ -51,6 +52,11 @@ YEAR_WINDOW = 250
 LOOKBACK_CALENDAR_DAYS = 420
 RECENT_EVENTS = 20
 COOLDOWNS = (0, 5, 20, 60)
+ENTRY_MODES = {
+    "close": "事件当日收盘",
+    "next_open": "次日开盘（跳过一字涨停和停牌）",
+}
+MIN_SIGNIFICANCE_DAYS = 5
 BINS = [-math.inf, -0.3, -0.2, -0.1, -0.05, 0.0, 0.05, 0.1, 0.2, 0.3, math.inf]
 BIN_LABELS = ["跌 30% 以上", "跌 20～30%", "跌 10～20%", "跌 5～10%", "跌 0～5%", "涨 0～5%", "涨 5～10%",
               "涨 10～20%", "涨 20～30%", "涨 30% 以上"]
@@ -170,6 +176,7 @@ def options() -> dict[str, Any]:
                         "directions": [{"value": v, "label": w} for v, w in kind.directions], "compare": kind.compare,
                         "example": kind.example, "source": kind.source} for key, kind in CONDITIONS.items()],
         "scopes": [{"value": key, "label": label} for key, label in SCOPES.items()],
+        "entries": [{"value": key, "label": label} for key, label in ENTRY_MODES.items()],
         "horizons": list(HORIZONS), "main_horizon": MAIN_HORIZON, "cooldowns": list(COOLDOWNS),
         "max_conditions": MAX_CONDITIONS,
         "presets": [{"key": key, "question": question, "hint": hint, "conditions": conditions}
@@ -187,12 +194,14 @@ class Panel:
     dates: pd.DatetimeIndex
     symbols: pd.Index
     close: pd.DataFrame          # 复权收盘价，停牌日沿用前一天
+    open: pd.DataFrame | None    # 复权开盘价（用于次日开盘入场口径）
     has_bar: pd.DataFrame        # 这一天有没有行情
     trading: pd.DataFrame        # 有行情且没有停牌
     st: pd.DataFrame
     amount: pd.DataFrame
     limit_up: pd.DataFrame
     limit_down: pd.DataFrame
+    open_at_up_limit: pd.DataFrame | None
     listed: pd.DataFrame         # 到这一天为止已经有 MIN_LISTED_DAYS 个交易日的行情
     last_position: pd.Series     # 每只股票最后一根行情在日期里的位置
 
@@ -211,7 +220,10 @@ def build_panel(repository: Any, start: date | None = None) -> Panel:
     if bounds is None:
         raise EventStudyError("平台还没有行情数据。")
     columns = ["symbol", "trade_date", "adjusted_close", "raw_close", "amount", "is_st", "is_suspended", "up_limit", "down_limit"]
-    bars = repository._read_range("daily_bars", start_date=start, end_date=bounds[1], columns=columns)
+    try:
+        bars = repository._read_range("daily_bars", start_date=start, end_date=bounds[1], columns=[*columns, "raw_open"])
+    except Exception:  # noqa: BLE001 - 兼容不含 raw_open 的旧表或精简测试数据
+        bars = repository._read_range("daily_bars", start_date=start, end_date=bounds[1], columns=columns)
     bars["trade_date"] = pd.to_datetime(bars["trade_date"]).dt.normalize()
     bars = bars.drop_duplicates(["trade_date", "symbol"], keep="last").set_index(["trade_date", "symbol"]).sort_index()
     dates = bars.index.get_level_values(0).unique().sort_values()
@@ -222,13 +234,22 @@ def build_panel(repository: Any, start: date | None = None) -> Panel:
     raw = _wide(bars, "raw_close", dates, symbols).astype("float64")
     up = _wide(bars, "up_limit", dates, symbols).astype("float64")
     down = _wide(bars, "down_limit", dates, symbols).astype("float64")
+    adj_open: pd.DataFrame | None = None
+    open_at_up_limit: pd.DataFrame | None = None
+    if "raw_open" in bars.columns:
+        raw_open = _wide(bars, "raw_open", dates, symbols).astype("float64")
+        valid_ratio = (raw > 0) & (raw_open > 0)
+        scale = close.astype("float64").where(valid_ratio) / raw.where(valid_ratio)
+        adj_open = (raw_open * scale).where(valid_ratio).astype("float32")
+        open_at_up_limit = ((raw_open >= up - 0.005) & up.notna() & raw_open.notna()).fillna(False)
     positions = pd.Series(np.arange(len(dates)), index=dates)
     last = has_bar.apply(lambda col: positions[col].max() if col.any() else -1)
     return Panel(
-        dates=dates, symbols=symbols, close=close.ffill(), has_bar=has_bar, trading=has_bar & ~suspended,
+        dates=dates, symbols=symbols, close=close.ffill(), open=adj_open, has_bar=has_bar, trading=has_bar & ~suspended,
         st=_wide(bars, "is_st", dates, symbols).astype("boolean").fillna(False).astype(bool),
         amount=_wide(bars, "amount", dates, symbols).astype("float32"),
         limit_up=(raw - up).abs() < 0.005, limit_down=(raw - down).abs() < 0.005,
+        open_at_up_limit=open_at_up_limit,
         listed=has_bar.cumsum() >= MIN_LISTED_DAYS, last_position=last,
     )
 
@@ -394,7 +415,8 @@ def universe_mask(repository: Any, p: Panel, scope: str, pool: list[str], indust
                                      name=exposures["industry"].map(industry_name))
         exposures = exposures.drop_duplicates(["date", "symbol"], keep="last")
         names = exposures.set_index(["date", "symbol"])["name"].unstack("symbol")
-        names = names.reindex(names.index.union(p.dates)).ffill().bfill().reindex(index=p.dates, columns=p.symbols)
+        # 只向前填充：事件日之前尚未记录行业分类的股票不向后借用未来分类，避免前视偏差。
+        names = names.reindex(names.index.union(p.dates)).ffill().reindex(index=p.dates, columns=p.symbols)
         mask &= names.isin(industries)
     return mask
 
@@ -456,9 +478,55 @@ def _mean(values: np.ndarray) -> float | None:
     return round(float(values.mean()), 5) if len(values) else None
 
 
+def _significance(excess_matrix: np.ndarray, events: np.ndarray) -> dict[str, Any]:
+    """按事件发生日聚合计算超额收益 t 检验，避免同日多股高度相关夸大显著性。"""
+
+    day_means = _row_mean(np.where(events, excess_matrix, np.nan))
+    valid = day_means[np.isfinite(day_means)]
+    days = int(len(valid))
+    if days < MIN_SIGNIFICANCE_DAYS:
+        return {
+            "event_days": days,
+            "daily_mean": round(float(valid.mean()), 5) if days else None,
+            "t_stat": None,
+            "p_value": None,
+            "significant": False,
+            "label": f"独立事件日不足 {MIN_SIGNIFICANCE_DAYS} 天，暂不做显著性检验",
+        }
+    mean = float(valid.mean())
+    std = float(valid.std(ddof=1))
+    if std <= 1e-12:
+        return {
+            "event_days": days,
+            "daily_mean": round(mean, 5),
+            "t_stat": None,
+            "p_value": None,
+            "significant": False,
+            "label": "各事件日超额收益波动为零，无法计算显著性",
+        }
+    t_stat = mean / (std / math.sqrt(days))
+    p_value = float(2.0 * student_t.sf(abs(t_stat), df=days - 1))
+    significant = p_value < 0.05
+    if significant and mean > 0:
+        label = "按事件日聚合检验显著优于同期市场（p < 0.05）"
+    elif significant and mean < 0:
+        label = "按事件日聚合检验显著弱于同期市场（p < 0.05）"
+    else:
+        label = "按事件日聚合检验未达显著水平（p ≥ 0.05）"
+    return {
+        "event_days": days,
+        "daily_mean": round(mean, 5),
+        "t_stat": round(float(t_stat), 4),
+        "p_value": round(p_value, 4),
+        "significant": significant,
+        "label": label,
+    }
+
+
 def _path(close: np.ndarray, base: np.ndarray, rows: np.ndarray, cols: np.ndarray, last: np.ndarray,
-          horizons: dict[int, dict[str, Any]]) -> dict[str, Any]:
-    """Average change from the event day to each of the next ``PATH_DAYS`` trading days.
+          horizons: dict[int, dict[str, Any]], *, entry_price: np.ndarray | None = None,
+          entry_ok: np.ndarray | None = None) -> dict[str, Any]:
+    """Average change from the entry price to each of the next ``PATH_DAYS`` trading days.
 
     ``events``: the events themselves (exact). ``market``: all stocks on the same days as the events,
     weighted like the events. ``all``: all eligible stock-days (a fixed sample). On ``HORIZONS`` the
@@ -466,7 +534,10 @@ def _path(close: np.ndarray, base: np.ndarray, rows: np.ndarray, cols: np.ndarra
 
     n = len(close)
     rng = np.random.default_rng(0)
-    base_rows, base_cols = np.nonzero(base)
+    entry_arr = close if entry_price is None else entry_price
+    valid_entry = np.ones_like(base, dtype=bool) if entry_ok is None else entry_ok
+    effective_base = base & valid_entry
+    base_rows, base_cols = np.nonzero(effective_base)
     if len(base_rows) > PATH_SAMPLE:
         pick = rng.choice(len(base_rows), PATH_SAMPLE, replace=False)
         base_rows, base_cols = base_rows[pick], base_cols[pick]
@@ -474,12 +545,15 @@ def _path(close: np.ndarray, base: np.ndarray, rows: np.ndarray, cols: np.ndarra
     columns = np.arange(close.shape[1])
     if len(days) and len(days) * len(columns) > MARKET_CELLS:
         columns = np.sort(rng.choice(len(columns), max(1, MARKET_CELLS // len(days)), replace=False))
-    day_close = close[np.ix_(days, columns)]
-    day_base = base[np.ix_(days, columns)]
+    day_entry = entry_arr[np.ix_(days, columns)]
+    day_base = effective_base[np.ix_(days, columns)]
 
     def change(r: np.ndarray, c: np.ndarray, k: int) -> np.ndarray:
-        values = close[np.minimum(r + k, n - 1), c] / close[r, c] - 1
-        return np.where((r + k < n) & (r + k <= last[c]), values, np.nan)
+        denom = entry_arr[r, c]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            values = close[np.minimum(r + k, n - 1), c] / denom - 1
+        ok = valid_entry[r, c] & (r + k < n) & (r + k <= last[c]) & np.isfinite(denom) & (denom > 0)
+        return np.where(ok, values, np.nan)
 
     out: dict[str, list[float | None]] = {"days": [0], "events": [0.0], "market": [0.0], "all": [0.0]}
     for k in PATH_DAYS:
@@ -497,7 +571,8 @@ def _path(close: np.ndarray, base: np.ndarray, rows: np.ndarray, cols: np.ndarra
         if not len(days):
             out["market"].append(None)
             continue
-        ahead = close[np.ix_(np.minimum(days + k, n - 1), columns)] / day_close - 1
+        with np.errstate(invalid="ignore", divide="ignore"):
+            ahead = close[np.ix_(np.minimum(days + k, n - 1), columns)] / day_entry - 1
         usable = day_base & (days[:, None] + k < n) & (days[:, None] + k <= last[columns][None, :])
         day_mean = _row_mean(np.where(usable, ahead, np.nan))
         out["market"].append(_mean(np.where(np.isfinite(events), day_mean[where], np.nan)))
@@ -550,6 +625,9 @@ def run(repository: Any, request: dict[str, Any], *, pool: list[str], names: dic
         raise EventStudyError("冷却期只能是 " + "、".join(map(str, COOLDOWNS)) + " 个交易日")
     industries = [str(name) for name in request.get("industries") or []][:5]
     keep_st = bool(request.get("keep_st", False))
+    entry = str(request.get("entry") or "close").strip()
+    if entry not in ENTRY_MODES:
+        raise EventStudyError("入场口径只能是事件当日收盘（close）或次日开盘（next_open）")
 
     bounds = repository.daily_bar_bounds()
     if bounds is None:
@@ -567,14 +645,14 @@ def run(repository: Any, request: dict[str, Any], *, pool: list[str], names: dic
     stamp = _stamp(repository, _tables(conditions, scope, industries))
     key = None if stamp is None else (stamp, json.dumps(
         {"conditions": [{k: v for k, v in c.items() if k != "label"} for c in conditions], "scope": scope,
-         "cooldown": cooldown, "industries": industries, "keep_st": keep_st, "start": start.isoformat(),
+         "cooldown": cooldown, "industries": industries, "keep_st": keep_st, "entry": entry, "start": start.isoformat(),
          "end": end.isoformat(), "pool": sorted(pool) if scope == "pool" else []}, sort_keys=True, ensure_ascii=False))
     if key is not None:
         with _RESULTS_LOCK:
             if key in _RESULTS:
                 _RESULTS.move_to_end(key)
                 return copy.deepcopy(_RESULTS[key])
-    result = _compute(repository, conditions, scope, pool, industries, cooldown, keep_st, start, end, names)
+    result = _compute(repository, conditions, scope, pool, industries, cooldown, keep_st, entry, start, end, names)
     if key is not None:
         with _RESULTS_LOCK:
             _RESULTS[key] = result
@@ -584,8 +662,10 @@ def run(repository: Any, request: dict[str, Any], *, pool: list[str], names: dic
 
 
 def _compute(repository: Any, conditions: list[dict[str, Any]], scope: str, pool: list[str], industries: list[str],
-             cooldown: int, keep_st: bool, start: date, end: date, names: dict[str, str]) -> dict[str, Any]:
+             cooldown: int, keep_st: bool, entry: str, start: date, end: date, names: dict[str, str]) -> dict[str, Any]:
     p = panel(repository)
+    if entry == "next_open" and p.open is None:
+        raise EventStudyError("本地日线数据缺少开盘价，暂时无法使用次日开盘入场口径")
     in_range = pd.Series((p.dates >= pd.Timestamp(start)) & (p.dates <= pd.Timestamp(end)), index=p.dates)
     base = p.trading & p.listed
     if not keep_st:
@@ -611,20 +691,40 @@ def _compute(repository: Any, conditions: list[dict[str, Any]], scope: str, pool
     positions = np.arange(len(p.dates))[:, None]
     last = p.last_position.to_numpy()[None, :]
     close = p.close.to_numpy()
+    if entry == "next_open":
+        assert p.open is not None and p.open_at_up_limit is not None
+        open_np = p.open.to_numpy()
+        trading_np = p.trading.to_numpy()
+        open_limit_np = p.open_at_up_limit.to_numpy()
+        entry_price = np.full_like(close, np.nan)
+        entry_price[:-1] = open_np[1:]
+        next_tradable = np.zeros_like(base_np, dtype=bool)
+        next_tradable[:-1] = trading_np[1:] & ~open_limit_np[1:] & np.isfinite(open_np[1:]) & (open_np[1:] > 0)
+        entry_ok = next_tradable
+    else:
+        entry_price = close
+        entry_ok = np.ones_like(base_np, dtype=bool)
+    effective_base = base_np & entry_ok
+
     horizons = {}
     for h in HORIZONS:
         future = np.full_like(close, np.nan)
         future[:-h] = close[h:]
-        change = future / close - 1
+        with np.errstate(invalid="ignore", divide="ignore"):
+            change = future / entry_price - 1
         ended = positions + h > last                    # 之后退市（或停牌到数据结束）
         not_yet = positions + h >= len(p.dates)         # 还没到 h 个交易日
-        change[ended | not_yet] = np.nan
-        market = _row_mean(np.where(base_np, change, np.nan))[:, None]
+        blocked_entry = ~entry_ok & ~not_yet & ~ended
+        change[ended | not_yet | ~entry_ok] = np.nan
+        market = _row_mean(np.where(effective_base, change, np.nan))[:, None]
+        excess_matrix = change - market
         event_values = change[events]
         horizons[h] = {
-            "events": _summary(event_values), "all": _summary(change[base_np]),
-            "excess": _summary((change - market)[events]),
+            "events": _summary(event_values), "all": _summary(change[effective_base]),
+            "excess": _summary(excess_matrix[events]),
+            "significance": _significance(excess_matrix, events),
             "not_yet": int((events & not_yet).sum()), "left_market": int((events & ended & ~not_yet).sum()),
+            "untradable_entry": int((events & blocked_entry).sum()),
         }
         if h == MAIN_HORIZON:
             main_change, main_market = change, market
@@ -635,7 +735,7 @@ def _compute(repository: Any, conditions: list[dict[str, Any]], scope: str, pool
     for year in sorted(set(years[rows])) if total else []:
         in_year = years == year
         ev = main_change[rows[years[rows] == year], cols[years[rows] == year]]
-        allv = main_change[in_year][base_np[in_year]]
+        allv = main_change[in_year][effective_base[in_year]]
         es, bs = _summary(ev), _summary(allv)
         by_year.append({"year": int(year), "events": int((years[rows] == year).sum()), "mean": es.get("mean"),
                         "up_share": es.get("up_share"), "all_mean": bs.get("mean"), "all_up_share": bs.get("up_share")})
@@ -650,19 +750,31 @@ def _compute(repository: Any, conditions: list[dict[str, Any]], scope: str, pool
                        "name": names.get(symbol, symbol.split(".")[0]),
                        "change": None if not math.isfinite(value) else round(float(value), 4),
                        "excess": None if not math.isfinite(value) else round(float(value - main_market[rows[i], 0]), 4)})
-    notes = ["从满足条件那天的收盘价算到之后第 N 个交易日的收盘价（复权），不含交易成本；超额是减去同一天全部股票的平均涨跌。",
+    entry_note = (
+        "从事件次日开盘价算到之后第 N 个交易日的收盘价（复权），跳过次日停牌和一字涨停无法买入的样本，不含交易成本；超额是减去同一天全部可买入股票的平均涨跌。"
+        if entry == "next_open"
+        else "从满足条件那天的收盘价算到之后第 N 个交易日的收盘价（复权），不含交易成本；超额是减去同一天全部股票的平均涨跌。"
+    )
+    notes = [entry_note,
              f"同一只股票满足条件后 {cooldown} 个交易日内不重复计算。" if cooldown > 1 else "同一只股票每天满足条件都算一次（没有冷却期），一段行情可能被重复计算。",
              "停牌的日子、" + ("" if keep_st else "ST 股票、") + f"上市不到 {MIN_LISTED_DAYS} 个交易日的股票不计入。",
              "这是历史统计，不代表以后，也不是对任何股票的买卖建议。"]
+    if entry == "close" and any(c["type"] == "limit" and c.get("direction") == "up" for c in conditions):
+        notes.insert(0, "当天涨停在收盘时通常无法买入，如需模拟真实入场，请切换为“次日开盘”入场口径。")
+    if industries:
+        notes.append("行业筛选只使用事件日及以前已知的行业分类，不向后借用未来分类。")
     if total < FEW_EVENTS:
         notes.insert(0, f"只有 {total} 次，样本太少，结果很不稳定，不要据此下结论。")
     return {
         "conditions": [c["label"] for c in conditions], "scope": SCOPES[scope], "industries": industries,
+        "entry": entry,
         "start": start.isoformat(), "end": end.isoformat(), "cooldown": cooldown, "keep_st": keep_st,
         "events": total, "stocks": int(len(set(cols.tolist()))) if total else 0,
         "eligible_days": int(base_np.sum()),
         "horizons": {str(h): value for h, value in horizons.items()}, "main_horizon": MAIN_HORIZON,
-        "histogram": {"labels": BIN_LABELS, "events": _histogram(main_change[events]), "all": _histogram(main_change[base_np])},
-        "path": _path(close, base_np, rows, cols, p.last_position.to_numpy(), horizons) if total else None,
+        "histogram": {"labels": BIN_LABELS, "events": _histogram(main_change[events]), "all": _histogram(main_change[effective_base])},
+        "path": _path(close, base_np, rows, cols, p.last_position.to_numpy(), horizons,
+                      entry_price=entry_price if entry == "next_open" else None,
+                      entry_ok=entry_ok if entry == "next_open" else None) if total else None,
         "by_year": by_year, "recent": recent, "coverage": coverage, "notes": notes,
     }

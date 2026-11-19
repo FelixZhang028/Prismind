@@ -31,6 +31,7 @@ class OrderGenerator:
             raise ValueError("execution_date must be after signal_date")
         equity = self._estimated_equity(account, closing_prices)
         target_map = {target.symbol: target.target_weight for target in targets}
+        target_priority = {target.symbol: rank for rank, target in enumerate(targets)}
         strategy_id = targets[0].strategy_id if targets else account.account_id
         symbols = set(account.positions) | set(target_map)
         orders: list[Order] = []
@@ -58,9 +59,13 @@ class OrderGenerator:
                         quantity=quantity,
                         signal_date=signal_date,
                         execution_date=execution_date,
+                        priority=target_priority.get(symbol, len(targets)) if side == OrderSide.BUY else 0,
                     )
                 )
-        return sorted(orders, key=lambda order: (order.side != OrderSide.SELL, order.symbol))
+        return sorted(
+            orders,
+            key=lambda order: (order.side != OrderSide.SELL, order.priority, order.symbol),
+        )
 
     @staticmethod
     def _estimated_equity(account: Account, closing_prices: dict[str, float]) -> float:

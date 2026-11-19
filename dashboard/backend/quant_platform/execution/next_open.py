@@ -81,7 +81,10 @@ class NextOpenExecutionModel:
         used = self._used
         updated: list[Order] = []
         fills: list[Fill] = []
-        for order in sorted(orders, key=lambda item: (item.side != OrderSide.SELL, item.symbol)):
+        for order in sorted(
+            orders,
+            key=lambda item: (item.side != OrderSide.SELL, item.priority, item.symbol),
+        ):
             day = order.execution_date
             key = (day, order.symbol)
             self._order_counts[day] = self._order_counts.get(day, 0) + 1

@@ -58,6 +58,7 @@ class Order:
     status: OrderStatus = OrderStatus.CREATED
     filled_quantity: int = 0
     reject_reason: str | None = None
+    priority: int = 0
 
     @classmethod
     def create(
@@ -68,6 +69,8 @@ class Order:
         quantity: int,
         signal_date: date,
         execution_date: date,
+        *,
+        priority: int = 0,
     ) -> Order:
         """Create an order with a unique identifier."""
 
@@ -79,6 +82,7 @@ class Order:
             quantity,
             signal_date,
             execution_date,
+            priority=priority,
         )
 
     @property
