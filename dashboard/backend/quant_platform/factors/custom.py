@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from quant_platform.data.extras import extra_columns, require_extra_data
+from quant_platform.data.extras import extra_columns
 from quant_platform.factors.base import (
     FACTOR_COLUMNS,
     FactorDefinition,
@@ -133,7 +133,7 @@ class CustomFactor(FactorDefinition):
         if self.expression is not None:
             parsed = parse_factor_expression(self.expression)
             object.__setattr__(self, "min_history", parsed.min_history)
-            object.__setattr__(self, "required_fields", parsed.fields)
+            object.__setattr__(self, "required_fields", parsed.required_fields)
             return
         if self.field not in FIELDS:
             raise ValueError(f"未知字段: {self.field}")
@@ -157,11 +157,18 @@ class CustomFactor(FactorDefinition):
     def compute(self, bars: pd.DataFrame) -> pd.DataFrame:
         if self.expression is not None:
             parsed = parse_factor_expression(self.expression)
-            require_extra_data(bars, extra_columns(parsed.fields))
-            missing = [field for field in parsed.fields if field not in bars.columns]
+            extras = set(extra_columns(self.required_fields))
+            missing = [
+                field for field in self.required_fields
+                if field not in bars.columns or (
+                    field in extras and not pd.to_numeric(bars[field], errors="coerce").notna().any()
+                )
+            ]
             if missing:
-                raise ValueError(f"行情数据缺少字段: {', '.join(missing)}")
-            return melt_wide(parsed.compute({field: pivot_field(bars, field) for field in parsed.fields}))
+                dates = pd.to_datetime(bars["trade_date"])
+                span = f"{dates.min().date()} 至 {dates.max().date()}" if len(dates) else "所选区间"
+                raise ValueError(f"自定义因子「{self.display_name or self.name}」在 {span} 缺少字段 {', '.join(missing)} 的有效数据。")
+            return melt_wide(parsed.compute({field: pivot_field(bars, field) for field in self.required_fields}))
         x = _wide(bars, self.field)
         operator = self.operator
         if operator == "momentum":

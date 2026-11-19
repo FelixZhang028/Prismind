@@ -84,7 +84,7 @@ def research_combination(
 
     extra = extra_columns(field for factor in components for field in factor.required_fields)
 
-    def frames_until(end):
+    def frames_until(start, end, period):
         bars = repository.get_daily_bars(symbols=symbols, end_date=end, **({"extras": extra} if extra else {}))
         if bars.empty:
             raise ValueError("所选区间没有本地行情，请先更新数据。")
@@ -95,13 +95,16 @@ def research_combination(
         frames = {}
         for factor in components:
             deadline.check()
-            values = factor.compute(bars)
+            try:
+                values = factor.compute(bars)
+            except ValueError as exc:
+                raise ValueError(f"{period}（{start} 至 {end}）计算失败。{exc}") from exc
             values["date"] = pd.to_datetime(values["date"]).dt.normalize()
             frames[factor.name] = universe.merge(values, on=["date", "symbol"], how="left")
         sessions = pd.DatetimeIndex(pd.to_datetime(bars.trade_date).unique()).sort_values()
         return frames, sessions
 
-    train_frames, sessions = frames_until(train_end)
+    train_frames, sessions = frames_until(train_start, train_end, "训练期")
     train_frames = prepare_frames(train_frames, clip=clip, missing=missing)
     sessions = sessions[sessions >= pd.Timestamp(train_start)]
     # Labels enter on t+1 and exit on t+horizon+1. Purge all signals whose
@@ -150,7 +153,7 @@ def research_combination(
     weights = {name: value / total for name, value in weights.items()}
 
     # The test set is accessed only after all weights are fixed.
-    frames, _ = frames_until(test_end)
+    frames, _ = frames_until(test_start, test_end, "测试期")
     frames = {f.name: frames[f.name] for f in components}
     cleaned = prepare_frames(frames, clip=clip, missing=missing)
     directions = {factor.name: factor.direction for factor in components}

@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import nullcontext
 from contextvars import ContextVar
 from pathlib import Path
 from uuid import uuid4
@@ -26,8 +27,14 @@ from . import compute, runtime
 log = logging.getLogger(__name__)
 ACTIVE = ("QUEUED", "RUNNING", "CANCELLING")
 JOB_ID = ContextVar("backtest_job_id", default=None)
+TIMEOUT_MESSAGE = "计算超时，已停止。请缩小股票范围或日期区间后重试。"
 
 SCHEMA = database.BACKTEST_JOBS_TABLE
+
+
+def backtest_slot(user: dict):
+    """Use the synchronous limit only when there is no scheduler owning the job."""
+    return nullcontext() if JOB_ID.get() is not None else compute.computing(user)
 
 
 def initialize() -> None:
@@ -241,7 +248,7 @@ class BacktestScheduler:
                         elif self.stop_event.is_set():
                             outcome = ("FAILED", "服务停止，计算已中断，请重新提交")
                         elif time.monotonic() - started >= timeout:
-                            outcome = ("TIMED_OUT", "计算超时，已停止。请缩小股票范围或日期区间后重试。")
+                            outcome = ("TIMED_OUT", TIMEOUT_MESSAGE)
                         if outcome:
                             # Mark before termination so the worker cannot publish late.
                             finish(jid, *outcome)

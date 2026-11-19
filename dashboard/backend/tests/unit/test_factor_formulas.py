@@ -11,6 +11,9 @@ from app.routes.workspace import CustomFactorIn, factor_custom_create
 from quant_platform.factors.combine import combine_factors
 from quant_platform.factors.custom import build_custom_factor
 from quant_platform.factors.expression import parse_factor_expression
+from quant_platform.factors.registry import default_registry
+from quant_platform.strategies.rule_based import indicator_value
+from quant_platform.strategies.rule_schema import IndicatorSpec
 
 
 @pytest.mark.parametrize("expression", [
@@ -81,6 +84,12 @@ def test_legacy_database_migrates_and_registers_formulas_by_owner(tmp_path, monk
         """)
     database.init_db()
     database.init_db()
+    with database.get_conn() as conn:
+        conn.execute(
+            """INSERT INTO custom_factors
+               (user_id,name,display_name,description,field,operator,window,direction,created_at,expression)
+               VALUES (1,'legacy_roe','旧版 ROE','','adjusted_close','momentum',20,1,'2025-01-01','ROE / PB')"""
+        )
     user = {"id": 1}
     body = CustomFactorIn(name="quality_test", display_name="质量估值", expression="ROE / PB")
     factor_custom_create(body, user)
@@ -93,5 +102,44 @@ def test_legacy_database_migrates_and_registers_formulas_by_owner(tmp_path, monk
 
     registry = build_factor_registry(user)
     assert registry.get("legacy_trend").operator == "momentum"
-    assert registry.get("quality_test").formula == "ROE / PB"
+    legacy = registry.get("legacy_roe")
+    quality = registry.get("quality_test")
+    assert legacy.formula == "ROE / PB"
+    assert legacy.required_fields == ("roe_avg", "pb_mrq")
+    assert quality.formula == "roe_ttm / PB"
+    assert quality.required_fields == ("pb_mrq", "pe_ttm")
     assert "quality_test" not in build_factor_registry({"id": 2})
+
+    dates = pd.bdate_range("2024-01-01", periods=4)
+    bars = pd.DataFrame({
+        "trade_date": dates, "symbol": "S",
+        "pb_mrq": [2., 2., -1., 2.], "pe_ttm": [10., -20., 5., 0.],
+    })
+    with pytest.raises(ValueError, match=r"2024-01-01.*roe_avg"):
+        legacy.compute(bars)
+    result = quality.compute(bars).set_index("date")["value"]
+    assert result.to_dict() == pytest.approx({dates[0]: .1, dates[1]: -.05})
+    ttm = build_custom_factor("ttm", expression="roe_ttm")
+    pd.testing.assert_frame_equal(ttm.compute(bars), default_registry().get("roe_ttm").compute(bars))
+
+
+@pytest.mark.parametrize("window", [60, 120, 250])
+def test_annualized_volatility_matches_rules_on_sparse_history(window):
+    dates = pd.bdate_range("2024-01-01", periods=window + 7)
+    days = np.arange(len(dates))
+    bars = pd.DataFrame({
+        "trade_date": dates, "symbol": "S", "adjusted_close": 10 + days / 100 + np.sin(days / 3) / 10,
+    })
+    bars.loc[[1, 4, window + 2], "adjusted_close"] = np.nan
+    never_eligible = bars.iloc[:3].assign(symbol="T")
+    factor = default_registry().get(f"volatility_{window}")
+    assert factor.min_history == window + 1
+    result = factor.compute(pd.concat((bars, never_eligible))).set_index("date")
+    assert list(result.index) == list(bars.dropna(subset=["adjusted_close"]).trade_date.iloc[window:])
+    assert set(result.symbol) == {"S"}
+    for day, row in result.iterrows():
+        history = bars.loc[bars.trade_date.le(day)]
+        from_rule = indicator_value(history, IndicatorSpec("volatility", window))
+        raw_returns = history.adjusted_close.dropna().tail(window + 1).pct_change(fill_method=None)
+        assert row.value == pytest.approx(from_rule)
+        assert row.value == pytest.approx(raw_returns.std() * np.sqrt(244))

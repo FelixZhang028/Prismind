@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 from ..database import _now, get_conn
 from ..quant.benchmark_view import benchmark_comparison, benchmark_options
-from ..quant.backtest_jobs import save_result
+from ..quant.backtest_jobs import backtest_slot, save_result
 from ..quant.compute import computing
 from ..quant.markets import CURRENT_POOL, market_options, use_market
 from ..quant.run_pool import pool_from_snapshot
@@ -154,7 +154,7 @@ def submit_backtest(body: BacktestIn, user: dict = Depends(get_current_user)):
         strategy_parameters=parameters,
         risk_limits=effective_risk,
     )
-    with computing(user):
+    with backtest_slot(user):
         try:
             run = service.run(request)
         except ValueError as exc:

@@ -24,6 +24,15 @@ from quant_platform.data.normalizers import canonical_symbol
 
 INDICATOR_TABLE = "daily_indicators"
 INDICATOR_COLUMNS = ["pe_ttm", "pb_mrq", "ps_ttm", "pcf_ttm", "turnover_rate"]
+
+ROE_TTM_INPUTS = ("pb_mrq", "pe_ttm")
+
+
+def roe_ttm(pb: pd.DataFrame, pe: pd.DataFrame) -> pd.DataFrame:
+    """Implied trailing ROE from the daily valuation fields."""
+    pb = pb.where(pb.gt(0) & pb.lt(float("inf")))
+    pe = pe.where(pe.ne(0) & pe.abs().lt(float("inf")))
+    return pb / pe
 VALUATION_COLUMNS = ["pe_ttm", "pb_mrq", "ps_ttm", "pcf_ttm"]
 INDICATOR_LABELS = {
     "pe_ttm": "市盈率（TTM）",

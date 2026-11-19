@@ -33,8 +33,12 @@ const spreadSeries = computed(() => [{
   points: props.report.group_nav.map((row) => pct(row.long_short)),
 }])
 const turnoverDates = computed(() => datesOf(props.report.rebalance_turnover))
+const turnoverAverage = computed(() => {
+  const valid = props.report.rebalance_turnover.map(({ turnover }) => turnover).filter(Number.isFinite)
+  return valid.length ? `${pct(valid.reduce((sum, value) => sum + value, 0) / valid.length).toFixed(2)}%` : '—'
+})
 const turnoverSeries = computed(() => [{
-  label: '最高组换手率',
+  label: '最高组调仓期成员更替率',
   color: '#38bdf8',
   points: props.report.rebalance_turnover.map((row) => pct(row.turnover)),
 }])
@@ -87,7 +91,8 @@ const industryRows = computed(() => industry.value?.rows.map((row) => ({
     </div>
   </SectionCard>
 
-  <SectionCard title="最高组换手率" hint="按分组调仓周期比较最高组成员。新增成员数占本期最高组人数的比例。">
+  <SectionCard title="最高组调仓期成员更替率" :hint="`每隔 ${report.horizon} 个交易日比较最高组。每个点等于本期新增成员数除以本期最高组人数，日均卡片则逐日比较后取平均。`">
+    <p class="mb-3 text-xs text-slate-400">调仓期平均 {{ turnoverAverage }}</p>
     <LineChart :series="turnoverSeries" :dates="turnoverDates" :height="190" unit="percent" :baseline="0" />
   </SectionCard>
 

@@ -15,7 +15,9 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from quant_platform.core.volatility import ANNUALIZATION_SESSIONS, annualized_volatility
 from quant_platform.data.extras import require_extra_data
+from quant_platform.data.indicators import ROE_TTM_INPUTS, roe_ttm
 from quant_platform.factors.base import (
     FACTOR_COLUMNS,
     FactorDefinition,
@@ -47,6 +49,14 @@ def _reversal_5(bars: pd.DataFrame) -> pd.DataFrame:
 def _volatility_20(bars: pd.DataFrame) -> pd.DataFrame:
     returns = _close(bars).pct_change()
     return melt_wide(returns.rolling(20, min_periods=20).std())
+
+
+def _annualized_volatility(window: int) -> Callable[[pd.DataFrame], pd.DataFrame]:
+    def compute(bars: pd.DataFrame) -> pd.DataFrame:
+        close = pivot_field(bars, _PRICE)
+        return melt_wide(close.apply(annualized_volatility, window=window).reindex(close.index))
+
+    return compute
 
 
 def _amount_change_20(bars: pd.DataFrame) -> pd.DataFrame:
@@ -141,8 +151,7 @@ def _yield_of(name: str) -> Callable[[pd.DataFrame], pd.DataFrame]:
 
 def _roe_ttm(bars: pd.DataFrame) -> pd.DataFrame:
     # 净利润 / 净资产 = (股价 / 每股净资产) / (股价 / 每股收益)；净资产为负时没有意义。
-    pb, pe = _indicator(bars, "pb_mrq"), _indicator(bars, "pe_ttm")
-    return melt_wide(pb.where(pb > 0) / pe.where(pe != 0))
+    return melt_wide(roe_ttm(*(_indicator(bars, name) for name in ROE_TTM_INPUTS)))
 
 
 def _net_margin_ttm(bars: pd.DataFrame) -> pd.DataFrame:
@@ -224,6 +233,20 @@ def builtin_factors() -> list[FactorDefinition]:
             direction=-1,
             category="波动",
             func=_volatility_20,
+        ),
+        *(
+            BuiltinFactor(
+                name=f"volatility_{window}",
+                display_name=f"{window}日波动率（年化）",
+                description=f"最近 {window} 个日收益率的样本标准差，按 {ANNUALIZATION_SESSIONS} 个交易日年化，与规则策略口径一致。",
+                formula=f"std(daily_return, {window}) × √{ANNUALIZATION_SESSIONS}",
+                required_fields=(_PRICE,),
+                min_history=window + 1,
+                direction=-1,
+                category="波动",
+                func=_annualized_volatility(window),
+            )
+            for window in (60, 120, 250)
         ),
         BuiltinFactor(
             name="amount_change_20",
@@ -352,7 +375,7 @@ def builtin_factors() -> list[FactorDefinition]:
             display_name="净资产收益率（TTM）",
             description="过去十二个月净利润相对净资产的比例，由市净率除以市盈率得到，每天更新；越高说明用股东的钱赚得越多。",
             formula="pb_mrq / pe_ttm",
-            required_fields=("pb_mrq", "pe_ttm"),
+            required_fields=ROE_TTM_INPUTS,
             min_history=1,
             direction=1,
             category="质量",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import operator
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from math import isfinite
@@ -12,13 +13,14 @@ import pandas as pd
 
 from quant_platform.data.corporate_actions import DIVIDEND_YIELD
 from quant_platform.data.fundamentals import DERIVED_COLUMNS, FUNDAMENTAL_COLUMNS
-from quant_platform.data.indicators import INDICATOR_COLUMNS
+from quant_platform.data.indicators import INDICATOR_COLUMNS, ROE_TTM_INPUTS, roe_ttm
 
 MAX_EXPRESSION_LENGTH = 300
 MAX_HISTORY = 252
 PRICE_FIELDS = ("adjusted_close", "raw_close", "raw_open", "raw_high", "raw_low", "pre_close", "volume", "amount")
 ALIASES = {"close": "adjusted_close", "roe": "roe_avg", "pb": "pb_mrq", "pe": "pe_ttm"}
-EXPRESSION_FIELDS = (*PRICE_FIELDS, *INDICATOR_COLUMNS, *FUNDAMENTAL_COLUMNS, *DERIVED_COLUMNS, DIVIDEND_YIELD)
+NEW_EXPRESSION_ALIASES = {**ALIASES, "roe": "roe_ttm"}
+EXPRESSION_FIELDS = (*PRICE_FIELDS, *INDICATOR_COLUMNS, "roe_ttm", *FUNDAMENTAL_COLUMNS, *DERIVED_COLUMNS, DIVIDEND_YIELD)
 WINDOW_FUNCTIONS = ("lag", "ret", "mean", "std", "volatility")
 _BINARY = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv}
 
@@ -27,13 +29,26 @@ def _field(name: str) -> str:
     return ALIASES.get(name.lower(), name.lower())
 
 
+def bind_roe_ttm(expression: str) -> str:
+    """Store the new alias explicitly so existing formulas keep their original ROE."""
+    return re.sub(r"\broe\b", "roe_ttm", expression, flags=re.IGNORECASE)
+
+
 @dataclass(frozen=True)
 class FactorExpression:
     root: ast.expr
     fields: tuple[str, ...]
     min_history: int
 
+    @property
+    def required_fields(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(
+            source for field in self.fields for source in (ROE_TTM_INPUTS if field == "roe_ttm" else (field,))
+        ))
+
     def compute(self, fields: dict[str, pd.DataFrame]) -> pd.DataFrame:
+        if "roe_ttm" in self.fields:
+            fields = {**fields, "roe_ttm": roe_ttm(*(fields[name] for name in ROE_TTM_INPUTS))}
         template = fields[self.fields[0]]
 
         def finite(value: pd.DataFrame) -> pd.DataFrame:

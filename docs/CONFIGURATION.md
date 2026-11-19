@@ -23,6 +23,7 @@
 | `FELLOWQUANT_FACTOR_PROFILE` | AI 个股分析的因子画像：后端每 10 分钟检查一次，把最新交易日的全市场因子值预先算好（约半分钟，存在 `data/runtime/factor_profiles`）；填 `off` 关闭预先计算，分析时仍会在后台现算 |
 | `FELLOWQUANT_COMPUTE_SLOTS` / `_PER_USER` / `_TIMEOUT` / `_CACHE` | 耗时计算（回测、参数验证、因子评估与组合研究）的限制：全站同时最多几件（默认 CPU 核数的一半，2 到 4）、每人同时几件（默认 1）、一件最多多少秒（默认 600）、记住多少份因子研究结果（默认 64） |
 | `FELLOWQUANT_FACTOR_JOB_TIMEOUT` | 后台单因子评估任务的运行秒数上限（默认取 1800 秒和 `FELLOWQUANT_COMPUTE_TIMEOUT` 中较大者）。排队等待不计入运行时间。 |
+| `FELLOWQUANT_BACKTEST_JOB_TIMEOUT` | 后台策略回测、规则策略回测和条件选股历史检验的运行秒数上限（默认取 1800 秒和 `FELLOWQUANT_COMPUTE_TIMEOUT` 中较大者）。排队等待不计入运行时间。 |
 | `FELLOWQUANT_AI_DAILY_TOTAL` | 全站每天最多调用多少次 AI（默认 500，管理员不计），防止费用失控；用完以后当天所有用户暂停 AI 功能 |
 | `WEKNORA_BASE_URL` / `WEKNORA_API_KEY` | WeKnora 服务地址与空间 Key，也可由管理员在页面配置；没有配置时知识库问答不可用 |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` | 发注册验证码和密码重置验证码的邮件服务；端口 465、994 用 SSL（163 邮箱：`smtp.163.com`、465，密码填授权码），别的端口用 STARTTLS（默认 587）。也可以在管理后台“系统设置 → 邮件服务”里填 |

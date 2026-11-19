@@ -4,6 +4,7 @@ import subprocess
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -82,7 +83,7 @@ def test_real_child_exits_before_compute_slot_is_released(db, monkeypatch, actio
         children.append(child)
         return child
     monkeypatch.setattr(jobs.subprocess, "Popen", spawn)
-    monkeypatch.setattr(compute, "timeout_seconds", lambda: 0.3 if action == "timeout" else 20)
+    monkeypatch.setenv("FELLOWQUANT_BACKTEST_JOB_TIMEOUT", "1" if action == "timeout" else "20")
     if action == "factor_timeout":
         monkeypatch.setenv("FELLOWQUANT_FACTOR_JOB_TIMEOUT", "1")
         job = jobs.enqueue(1, {"kind": "factor"})
@@ -115,6 +116,43 @@ def test_real_child_exits_before_compute_slot_is_released(db, monkeypatch, actio
                 child.kill()
                 child.wait()
         thread.join(timeout=8)
+
+
+def test_queued_backtest_uses_the_job_limit_instead_of_the_synchronous_limit(db, monkeypatch):
+    from app.quant.backtest_worker import execute
+    from app.routes import backtests
+    from quant_platform.core import deadline
+
+    monkeypatch.setenv("FELLOWQUANT_COMPUTE_TIMEOUT", "600")
+    monkeypatch.delenv("FELLOWQUANT_BACKTEST_JOB_TIMEOUT", raising=False)
+    now = [0]
+    monkeypatch.setattr(deadline, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    def run_backtest(request, user):
+        with jobs.backtest_slot(user):
+            now[0] = 601
+            deadline.check()
+            now[0] = 1801
+            deadline.check()
+
+    monkeypatch.setattr(backtests, "submit_backtest", run_backtest)
+    task = jobs.enqueue(1, {
+        "kind": "backtest",
+        "snapshot": {},
+        "request": {
+            "strategy": "a_share_momentum", "market": "当前股票池",
+            "from_date": "2024-01-02", "to_date": "2024-06-28",
+        },
+    })
+    assert task["timeout_seconds"] == 1800
+    assert compute.job_timeout_seconds("package") == 1800
+    assert compute.job_timeout_seconds("screen") == 1800
+    assert compute.timeout_seconds() == 600
+    with database.get_conn() as conn:
+        conn.execute("UPDATE backtest_jobs SET state='RUNNING' WHERE id=?", (task["id"],))
+    execute(task["id"])
+    assert now[0] == 1801
+    assert jobs.get_job(task["id"], 1)["state"] == "TIMED_OUT"
 
 
 def test_restart_marks_interrupted_jobs_and_keeps_queue(db, monkeypatch):
