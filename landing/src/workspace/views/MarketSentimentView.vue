@@ -16,6 +16,7 @@ import {
   limitBadge,
   maBadge,
   signedTone,
+  sliceSeriesForWindow,
   sortIndustries,
   styleNote,
   volumeBadge,
@@ -37,11 +38,12 @@ const hoverIndex = ref(-1)
 
 const indSort = reactive({ key: 'vol_ratio_20', descending: true })
 
-async function load(win = windowDays.value) {
+async function load() {
   loading.value = true
   error.value = ''
   try {
-    const res = await marketSentiment(win)
+    // 一次性拉取 250 个交易日序列，切 60 / 120 / 250 日在本地 0ms 切片，无需重复请求。
+    const res = await marketSentiment(250)
     data.value = res
     if (res?.anomalies?.length && !res.anomalies.some((a) => a.id === expandedAnomalyId.value)) {
       expandedAnomalyId.value = res.anomalies[0].id
@@ -54,10 +56,9 @@ async function load(win = windowDays.value) {
 }
 
 function chooseWindow(win) {
-  if (windowDays.value === win && data.value) return
+  if (windowDays.value === win) return
   windowDays.value = win
   hoverIndex.value = -1
-  load(win)
 }
 
 onMounted(() => load())
@@ -67,7 +68,7 @@ onActivated(() => {
 
 const latest = computed(() => data.value?.latest || null)
 const anomalies = computed(() => data.value?.anomalies || [])
-const series = computed(() => data.value?.series || [])
+const series = computed(() => sliceSeriesForWindow(data.value?.series || [], windowDays.value))
 const sortedIndustries = computed(() => sortIndustries(data.value?.industries, indSort.key, indSort.descending))
 
 const breadthTag = computed(() => breadthBadge(latest.value?.up_ratio, latest.value?.up_ratio_pct_250))
@@ -439,7 +440,7 @@ const openEventStudy = () => openResearch('event-study')
         <p v-if="!anomalies.length" class="text-sm text-slate-400">
           近 10 个交易日未触发极端放量/地量、极端普涨/冰点、高炸板率或大盘剧烈分化异动，市场整体运行在常规波动区间。
         </p>
-        <div v-else class="divide-y divide-white/10 rounded-xl border border-white/10 bg-white/[0.03]">
+        <div v-else class="divide-y divide-white/5 rounded-xl border border-white/10 bg-white/5">
           <div v-for="item in anomalies" :key="item.id" class="space-y-3 p-4">
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div class="min-w-0 flex-1 space-y-1">
@@ -464,7 +465,7 @@ const openEventStudy = () => openResearch('event-study')
 
             <div
               v-if="expandedAnomalyId === item.id && item.history"
-              class="space-y-3 rounded-xl border border-white/10 bg-slate-950/50 p-4"
+              class="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4"
             >
               <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
                 <span class="text-slate-200">
@@ -542,7 +543,7 @@ const openEventStudy = () => openResearch('event-study')
             </span>
           </div>
 
-          <div class="w-full overflow-hidden rounded-xl border border-white/10 bg-slate-950/40 p-2">
+          <div class="w-full overflow-hidden rounded-xl border border-white/10 bg-white/5 p-2">
             <svg
               :viewBox="`0 0 ${W} ${H}`"
               class="block h-auto w-full select-none text-slate-300"
@@ -665,7 +666,7 @@ const openEventStudy = () => openResearch('event-study')
         <p v-if="!sortedIndustries.length" class="text-sm text-slate-400">暂无行业分类统计数据。</p>
         <div v-else class="max-h-96 overflow-auto">
           <table class="w-full min-w-[620px] text-left text-xs tabular-nums">
-            <thead class="sticky top-0 bg-slate-950/90 text-slate-400 backdrop-blur">
+            <thead class="bg-white/5 text-slate-400">
               <tr class="border-b border-white/10">
                 <th class="py-2.5 pr-3 font-medium">行业</th>
                 <th class="py-2.5 px-3 text-right font-medium">

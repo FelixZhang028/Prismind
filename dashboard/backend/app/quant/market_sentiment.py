@@ -36,6 +36,7 @@ _CACHE: dict[str, Any] = {
     "key": None,
     "daily": None,
     "industries": None,
+    "payloads": {},
 }
 
 
@@ -44,7 +45,7 @@ def configure(store: Path) -> None:
     global _STORE
     with _LOCK:
         _STORE = Path(store)
-        _CACHE.update(key=None, daily=None, industries=None)
+        _CACHE.update(key=None, daily=None, industries=None, payloads={})
 
 
 def _cache_file() -> Path:
@@ -105,7 +106,7 @@ def _ensure_loaded(repository: Any) -> tuple[pd.DataFrame, list[dict[str, Any]]]
             logger.warning("无法写入市场情绪缓存文件，将仅保留在内存中")
 
         with _LOCK:
-            _CACHE.update(key=key, daily=daily, industries=industries)
+            _CACHE.update(key=key, daily=daily, industries=industries, payloads={})
         return daily, industries
 
 
@@ -129,10 +130,20 @@ def _warm_in_background(repository: Any) -> None:
     threading.Thread(target=_run, name="market-sentiment-warmer", daemon=True).start()
 
 
-def get_sentiment(repository: Any, *, window: int = 60) -> dict[str, Any]:
+def get_sentiment(repository: Any, *, window: int = 250) -> dict[str, Any]:
     """Return the full Market Sentiment payload for the requested window (60 / 120 / 250)."""
+    key = _repo_key(repository)
+    if key is not None:
+        with _LOCK:
+            if _CACHE["key"] == key and window in _CACHE["payloads"]:
+                return _CACHE["payloads"][window]
     daily, industries = _ensure_loaded(repository)
-    return build_sentiment_payload(daily, repository, window=window, industries=industries)
+    payload = build_sentiment_payload(daily, repository, window=window, industries=industries)
+    if key is not None:
+        with _LOCK:
+            if _CACHE["key"] == key:
+                _CACHE["payloads"][window] = payload
+    return payload
 
 
 def home_summary(repository: Any) -> dict[str, Any] | None:
@@ -183,7 +194,7 @@ class MarketSentimentWarmer:
             if _CACHE["key"] == key and _CACHE["daily"] is not None:
                 return False
         logger.info("预先更新市场情绪缓存（截至 %s）", key[2])
-        _ensure_loaded(repository)
+        get_sentiment(repository, window=250)
         return True
 
     def _loop(self) -> None:

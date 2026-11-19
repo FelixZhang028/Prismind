@@ -11,6 +11,7 @@ import {
   formatReadout,
   limitBadge,
   maBadge,
+  sliceSeriesForWindow,
   sortIndustries,
   styleNote,
   volumeBadge,
@@ -69,4 +70,24 @@ test('sorts industries and formats hover readouts across all four chart tabs', (
   assert.match(formatReadout('ma', sample), /68\.4%.*59\.1%/)
   assert.match(formatReadout('style', sample), /\+4\.2%.*\+7\.8%.*\+9\.5%/)
   assert.match(formatReadout('breadth', null), /移动鼠标/)
+})
+
+test('sliceSeriesForWindow slices locally and rebases cumulative style curves to zero', () => {
+  const rows = [
+    { date: '2026-01-02', hs300_ret: 0.05, zz500_ret: 0.04, median_ret: 0.03 },
+    { date: '2026-01-03', hs300_ret: 0.02, zz500_ret: -0.01, median_ret: 0.01 },
+    { date: '2026-01-04', hs300_ret: 0.1, zz500_ret: 0.05, median_ret: 0.02 },
+    { date: '2026-01-05', hs300_ret: -0.1, zz500_ret: 0.0, median_ret: 0.05 },
+  ]
+  const win3 = sliceSeriesForWindow(rows, 3)
+  assert.equal(win3.length, 3)
+  assert.equal(win3[0].date, '2026-01-03')
+  // Day 0 of the selected window is rebased to 0%
+  assert.equal(win3[0].hs300_cum, 0)
+  assert.equal(win3[0].zz500_cum, 0)
+  assert.equal(win3[0].median_cum, 0)
+  // Day 1: +10%
+  assert.equal(win3[1].hs300_cum, 0.1)
+  // Day 2: (1 + 0.1) * (1 - 0.1) - 1 = -0.01
+  assert.equal(win3[2].hs300_cum, -0.01)
 })

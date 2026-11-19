@@ -143,6 +143,30 @@ export function sortIndustries(rows, key = 'vol_ratio_20', descending = true) {
   })
 }
 
+export function sliceSeriesForWindow(rows, windowDays = 60) {
+  if (!Array.isArray(rows) || !rows.length) return []
+  const sliced = rows.slice(-Math.max(1, Number(windowDays) || 60))
+  const hasDailyRets = sliced.some((r) => r.hs300_ret != null || r.median_ret != null)
+  if (!hasDailyRets) return sliced
+
+  let hsFactor = 1
+  let z5Factor = 1
+  let medFactor = 1
+  return sliced.map((row, idx) => {
+    if (idx > 0) {
+      hsFactor *= 1 + (Number.isFinite(Number(row.hs300_ret)) ? Number(row.hs300_ret) : 0)
+      z5Factor *= 1 + (Number.isFinite(Number(row.zz500_ret)) ? Number(row.zz500_ret) : 0)
+      medFactor *= 1 + (Number.isFinite(Number(row.median_ret)) ? Number(row.median_ret) : 0)
+    }
+    return {
+      ...row,
+      hs300_cum: Number((hsFactor - 1).toFixed(4)),
+      zz500_cum: Number((z5Factor - 1).toFixed(4)),
+      median_cum: Number((medFactor - 1).toFixed(4)),
+    }
+  })
+}
+
 export function formatReadout(tab, row) {
   if (!row) return '移动鼠标至图表查看单日明细'
   if (tab === 'breadth') {
