@@ -52,6 +52,8 @@ def timeout_seconds() -> int:
 def job_timeout_seconds(kind: str) -> int:
     if kind == "factor":
         return _setting("FELLOWQUANT_FACTOR_JOB_TIMEOUT", max(1800, timeout_seconds()))
+    if kind in {"backtest", "package", "screen"}:
+        return _setting("FELLOWQUANT_BACKTEST_JOB_TIMEOUT", max(1800, timeout_seconds()))
     return timeout_seconds()
 
 

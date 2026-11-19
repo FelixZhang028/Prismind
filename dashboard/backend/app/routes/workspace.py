@@ -52,7 +52,7 @@ from ..quant.research_runs import (
     walk_forward_range,
 )
 from ..quant import audit, daily_schedule, home, rate_limit
-from ..quant.backtest_jobs import save_result
+from ..quant.backtest_jobs import backtest_slot, save_result
 from ..quant.universe_import import MAX_POOL_SIZE, merge_codes
 from ..quant.compute import cached, computing
 from ..quant.runtime import (
@@ -95,7 +95,7 @@ from quant_platform.data.extras import extra_columns, require_extra_data
 from quant_platform.data.index_constituents import INDEX_UNIVERSES, IndexUniverseRepository
 from quant_platform.factors.base import FactorDefinition
 from quant_platform.factors.custom import CustomFactor, build_custom_factor, custom_factor_to_dict
-from quant_platform.factors.expression import ALIASES, EXPRESSION_FIELDS, MAX_HISTORY, WINDOW_FUNCTIONS
+from quant_platform.factors.expression import EXPRESSION_FIELDS, MAX_HISTORY, NEW_EXPRESSION_ALIASES, WINDOW_FUNCTIONS, bind_roe_ttm
 from quant_platform.factors.registry import default_registry
 from quant_platform.factors.evaluation import FactorEvaluator
 from quant_platform.factors.sample import FactorSampleFilters
@@ -591,7 +591,7 @@ def _run_backtest(user: dict, package: StrategyPackage, *, market: str, start: d
         initial_cash=initial_cash,
         risk_limits=dc_replace(user_risk_limits(user["id"]), max_positions=package.top_n),
     )
-    with computing(user):
+    with backtest_slot(user):
         try:
             run = studio.run(package, base_request=base)
         except ConfigurationError as exc:
@@ -934,7 +934,7 @@ def list_factors(user: dict = Depends(get_current_user)):
         "factors": factors,
         "expression_options": {
             "fields": [{"name": field, "label": field_description(field)[0]} for field in EXPRESSION_FIELDS],
-            "aliases": ALIASES,
+            "aliases": NEW_EXPRESSION_ALIASES,
             "functions": WINDOW_FUNCTIONS,
             "max_history": MAX_HISTORY,
         },
@@ -1165,7 +1165,10 @@ def factor_custom_create(body: CustomFactorIn, user: dict = Depends(get_current_
     if body.name in default_registry():
         raise HTTPException(status_code=409, detail="该标识已被内置因子使用")
     try:
-        factor = build_custom_factor(**body.model_dump())
+        definition = body.model_dump()
+        if body.expression is not None:
+            definition["expression"] = bind_roe_ttm(body.expression)
+        factor = build_custom_factor(**definition)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     with get_conn() as conn:

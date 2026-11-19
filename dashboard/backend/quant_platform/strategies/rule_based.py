@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isfinite, sqrt
+from math import isfinite
 from typing import Any, ClassVar
 
 import pandas as pd
 
+from quant_platform.core.volatility import latest_annualized_volatility
 from quant_platform.signals.models import Signal
 from quant_platform.strategies.base import Strategy
 from quant_platform.strategies.context import StrategyContext
@@ -18,9 +19,6 @@ from quant_platform.strategies.rule_schema import (
     RuleStrategyDefinition,
 )
 from quant_platform.strategies.spec import ParameterKind, StrategyParameter
-
-_TRADING_DAYS = 244
-
 
 @dataclass(frozen=True)
 class RuleBasedParameters:
@@ -58,6 +56,10 @@ class RuleBasedStrategy(Strategy):
     @property
     def data_fields(self) -> frozenset[str]:
         return self.config.definition.data_fields
+
+    @property
+    def min_history(self) -> int:
+        return self.config.definition.minimum_history_days
 
     def generate_signals(self, context: StrategyContext) -> list[Signal]:
         context.require_fields(self.required_fields)
@@ -157,11 +159,7 @@ def _indicator_value(group: pd.DataFrame, indicator: IndicatorSpec | None) -> fl
             return None
         return float(close.tail(window).mean())
     if indicator.name == "volatility":
-        if len(close) < window + 1:
-            return None
-        value = close.tail(window + 1).pct_change(fill_method=None).dropna().std() * sqrt(
-            _TRADING_DAYS
-        )
+        value = latest_annualized_volatility(close, window)
         return float(value) if pd.notna(value) else None
     if indicator.name == "average_amount":
         amount = group["amount"].dropna()

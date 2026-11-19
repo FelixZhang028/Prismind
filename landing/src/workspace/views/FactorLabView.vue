@@ -546,6 +546,17 @@ const customForm = reactive({
 })
 const customLoading = ref(false)
 
+function copyWithTrailingRoe(factor) {
+  Object.assign(customForm, {
+    name: `${factor.name}_ttm`,
+    display_name: `${factor.display_name}（TTM）`,
+    mode: 'expression',
+    expression: factor.formula.replace(/\broe\b/gi, 'roe_ttm'),
+    direction: factor.direction,
+  })
+  document.getElementById('custom-factor-name')?.focus()
+}
+
 const customFactors = computed(() => factors.value.filter((f) => f.category === '自定义'))
 const customCols = [
   { key: 'name', label: '标识' },
@@ -621,7 +632,7 @@ function buildReportView(report) {
   const stability = [
     { label: '前半段 Rank IC', value: fmtNum(report.first_half_ic, 3), sub: '样本前半段', ...signTone(report.first_half_ic) },
     { label: '后半段 Rank IC', value: fmtNum(report.second_half_ic, 3), sub: '样本后半段', ...signTone(report.second_half_ic) },
-    { label: '日均成员更替率', value: fmtPct(report.turnover_mean, 2), sub: '最高组相邻交易日', up: null, tone: '' },
+    { label: '最高组日均成员更替率', value: fmtPct(report.turnover_mean, 2), sub: '相邻交易日最高组新增成员比例的平均值', up: null, tone: '' },
   ]
   const daily = report.daily_ic || []
   const series = [
@@ -1124,7 +1135,7 @@ onBeforeUnmount(() => {
         <div class="grid gap-4 md:grid-cols-2">
           <label class="block">
             <span class="mb-1 block text-xs text-slate-400">标识</span>
-            <input v-model="customForm.name" placeholder="如 my_factor_1" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/40" />
+            <input id="custom-factor-name" v-model="customForm.name" placeholder="如 my_factor_1" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/40" />
           </label>
           <label class="block">
             <span class="mb-1 block text-xs text-slate-400">显示名</span>
@@ -1137,6 +1148,7 @@ onBeforeUnmount(() => {
               <textarea v-model="customForm.expression" rows="3" maxlength="300" spellcheck="false" placeholder="ROE / PB" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 font-mono text-sm text-white outline-none focus:border-indigo-400/40" />
             </label>
             <p class="mt-2 text-xs text-slate-400">可用括号和四则运算。除数为零或字段缺失时，该股票当天的因子值为空。</p>
+            <p class="mt-1 text-xs text-slate-400">新公式中的 ROE 按 ROE（TTM）保存。要使用季度财报披露的 ROE，请写 roe_avg。</p>
             <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
               <span class="text-slate-400">套用示例</span>
               <button v-for="example in ['ROE / PB', 'ret(close, 20) - ret(close, 60)', 'dividend_yield * (1 - volatility(close, 20))']" :key="example" type="button" class="rounded border border-white/10 px-2 py-1 font-mono text-indigo-300 hover:bg-white/10" @click="customForm.expression = example">{{ example }}</button>
@@ -1198,6 +1210,7 @@ onBeforeUnmount(() => {
           </template>
           <template #cell-actions="{ row }">
             <div class="flex justify-end gap-2">
+              <button v-if="/\broe\b/i.test(row.formula)" @click="copyWithTrailingRoe(row)" class="whitespace-nowrap rounded-lg border border-indigo-400/20 px-2.5 py-1 text-xs text-indigo-300 hover:bg-indigo-400/10">按 TTM 另存</button>
               <button @click="showFactorDetail(row)" class="rounded-lg border border-indigo-400/20 bg-indigo-500/10 px-2.5 py-1 text-xs text-indigo-300 transition hover:bg-indigo-400/20">详情</button>
               <button @click="onDeleteCustom(row)" class="rounded-lg border border-rose-400/20 px-2.5 py-1 text-xs text-rose-300 transition hover:bg-rose-400/10">删除</button>
             </div>

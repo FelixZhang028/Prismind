@@ -11,7 +11,8 @@ from datetime import date, datetime, timezone
 from fastapi import HTTPException
 
 from ..database import get_conn
-from . import backtest_jobs as jobs, runtime
+from . import backtest_jobs as jobs, compute, runtime
+from quant_platform.core import deadline
 from quant_platform.core.progress import report, reporting
 
 
@@ -53,7 +54,7 @@ def execute(jid):
         runtime.TASK_SETTINGS = {**payload["snapshot"], "paths": paths}
     token = jobs.JOB_ID.set(jid)
     try:
-        with reporting(jobs.reporter(jid)):
+        with deadline.limit(compute.job_timeout_seconds(payload["kind"])), reporting(jobs.reporter(jid)):
             body = payload["request"]
             if payload["kind"] == "factor":
                 request = workspace.FactorEvalIn.model_validate(body)
@@ -82,6 +83,8 @@ def execute(jid):
                     start=date.fromisoformat(body["from_date"]), end=date.fromisoformat(body["to_date"]),
                     initial_cash=initial_cash, reference=reference, package_id=payload["package_id"],
                     exclude_st=exclude_st)
+    except deadline.ComputationTimeout:
+        jobs.finish(jid, "TIMED_OUT", jobs.TIMEOUT_MESSAGE)
     except HTTPException as exc:
         jobs.finish(jid, "FAILED", str(exc.detail))
     except BaseException:
