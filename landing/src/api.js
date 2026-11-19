@@ -299,6 +299,10 @@ export async function exportMyData() {
 export function workspaceHome() {
   return request('/api/v1/home', { auth: true })
 }
+// 日频市场情绪与异动面板（window：60 / 120 / 250 个交易日）
+export function marketSentiment(window = 60) {
+  return request(`/api/v1/market/sentiment?window=${encodeURIComponent(window)}`, { auth: true })
+}
 // 事件研究：满足条件以后，全市场历史上通常怎么样
 export function eventStudyOptions() {
   return request('/api/v1/event-study/options', { auth: true })

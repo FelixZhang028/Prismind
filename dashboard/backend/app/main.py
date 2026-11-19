@@ -31,6 +31,7 @@ from .quant.backup import BackupScheduler
 from .quant.daily_schedule import DailyScheduler
 from .quant.factor_profiles import FactorProfileWarmer
 from .quant.fundamentals_schedule import FundamentalsScheduler
+from .quant.market_sentiment import MarketSentimentWarmer
 from .routes.admin import router as admin_router
 from .routes.agent_lab import router as agent_lab_router
 from .routes.auth import router as auth_router
@@ -76,6 +77,7 @@ async def lifespan(_app: FastAPI):
     fundamentals = FundamentalsScheduler(_data_jobs())
     backups = BackupScheduler()
     warmer = FactorProfileWarmer()      # 预先算好最新交易日的全市场因子值（AI 研究员的因子画像）
+    sentiment_warmer = MarketSentimentWarmer()  # 预先算好日频市场情绪与异动聚合表
     paper = PaperAdvancer(_data_jobs())  # 数据更新完以后把模拟账户推进到最新一天（FELLOWQUANT_PAPER_ADVANCE=off 关闭）
     backtest_queue = BacktestScheduler()
     backtest_queue.start()
@@ -83,6 +85,7 @@ async def lifespan(_app: FastAPI):
     fundamentals.start()
     backups.start()
     warmer.start()
+    sentiment_warmer.start()
     paper.start()
     try:
         yield
@@ -92,6 +95,7 @@ async def lifespan(_app: FastAPI):
         fundamentals.stop()
         backups.stop()
         warmer.stop()
+        sentiment_warmer.stop()
         paper.stop()
 
 

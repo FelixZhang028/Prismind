@@ -9,6 +9,7 @@ import {
   KIND_TONES, amountText, breadthShares, dailyText, greeting, industryQuestion, price, seasonShare, seasonText,
   signedPct, sortPool, stepsProgress, todayText, tone, whenText,
 } from '../homePresentation.js'
+import { anomalyToneClass, fmtPct, fmtRatio } from '../sentimentPresentation.js'
 import Sparkline from '../ui/Sparkline.vue'
 
 const props = defineProps({
@@ -174,6 +175,23 @@ const link = 'text-xs text-indigo-300 hover:text-indigo-200'
             <div class="bg-emerald-400/80" :style="{ width: `${shares.down}%` }" />
           </div>
           <p class="mt-2 text-[11px] text-slate-500">按交易所的昨收计算当天涨跌；停牌的股票不计入。</p>
+          <div class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-3 text-xs">
+            <div v-if="home.sentiment" class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-slate-300 tabular-nums">
+              <span>量能 <b :class="(home.sentiment.amount_ratio_20 ?? 1) >= 1.3 ? 'text-amber-300' : 'text-white'">{{ fmtRatio(home.sentiment.amount_ratio_20) }}</b>（20日均）</span>
+              <span>炸板率 <b class="text-white">{{ fmtPct(home.sentiment.burst_rate) }}</b></span>
+              <span>昨涨停均溢价 <b :class="tone(home.sentiment.prev_limit_up_ret)">{{ signedPct(home.sentiment.prev_limit_up_ret) }}</b></span>
+              <span
+                v-for="ev in (home.sentiment.today_anomalies || []).slice(0, 2)"
+                :key="ev.id"
+                class="rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                :class="anomalyToneClass(ev.tone)"
+              >
+                {{ ev.tag }}
+              </span>
+            </div>
+            <span v-else class="text-slate-400">查看全市场宽度、量能、涨跌停周期与历史同类异动统计</span>
+            <button type="button" class="ml-auto whitespace-nowrap" :class="link" @click="go('market-sentiment')">查看情绪走势与异动 →</button>
+          </div>
         </div>
       </section>
 
