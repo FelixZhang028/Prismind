@@ -30,6 +30,9 @@ from quant_platform.factors.statistics import annual_ic, ic_statistics, neutrali
 
 ROLLING_IC_WINDOW = 60
 ROLLING_IC_MIN_OBSERVATIONS = 20
+LOW_COVERAGE_THRESHOLD = 0.8
+LOW_YEAR_COVERAGE_THRESHOLD = 0.5
+MISSING_EDGE_DAYS_THRESHOLD = 20
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,7 @@ class FactorReport:
     nav_periods: int = 0
     nav_skipped: int = 0
     industry_distribution: dict | None = None
+    neutralization_coverage: dict | None = None
 
 
 class FactorEvaluator:
@@ -77,19 +81,37 @@ class FactorEvaluator:
         没有行业分类或市值的样本不参与，并在说明里写明数量；不会拿空值硬算。
         """
 
+        result, notes, _ = self._neutralize_with_coverage(values, bars, neutralization, changes=changes)
+        return result, notes
+
+    def _neutralize_with_coverage(
+        self,
+        values: pd.DataFrame,
+        bars: pd.DataFrame,
+        neutralization: str,
+        *,
+        changes: pd.DataFrame | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> tuple[pd.DataFrame, list[str], dict]:
         sample = values[["date", "symbol", "value"]].copy().reset_index(drop=True)
         sample["value"] = pd.to_numeric(sample["value"], errors="coerce").replace([float("inf"), -float("inf")], float("nan"))
         sample["date"] = pd.to_datetime(sample["date"]).astype("datetime64[ns]")
         exposures = sample[["date", "symbol"]].copy()
+        needs_industry = neutralization in {"industry", "both", "industry_rank"}
+        needs_size = neutralization in {"size", "both"}
+        has_industry: pd.Series | None = None
+        has_size: pd.Series | None = None
         usable = pd.Series(True, index=sample.index)
-        if neutralization in {"industry", "both", "industry_rank"}:
+        if needs_industry:
             if changes is None:
                 changes = self.repository.read_table(EXPOSURES_TABLE)
             if changes.empty or "industry" not in changes.columns:
                 raise ValueError(MISSING_INDUSTRY_MESSAGE)
             exposures["industry"] = industry_on(exposures, changes, infer_early=False).to_numpy()
-            usable &= exposures["industry"].notna()
-        if neutralization in {"size", "both"}:
+            has_industry = exposures["industry"].notna()
+            usable &= has_industry
+        if needs_size:
             days = bars[["symbol", "trade_date", "raw_close"]].copy()
             days["trade_date"] = pd.to_datetime(days["trade_date"]).astype("datetime64[ns]")
             days = days[days["trade_date"].isin(sample["date"].unique())]
@@ -100,7 +122,8 @@ class FactorEvaluator:
             exposures = exposures.merge(
                 days.rename(columns={"trade_date": "date"})[["date", "symbol", "market_cap"]], on=["date", "symbol"], how="left"
             )
-            usable &= (exposures["market_cap"] > 0).to_numpy()
+            has_size = exposures["market_cap"].gt(0).fillna(False)
+            usable &= has_size.to_numpy()
         notes: list[str] = []
         dropped = int((~usable).sum())
         if dropped:
@@ -131,7 +154,143 @@ class FactorEvaluator:
             skipped = available["date"].nunique() - result["date"].nunique()
             if skipped:
                 notes.append(f"{skipped} 个交易日的有效股票不足以估计中性化模型，已跳过")
-        return result, notes
+        coverage = self._build_neutralization_coverage(
+            sample,
+            available,
+            result,
+            neutralization=neutralization,
+            has_industry=has_industry,
+            has_size=has_size,
+            usable=usable,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return result, notes, coverage
+
+    @staticmethod
+    def _build_neutralization_coverage(
+        sample: pd.DataFrame,
+        available: pd.DataFrame,
+        result: pd.DataFrame,
+        *,
+        neutralization: str,
+        has_industry: pd.Series | None,
+        has_size: pd.Series | None,
+        usable: pd.Series,
+        start_date: date | None,
+        end_date: date | None,
+    ) -> dict:
+        sample_dates = pd.DatetimeIndex(sample["date"].dropna().unique()).sort_values()
+        effective_dates = pd.DatetimeIndex(result["date"].dropna().unique()).sort_values()
+        available_dates = pd.DatetimeIndex(available["date"].dropna().unique()).sort_values()
+
+        total_samples = int(len(sample))
+        usable_samples = int(usable.sum())
+        effective_samples = int(len(result))
+        total_days = int(len(sample_dates))
+        effective_days = int(len(effective_dates))
+        skipped_days = max(0, int(len(available_dates)) - effective_days)
+
+        industry_cov = float(has_industry.mean()) if has_industry is not None and total_samples else None
+        size_cov = float(has_size.mean()) if has_size is not None and total_samples else None
+        joint_cov = float(usable.mean()) if total_samples else 0.0
+
+        eff_start_ts = effective_dates[0] if len(effective_dates) else None
+        eff_end_ts = effective_dates[-1] if len(effective_dates) else None
+        leading_missing_days = int((sample_dates < eff_start_ts).sum()) if eff_start_ts is not None else total_days
+        trailing_missing_days = int((sample_dates > eff_end_ts).sum()) if eff_end_ts is not None else total_days
+
+        eff_days_by_year = (
+            pd.Series(effective_dates).dt.year.value_counts().to_dict() if len(effective_dates) else {}
+        )
+        avail_days_by_year = (
+            pd.Series(available_dates).dt.year.value_counts().to_dict() if len(available_dates) else {}
+        )
+
+        frame = pd.DataFrame({
+            "date": sample["date"],
+            "year": sample["date"].dt.year,
+            "usable": usable.to_numpy(dtype=bool),
+        })
+        if has_industry is not None:
+            frame["has_industry"] = has_industry.to_numpy(dtype=bool)
+        if has_size is not None:
+            frame["has_size"] = has_size.to_numpy(dtype=bool)
+
+        yearly: list[dict] = []
+        for year, group in frame.groupby("year", sort=True):
+            yr = int(year)
+            yr_total_days = int(group["date"].nunique())
+            yr_eff_days = int(eff_days_by_year.get(yr, 0))
+            yr_avail_days = int(avail_days_by_year.get(yr, 0))
+            yearly.append({
+                "year": yr,
+                "samples": int(len(group)),
+                "industry_coverage": float(group["has_industry"].mean()) if has_industry is not None else None,
+                "size_coverage": float(group["has_size"].mean()) if has_size is not None else None,
+                "joint_coverage": float(group["usable"].mean()),
+                "total_days": yr_total_days,
+                "effective_days": yr_eff_days,
+                "skipped_days": max(0, yr_avail_days - yr_eff_days),
+            })
+
+        low_years = [
+            row["year"] for row in yearly
+            if row["effective_days"] == 0 or row["joint_coverage"] < LOW_YEAR_COVERAGE_THRESHOLD
+        ]
+        insufficient = bool(
+            joint_cov < LOW_COVERAGE_THRESHOLD
+            or leading_missing_days >= MISSING_EDGE_DAYS_THRESHOLD
+            or trailing_missing_days >= MISSING_EDGE_DAYS_THRESHOLD
+            or low_years
+        )
+        eff_start = eff_start_ts.date().isoformat() if eff_start_ts is not None else None
+        eff_end = eff_end_ts.date().isoformat() if eff_end_ts is not None else None
+        req_start = start_date.isoformat() if start_date is not None else (
+            sample_dates[0].date().isoformat() if len(sample_dates) else None
+        )
+        req_end = end_date.isoformat() if end_date is not None else (
+            sample_dates[-1].date().isoformat() if len(sample_dates) else None
+        )
+
+        warning = ""
+        if insufficient:
+            parts = [
+                f"中性化覆盖不足：实际有效日期为 {eff_start} 至 {eff_end}"
+                f"（有效 {effective_days} / {total_days} 个交易日，联合覆盖率 {joint_cov * 100:.1f}%）"
+            ]
+            if size_cov is not None and size_cov < LOW_COVERAGE_THRESHOLD and (
+                industry_cov is None or size_cov + 0.1 < industry_cov
+            ):
+                parts.append("主要缺少历史市值（总股本）数据")
+            elif industry_cov is not None and industry_cov < LOW_COVERAGE_THRESHOLD and (
+                size_cov is None or industry_cov + 0.1 < size_cov
+            ):
+                parts.append("主要缺少历史行业分类数据")
+            parts.append("当前统计仅反映有数据阶段，请勿当作所选全区间结论。")
+            warning = "；".join(parts[:-1]) + "。" + parts[-1]
+
+        return {
+            "mode": neutralization,
+            "requested_start": req_start,
+            "requested_end": req_end,
+            "effective_start": eff_start,
+            "effective_end": eff_end,
+            "total_samples": total_samples,
+            "usable_samples": usable_samples,
+            "effective_samples": effective_samples,
+            "total_days": total_days,
+            "effective_days": effective_days,
+            "skipped_days": skipped_days,
+            "leading_missing_days": leading_missing_days,
+            "trailing_missing_days": trailing_missing_days,
+            "industry_coverage": industry_cov,
+            "size_coverage": size_cov,
+            "joint_coverage": joint_cov,
+            "insufficient": insufficient,
+            "warning": warning,
+            "yearly": yearly,
+        }
 
     def evaluate(
         self,
@@ -186,9 +345,17 @@ class FactorEvaluator:
             self.repository.read_table(EXPOSURES_TABLE)
             if diagnostics or neutralization in {"industry", "both", "industry_rank"} else None
         )
+        neutralization_coverage = None
         if neutralization != "none":
             progress.report("按历史暴露处理因子")
-            values, exposure_notes = self._neutralized(values, factor_bars, neutralization, changes=changes)
+            values, exposure_notes, neutralization_coverage = self._neutralize_with_coverage(
+                values,
+                factor_bars,
+                neutralization,
+                changes=changes,
+                start_date=start_date,
+                end_date=end_date,
+            )
             notes.extend(exposure_notes)
         values["adjusted"] = pd.to_numeric(values["value"], errors="coerce") * factor.direction
 
@@ -265,6 +432,7 @@ class FactorEvaluator:
             nav_periods=nav_periods,
             nav_skipped=nav_skipped,
             industry_distribution=industry_distribution,
+            neutralization_coverage=neutralization_coverage,
             factor_name=factor.name,
             display_name=factor.display_name,
             horizon=horizon,

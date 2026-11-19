@@ -632,12 +632,13 @@ class DataCenterService:
         end_date: date,
         *,
         symbols: list[str] | None = None,
+        symbol_windows: dict[str, list[tuple[date, date]]] | None = None,
         progress: Any = None,
     ) -> dict[str, Any]:
         """下载季度财务数据；只请求还没有的报告期。不指定股票时是本地有行情的全部股票。"""
 
         return BaoStockFundamentalsBackfill(self.repository, self.sources.baostock_provider()).backfill(
-            start_date, end_date, symbols=symbols, progress=progress
+            start_date, end_date, symbols=symbols, symbol_windows=symbol_windows, progress=progress
         )
 
     def fundamentals_status(self) -> dict[str, Any]:

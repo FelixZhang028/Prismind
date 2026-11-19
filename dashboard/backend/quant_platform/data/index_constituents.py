@@ -187,6 +187,47 @@ def only_members(values: pd.DataFrame, bars: pd.DataFrame) -> tuple[pd.DataFrame
     return kept, f"每天只用当天的成分股（{average}），不用今天的名单。"
 
 
+def index_member_windows(
+    constituents: pd.DataFrame,
+    index_symbol: str,
+    start_date: date,
+    end_date: date,
+    *,
+    lead_days: int = 370,
+) -> dict[str, list[tuple[date, date]]]:
+    """Per historical member overlapping ``[start_date, end_date]``, the date spans to backfill.
+
+    Each stay is shifted earlier by ``lead_days`` so reports published before the evaluation start
+    (or before index entry) are already available on day one, while skipping years outside the index.
+    For CSI 800, CSI 300 members are placed first so partial runs cover CSI 300 first.
+    """
+
+    stays = membership(constituents, index_symbol)
+    if stays.empty:
+        return {}
+    overlap = stays[
+        (stays["effective_from"] <= pd.Timestamp(end_date))
+        & (stays["effective_to"].isna() | (stays["effective_to"] > pd.Timestamp(start_date)))
+    ]
+    if overlap.empty:
+        return {}
+    grouped: dict[str, list[tuple[date, date]]] = {}
+    for symbol, frame in overlap.groupby("symbol", sort=True):
+        spans: list[tuple[date, date]] = []
+        for row in frame.itertuples(index=False):
+            win_start = max(start_date, row.effective_from.date()) - timedelta(days=lead_days)
+            win_end = end_date if pd.isna(row.effective_to) else min(end_date, row.effective_to.date())
+            if win_start <= win_end:
+                spans.append((win_start, win_end))
+        if spans:
+            grouped[str(symbol)] = spans
+    if index_symbol != CSI_800:
+        return grouped
+    priority = set(index_member_windows(constituents, "000300.SH", start_date, end_date, lead_days=lead_days))
+    ordered = sorted(grouped, key=lambda sym: (0 if sym in priority else 1, sym))
+    return {sym: grouped[sym] for sym in ordered}
+
+
 class IndexUniverseRepository:
     """Bars of every stock that was a member at some point in the period, each marked
     ``in_universe`` on the days it was a member. Everything else is the wrapped repository."""

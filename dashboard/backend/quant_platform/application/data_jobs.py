@@ -256,8 +256,8 @@ class DataJobs:
             (r for r in self.records() if r["status"] in ("RUNNING", "RETRYING", "STARTING")), None
         )
 
-    def start(self, start_date, end_date, datasets, symbols=None, trigger="admin"):
-        """启动后台任务。``symbols`` 只对财务数据生效：限定下载哪些股票，不给就是全部。
+    def start(self, start_date, end_date, datasets, symbols=None, trigger="admin", fundamentals_index=None):
+        """启动后台任务。``symbols`` / ``fundamentals_index`` 只对财务数据生效：限定下载哪些股票，不给就是全部。
         ``trigger``：``auto``（每天自动更新）或 ``admin``（管理员手动）。"""
 
         if start_date > end_date or end_date > date.today():
@@ -276,6 +276,7 @@ class DataJobs:
                 end_date=str(end_date),
                 datasets=list(datasets),
                 symbols=list(symbols) if symbols else None,
+                fundamentals_index=fundamentals_index,
                 config=self.config,
                 cwd=self.cwd,
                 status="STARTING",
@@ -406,9 +407,23 @@ def _attempt(folder, job, watchdog):
         # 放在日线之后：这次任务里刚下载的行情，估值与换手率已经跟着存好了，这里只补以前的。
         result["daily_indicators"] = service.backfill_daily_indicators(start, end, progress=progress)
     if "fundamentals" in job["datasets"]:
-        result["quarterly_fundamentals"] = service.backfill_fundamentals(
-            start, end, symbols=job.get("symbols"), progress=progress
-        )
+        fundamentals_index = job.get("fundamentals_index")
+        if fundamentals_index:
+            from quant_platform.data.index_constituents import CONSTITUENTS_TABLE, index_member_windows
+
+            windows = index_member_windows(
+                service.repository.read_table(CONSTITUENTS_TABLE),
+                fundamentals_index,
+                start,
+                end,
+            )
+            result["quarterly_fundamentals"] = service.backfill_fundamentals(
+                start, end, symbols=list(windows), symbol_windows=windows, progress=progress
+            )
+        else:
+            result["quarterly_fundamentals"] = service.backfill_fundamentals(
+                start, end, symbols=job.get("symbols"), progress=progress
+            )
     if "industry" in job["datasets"]:
         result["industry"] = service.backfill_industry(start, end, progress=progress)
     if "index_constituents" in job["datasets"]:

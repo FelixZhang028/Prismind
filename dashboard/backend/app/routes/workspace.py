@@ -92,7 +92,13 @@ from quant_platform.application.benchmarks import BENCHMARKS
 from quant_platform.application.data_jobs import exclusive
 from quant_platform.application.factor_research_service import research_combination
 from quant_platform.data.extras import extra_columns, require_extra_data
-from quant_platform.data.index_constituents import INDEX_UNIVERSES, IndexUniverseRepository
+from quant_platform.data.index_constituents import (
+    CONSTITUENTS_TABLE,
+    CSI_800,
+    INDEX_UNIVERSES,
+    IndexUniverseRepository,
+    index_member_windows,
+)
 from quant_platform.factors.base import FactorDefinition
 from quant_platform.factors.custom import CustomFactor, build_custom_factor, custom_factor_to_dict
 from quant_platform.factors.expression import EXPRESSION_FIELDS, MAX_HISTORY, NEW_EXPRESSION_ALIASES, WINDOW_FUNCTIONS, bind_roe_ttm
@@ -1983,6 +1989,14 @@ def data_jobs_list(user: dict = Depends(require_admin)):
     return {"records": records}
 
 
+FUNDAMENTAL_INDEX_SCOPES: dict[str, tuple[str, str]] = {
+    "hs300": ("000300.SH", "沪深 300 历史成分股"),
+    "000300.SH": ("000300.SH", "沪深 300 历史成分股"),
+    "csi800": (CSI_800, "中证 800 历史成分股"),
+    CSI_800: (CSI_800, "中证 800 历史成分股"),
+}
+
+
 @router.post("/data-center/jobs/start", status_code=status.HTTP_201_CREATED, summary="启动全市场回填任务")
 def data_jobs_start(body: dict[str, Any], user: dict = Depends(require_admin)):
     try:
@@ -1991,16 +2005,41 @@ def data_jobs_start(body: dict[str, Any], user: dict = Depends(require_admin)):
     except ValueError:
         raise HTTPException(status_code=422, detail="请提供有效的开始/结束日期")
     datasets = body.get("datasets") or ["bars", "actions", "derived"]
-    # scope=universe：财务数据只下载这个用户股票池里的股票（全市场要十几个小时）。
-    symbols = [to_canonical(str(code)) for code in _load_universe_symbols(user["id"])] if body.get("scope") == "universe" else None
-    if body.get("scope") == "universe" and not symbols:
-        raise HTTPException(status_code=409, detail="股票池是空的，请先在股票池管理里添加股票")
+    scope = body.get("scope")
+    symbols: list[str] | None = None
+    fundamentals_index: str | None = None
+    scope_note = ""
+    if scope in (None, "", "all"):
+        pass
+    elif scope == "universe":
+        # scope=universe：财务数据只下载这个用户股票池里的股票（全市场要十几个小时）。
+        symbols = [to_canonical(str(code)) for code in _load_universe_symbols(user["id"])]
+        if not symbols:
+            raise HTTPException(status_code=409, detail="股票池是空的，请先在股票池管理里添加股票")
+        scope_note = "（只下载股票池）"
+    elif str(scope) in FUNDAMENTAL_INDEX_SCOPES:
+        fundamentals_index, scope_label = FUNDAMENTAL_INDEX_SCOPES[str(scope)]
+        windows = index_member_windows(
+            market_repository().read_table(CONSTITUENTS_TABLE),
+            fundamentals_index,
+            start,
+            end,
+        )
+        if not windows:
+            raise HTTPException(
+                status_code=409,
+                detail=f"所选日期区间内没有{scope_label}记录，请先下载「指数成分股」。",
+            )
+        scope_note = f"（{scope_label}，{len(windows)} 只）"
+    else:
+        raise HTTPException(status_code=422, detail="未知的数据下载范围")
+    start_options = {"fundamentals_index": fundamentals_index} if fundamentals_index else {}
     try:
-        job = _data_jobs().start(start, end, datasets, symbols=symbols)
+        job = _data_jobs().start(start, end, datasets, symbols=symbols, **start_options)
     except (ValueError, RuntimeError, OSError) as exc:
         raise HTTPException(status_code=409, detail=_sanitize_detail(exc))
     audit.record(user, "data.start", f"启动了数据下载：{'、'.join(map(str, datasets))}，{start} 至 {end}"
-                 + ("（只下载股票池）" if symbols else ""), job=job.get("id"), datasets=datasets)
+                 + scope_note, job=job.get("id"), datasets=datasets)
     job["status_label"] = _DATA_JOB_STATUS_LABELS.get(job.get("status", ""), job.get("status", ""))
     return job
 

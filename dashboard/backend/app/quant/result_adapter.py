@@ -145,6 +145,45 @@ def final_positions(
     return rows
 
 
+def _neutralization_coverage_to_dict(coverage: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not coverage:
+        return None
+    yearly = [
+        {
+            "year": int(row["year"]),
+            "samples": int(row["samples"]),
+            "industry_coverage": _round(row.get("industry_coverage"), 4),
+            "size_coverage": _round(row.get("size_coverage"), 4),
+            "joint_coverage": _round(row.get("joint_coverage"), 4),
+            "total_days": int(row["total_days"]),
+            "effective_days": int(row["effective_days"]),
+            "skipped_days": int(row["skipped_days"]),
+        }
+        for row in coverage.get("yearly") or []
+    ]
+    return {
+        "mode": coverage.get("mode"),
+        "requested_start": coverage.get("requested_start"),
+        "requested_end": coverage.get("requested_end"),
+        "effective_start": coverage.get("effective_start"),
+        "effective_end": coverage.get("effective_end"),
+        "total_samples": int(coverage.get("total_samples") or 0),
+        "usable_samples": int(coverage.get("usable_samples") or 0),
+        "effective_samples": int(coverage.get("effective_samples") or 0),
+        "total_days": int(coverage.get("total_days") or 0),
+        "effective_days": int(coverage.get("effective_days") or 0),
+        "skipped_days": int(coverage.get("skipped_days") or 0),
+        "leading_missing_days": int(coverage.get("leading_missing_days") or 0),
+        "trailing_missing_days": int(coverage.get("trailing_missing_days") or 0),
+        "industry_coverage": _round(coverage.get("industry_coverage"), 4),
+        "size_coverage": _round(coverage.get("size_coverage"), 4),
+        "joint_coverage": _round(coverage.get("joint_coverage"), 4),
+        "insufficient": bool(coverage.get("insufficient")),
+        "warning": str(coverage.get("warning") or ""),
+        "yearly": yearly,
+    }
+
+
 def factor_report_to_dict(report: FactorReport) -> dict[str, Any]:
     """FactorReport -> 前端因子评估 JSON 契约。"""
 
@@ -197,6 +236,7 @@ def factor_report_to_dict(report: FactorReport) -> dict[str, Any]:
         "nav_periods": report.nav_periods,
         "nav_skipped": report.nav_skipped,
         "industry_distribution": report.industry_distribution,
+        "neutralization_coverage": _neutralization_coverage_to_dict(report.neutralization_coverage),
         "rebalance_turnover": [
             {"date": day.date().isoformat(), "turnover": _round(value, 6)}
             for day, value in report.rebalance_turnover.itertuples(index=False, name=None)

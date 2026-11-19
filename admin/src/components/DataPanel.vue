@@ -31,6 +31,16 @@ const STAGES = {
 const DOWNLOADS = ['bars', 'actions', 'derived', 'indicators', 'fundamentals', 'industry', 'index_constituents']
 const ACTIVE = new Set(['STARTING', 'RUNNING', 'RETRYING'])
 const FUNDAMENTALS_WINDOW = 450
+const FUNDAMENTALS_SCOPES = [
+  { value: 'hs300', label: '沪深 300 历史成分股（优先）' },
+  { value: 'csi800', label: '中证 800 历史成分股（先 300 后 500）' },
+  { value: 'universe', label: '我的股票池' },
+  { value: 'all', label: '全市场（多年历史要十几个小时）' },
+]
+const INDEX_SCOPE_NAMES = {
+  '000300.SH': '沪深 300 历史成分股',
+  '000906.SH': '中证 800 历史成分股',
+}
 
 async function load() {
   error.value = ''
@@ -59,7 +69,17 @@ function percent(progress) {
   if (!progress?.total) return 0
   return Math.min(100, Math.round((progress.done / progress.total) * 100))
 }
-const datasetText = (job) => (job.datasets || []).map((d) => DATASETS[d] || d).join('、')
+const datasetText = (job) => {
+  const names = (job.datasets || []).map((d) => DATASETS[d] || d).join('、')
+  if (!(job.datasets || []).includes('fundamentals')) return names
+  if (job.fundamentals_index) {
+    return `${names}（${INDEX_SCOPE_NAMES[job.fundamentals_index] || job.fundamentals_index}）`
+  }
+  if (Array.isArray(job.symbols) && job.symbols.length) {
+    return `${names}（股票池 ${job.symbols.length} 只）`
+  }
+  return names
+}
 const marketText = computed(() => {
   const d = daily.value?.data
   if (!d) return '—'
@@ -110,7 +130,7 @@ async function updateFundamentals() {
 }
 
 // ---------- 下载历史数据 ----------
-const form = reactive({ start_date: localDate(365), end_date: localDate(), datasets: ['bars', 'actions', 'derived'], universeOnly: true })
+const form = reactive({ start_date: localDate(365), end_date: localDate(), datasets: ['bars', 'actions', 'derived'], fundamentalsScope: 'universe' })
 function toggle(dataset) {
   const at = form.datasets.indexOf(dataset)
   if (at >= 0) form.datasets.splice(at, 1)
@@ -120,10 +140,13 @@ async function download() {
   if (!form.datasets.length) return emit('notify', '请至少选择一项数据')
   if (!form.start_date || !form.end_date || form.start_date > form.end_date) return emit('notify', '开始日期不能晚于结束日期')
   const names = form.datasets.map((d) => DATASETS[d]).join('、')
-  if (!window.confirm(`下载 ${form.start_date} ~ ${form.end_date} 的${names}？已经有的数据会跳过，可以随时停止，下次接着下载。`)) return
-  const onlyPool = form.universeOnly && form.datasets.includes('fundamentals')
+  const withFundamentals = form.datasets.includes('fundamentals')
+  const scopeItem = FUNDAMENTALS_SCOPES.find((item) => item.value === form.fundamentalsScope)
+  const scopeHint = withFundamentals && scopeItem ? `（财务范围：${scopeItem.label}）` : ''
+  if (!window.confirm(`下载 ${form.start_date} ~ ${form.end_date} 的${names}${scopeHint}？已经有的数据会跳过，可以随时停止，下次接着下载。`)) return
+  const scopePayload = withFundamentals && form.fundamentalsScope !== 'all' ? { scope: form.fundamentalsScope } : {}
   await act('download', async () => {
-    await startDataJob({ start_date: form.start_date, end_date: form.end_date, datasets: [...form.datasets], ...(onlyPool ? { scope: 'universe' } : {}) })
+    await startDataJob({ start_date: form.start_date, end_date: form.end_date, datasets: [...form.datasets], ...scopePayload })
     emit('notify', '已开始下载')
   })
 }
@@ -273,11 +296,17 @@ const stepMark = { done: '✓', failed: '✗', skipped: '–' }
       <div class="mt-4 flex flex-wrap items-end gap-3">
         <label class="text-xs text-slate-400">开始日期<input v-model="form.start_date" type="date" class="mt-1 block rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white outline-none" /></label>
         <label class="text-xs text-slate-400">结束日期<input v-model="form.end_date" type="date" :max="localDate()" class="mt-1 block rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white outline-none" /></label>
-        <label v-if="form.datasets.includes('fundamentals')" class="flex items-center gap-2 pb-1.5 text-xs text-slate-300">
-          <input v-model="form.universeOnly" type="checkbox" class="h-4 w-4 accent-indigo-500" />财务数据只下载我的股票池（全市场的多年历史要十几个小时）
+        <label v-if="form.datasets.includes('fundamentals')" class="text-xs text-slate-400">
+          财务数据范围
+          <select v-model="form.fundamentalsScope" class="mt-1 block rounded-xl border border-white/10 bg-slate-900/90 px-3 py-1.5 text-sm text-white outline-none">
+            <option v-for="option in FUNDAMENTALS_SCOPES" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
         </label>
         <button type="button" :disabled="busy === 'download' || Boolean(running)" :class="primary" class="ml-auto" @click="download">开始下载</button>
       </div>
+      <p v-if="form.datasets.includes('fundamentals') && (form.fundamentalsScope === 'hs300' || form.fundamentalsScope === 'csi800')" class="mt-3 text-xs text-slate-400">
+        指数范围会按每只成分股的历史在榜区间裁剪，并自动从评估起点前 1 年的已公告财报开始补，减少无效请求；中证 800 会先补完沪深 300 成分股。
+      </p>
     </section>
 
     <!-- 最近的后台任务 -->

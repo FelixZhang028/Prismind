@@ -48,18 +48,33 @@ class BaoStockFundamentalsBackfill:
         self.provider = provider or BaoStockDataProvider()
         self.today = today or date.today()
 
-    def plan(self, start_date: date, end_date: date, symbols: list[str] | None = None) -> list[tuple[str, list[tuple[int, int]]]]:
+    def plan(
+        self,
+        start_date: date,
+        end_date: date,
+        symbols: list[str] | None = None,
+        *,
+        symbol_windows: dict[str, list[tuple[date, date]]] | None = None,
+    ) -> list[tuple[str, list[tuple[int, int]]]]:
         """Per stock, the (year, quarter) periods to request."""
 
         stored = self.market_repository.get_fundamentals(symbols)
-        return self._plan(start_date, end_date, symbols, stored)
+        return self._plan(start_date, end_date, symbols, stored, symbol_windows=symbol_windows)
 
     @staticmethod
     def _missing_cash_flow(stored: pd.DataFrame) -> pd.Series:
         checked = stored.reindex(columns=["cash_flow_checked"])["cash_flow_checked"].eq(True)
         return stored["pub_date"].notna() & ~checked.fillna(False)
 
-    def _plan(self, start_date: date, end_date: date, symbols: list[str] | None, stored: pd.DataFrame):
+    def _plan(
+        self,
+        start_date: date,
+        end_date: date,
+        symbols: list[str] | None,
+        stored: pd.DataFrame,
+        *,
+        symbol_windows: dict[str, list[tuple[date, date]]] | None = None,
+    ):
         bars = self.market_repository.daily_bar_summary()
         complete = stored[~self._missing_cash_flow(stored)]
         have: dict[str, set[date]] = {}
@@ -67,24 +82,47 @@ class BaoStockFundamentalsBackfill:
             have.setdefault(str(symbol), set()).add(day.date())
         last = min(end_date, self.today)
         work = []
-        for symbol in (symbols if symbols is not None else list(bars.index)):
+        ordered_symbols = (
+            symbols
+            if symbols is not None
+            else (list(symbol_windows) if symbol_windows is not None else list(bars.index))
+        )
+        for symbol in ordered_symbols:
             if symbol not in bars.index:
                 continue
-            first = max(start_date, bars.at[symbol, "start"].date() - timedelta(days=LEAD_DAYS))
+            bar_floor = bars.at[symbol, "start"].date() - timedelta(days=LEAD_DAYS)
             known = have.get(symbol, set())
-            periods = [(year, quarter) for year, quarter in quarters_between(first, last) if quarter_end(year, quarter) not in known]
+            if symbol_windows is not None:
+                spans = symbol_windows.get(symbol) or []
+                wanted: set[tuple[int, int]] = set()
+                for win_start, win_end in spans:
+                    first = max(win_start, bar_floor)
+                    span_last = min(win_end, self.today)
+                    if first <= span_last:
+                        wanted.update(quarters_between(first, span_last))
+                periods = sorted(
+                    (year, quarter) for year, quarter in wanted if quarter_end(year, quarter) not in known
+                )
+            else:
+                first = max(start_date, bar_floor)
+                periods = [
+                    (year, quarter)
+                    for year, quarter in quarters_between(first, last)
+                    if quarter_end(year, quarter) not in known
+                ]
             if periods:
                 work.append((symbol, periods))
         return work
 
     def backfill(
         self, start_date: date, end_date: date, *, symbols: list[str] | None = None,
+        symbol_windows: dict[str, list[tuple[date, date]]] | None = None,
         batch_size: int = 20, progress: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         """Fetch and store the missing reports; one stock failing does not stop the rest."""
 
         stored = self.market_repository.get_fundamentals(symbols)
-        work = self._plan(start_date, end_date, symbols, stored)
+        work = self._plan(start_date, end_date, symbols, stored, symbol_windows=symbol_windows)
         pending_cash_flow = {
             (row["symbol"], pd.Timestamp(row["stat_date"]).date()): row
             for row in stored[self._missing_cash_flow(stored)].to_dict(orient="records")
