@@ -87,6 +87,11 @@ const breadthBar = computed(() => {
 })
 
 const currentTabMeta = computed(() => SENTIMENT_TABS.find((t) => t.key === activeTab.value) || SENTIMENT_TABS[0])
+const seriesRangeText = computed(() => {
+  const rows = series.value
+  if (!rows.length) return ''
+  return `${rows[0].date} 至 ${rows[rows.length - 1].date}（共 ${rows.length} 个交易日）`
+})
 
 const hoveredRow = computed(() => {
   if (hoverIndex.value < 0 || hoverIndex.value >= series.value.length) return null
@@ -280,22 +285,6 @@ const openEventStudy = () => openResearch('event-study')
           <p class="mt-1.5 max-w-2xl text-sm text-slate-400">
             基于本地日线收盘数据统计全市场宽度、量能、涨跌停生态与客观异动，并用历史数据检验同类异动的后续表现。仅描述历史统计，不构成投资建议。
           </p>
-        </div>
-        <div class="flex flex-wrap items-center gap-2 text-xs">
-          <span class="text-slate-400">趋势窗口</span>
-          <div class="inline-flex rounded-full border border-white/10 bg-white/5 p-0.5">
-            <button
-              v-for="w in SENTIMENT_WINDOWS"
-              :key="w"
-              type="button"
-              :aria-pressed="windowDays === w"
-              class="rounded-full px-3 py-1 font-medium transition"
-              :class="windowDays === w ? 'bg-gradient-to-r from-indigo-500 to-violet-500 text-white' : 'text-slate-400 hover:text-slate-200'"
-              @click="chooseWindow(w)"
-            >
-              {{ w }} 日
-            </button>
-          </div>
         </div>
       </div>
     </section>
@@ -511,9 +500,12 @@ const openEventStudy = () => openResearch('event-study')
       </SectionCard>
 
       <!-- 第三区：多维度情绪趋势图 -->
-      <SectionCard title="情绪与异动趋势" :hint="currentTabMeta.subtitle">
+      <SectionCard
+        :title="`情绪与异动趋势（近 ${windowDays} 个交易日）`"
+        :hint="`${currentTabMeta.subtitle}${seriesRangeText ? ` · ${seriesRangeText}` : ''}`"
+      >
         <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <div class="flex flex-wrap gap-1.5 text-xs">
+          <div class="flex flex-wrap items-center gap-1.5 text-xs">
             <button
               v-for="tab in SENTIMENT_TABS"
               :key="tab.key"
@@ -528,19 +520,34 @@ const openEventStudy = () => openResearch('event-study')
               {{ tab.label }}
             </button>
           </div>
-          <p class="font-mono text-xs tabular-nums text-slate-300">{{ readoutText }}</p>
+          <div class="inline-flex rounded-full border border-white/10 bg-white/5 p-0.5 text-xs">
+            <button
+              v-for="w in SENTIMENT_WINDOWS"
+              :key="w"
+              type="button"
+              :aria-pressed="windowDays === w"
+              class="rounded-full px-3 py-1 font-medium transition"
+              :class="windowDays === w ? 'bg-gradient-to-r from-indigo-500 to-violet-500 text-white' : 'text-slate-400 hover:text-slate-200'"
+              @click="chooseWindow(w)"
+            >
+              近 {{ w }} 日
+            </button>
+          </div>
         </div>
 
         <div v-if="chartModel" class="space-y-2">
-          <div class="flex flex-wrap items-center gap-4 text-xs text-slate-400">
-            <span v-for="l in chartModel.legend" :key="l.label" class="inline-flex items-center gap-1.5">
-              <span
-                class="inline-block"
-                :class="l.kind === 'bar' ? 'h-2.5 w-2.5 rounded-sm' : 'h-0.5 w-3.5 rounded'"
-                :style="{ background: l.color }"
-              />
-              {{ l.label }}
-            </span>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+            <div class="flex flex-wrap items-center gap-4">
+              <span v-for="l in chartModel.legend" :key="l.label" class="inline-flex items-center gap-1.5">
+                <span
+                  class="inline-block"
+                  :class="l.kind === 'bar' ? 'h-2.5 w-2.5 rounded-sm' : 'h-0.5 w-3.5 rounded'"
+                  :style="{ background: l.color }"
+                />
+                {{ l.label }}
+              </span>
+            </div>
+            <p class="font-mono tabular-nums text-slate-300">{{ readoutText }}</p>
           </div>
 
           <div class="w-full overflow-hidden rounded-xl border border-white/10 bg-white/5 p-2">
