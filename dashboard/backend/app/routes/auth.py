@@ -56,8 +56,9 @@ RESET_CODE_MAX_ATTEMPTS = 5       # 验证码最多可尝试次数
 PASSWORD_MIN, PASSWORD_MAX = 8, 128
 
 # 频率限制：(次数, 秒数)
-LOGIN_PER_IP = (30, 15 * 60)          # 同一地址 15 分钟最多尝试 30 次登录
-LOGIN_FAILURES_PER_EMAIL = (5, 15 * 60)  # 同一账户 15 分钟内输错 5 次就暂停
+LOGIN_PER_IP = (30, 15 * 60)                 # 同一地址 15 分钟最多尝试 30 次登录
+LOGIN_FAILURES_PER_EMAIL_IP = (5, 15 * 60)   # 同一地址对同一账户 15 分钟内输错 5 次就暂停
+LOGIN_FAILURES_PER_EMAIL = (50, 15 * 60)     # 多地址撞库保护：同一账户 15 分钟内累计输错 50 次暂停
 REGISTER_PER_IP = (5, 60 * 60)        # 同一地址每小时最多注册 5 个账户
 FORGOT_PER_IP = (10, 60 * 60)
 FORGOT_PER_EMAIL = (3, 60 * 60)
@@ -283,19 +284,23 @@ def register(body: RegisterIn, request: Request):
 @router.post("/login")
 def login(body: LoginIn, request: Request):
     email = body.email.strip().lower()
-    rate_limit.check(f"login-ip:{rate_limit.client_ip(request)}", *LOGIN_PER_IP, "登录尝试太频繁")
-    # 只数输错的次数：账户被人猜密码时暂停一会儿，本人输对了不受影响。
-    failures = f"login-fail:{email}"
-    rate_limit.check(failures, *LOGIN_FAILURES_PER_EMAIL, "这个账户密码输错次数太多", record=False)
+    ip = rate_limit.client_ip(request)
+    rate_limit.check(f"login-ip:{ip}", *LOGIN_PER_IP, "登录尝试太频繁")
+    # 失败次数按“邮箱 + 来源地址”计，防止他人输错 5 次锁死本人；另设宽松的按邮箱总上限防多地址撞库。
+    ip_failures = f"login-fail:{email}:{ip}"
+    email_failures = f"login-fail-email:{email}"
+    rate_limit.check(ip_failures, *LOGIN_FAILURES_PER_EMAIL_IP, "这个账户密码输错次数太多", record=False)
+    rate_limit.check(email_failures, *LOGIN_FAILURES_PER_EMAIL, "这个账户密码输错次数太多", record=False)
     with get_conn() as conn:
         row = conn.execute(
             "SELECT id, name, email, password_hash, salt, created_at, is_admin, is_sub_admin, is_active, token_version FROM users WHERE email = ?",
             (email,),
         ).fetchone()
     if not row or not verify_password(body.password, row["salt"], row["password_hash"]):
-        rate_limit.record(failures, LOGIN_FAILURES_PER_EMAIL[1])
+        rate_limit.record(ip_failures, LOGIN_FAILURES_PER_EMAIL_IP[1])
+        rate_limit.record(email_failures, LOGIN_FAILURES_PER_EMAIL[1])
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
-    rate_limit.clear(failures)
+    rate_limit.clear(ip_failures)
     if not row["is_active"]:
         # 密码对了才说明停用，猜密码的人看不出这个账户的状态。
         raise HTTPException(status_code=403, detail=DISABLED_MESSAGE)

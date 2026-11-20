@@ -66,6 +66,61 @@ def test_a_right_password_clears_earlier_mistakes(accounts, limits_on):
     assert log_in(accounts).status_code == 200
 
 
+def test_wrong_passwords_from_one_address_do_not_lock_out_another_address(accounts, limits_on, monkeypatch):
+    monkeypatch.setenv("FELLOWQUANT_CLIENT_IP_HEADER", "X-Real-IP")
+    assert sign_up(accounts).status_code == 201
+    for _ in range(5):
+        resp = accounts.post(
+            "/api/v1/auth/login",
+            json={"email": "a@example.test", "password": "wrong password"},
+            headers={"X-Real-IP": "198.51.100.1"},
+        )
+        assert resp.status_code == 401
+    blocked = accounts.post(
+        "/api/v1/auth/login",
+        json={"email": "a@example.test", "password": "correct horse 1"},
+        headers={"X-Real-IP": "198.51.100.1"},
+    )
+    assert blocked.status_code == 429 and "这个账户密码输错次数太多" in blocked.json()["detail"]
+    # 本人从另一个地址（例如手机网络）仍能正常登录。
+    other_ip = accounts.post(
+        "/api/v1/auth/login",
+        json={"email": "a@example.test", "password": "correct horse 1"},
+        headers={"X-Real-IP": "203.0.113.2"},
+    )
+    assert other_ip.status_code == 200
+
+
+def test_distributed_wrong_passwords_still_hit_the_per_email_cap(accounts, limits_on, monkeypatch):
+    monkeypatch.setenv("FELLOWQUANT_CLIENT_IP_HEADER", "X-Real-IP")
+    assert sign_up(accounts).status_code == 201
+    for i in range(auth.LOGIN_FAILURES_PER_EMAIL[0]):
+        resp = accounts.post(
+            "/api/v1/auth/login",
+            json={"email": "a@example.test", "password": "wrong password"},
+            headers={"X-Real-IP": f"198.51.100.{i + 1}"},
+        )
+        assert resp.status_code == 401
+    blocked = accounts.post(
+        "/api/v1/auth/login",
+        json={"email": "a@example.test", "password": "correct horse 1"},
+        headers={"X-Real-IP": "203.0.113.99"},
+    )
+    assert blocked.status_code == 429 and "这个账户密码输错次数太多" in blocked.json()["detail"] and "Retry-After" in blocked.headers
+
+
+def test_release_deployment_isolates_python_venv_per_release():
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[4]
+    install = (repo / "deploy" / "server" / "install-release.sh").read_text(encoding="utf-8")
+    service = (repo / "deploy" / "server" / "prismind.service").read_text(encoding="utf-8")
+    assert 'python3 -m venv "$dir/.venv"' in install
+    assert '"$dir/.venv/bin/pip"' in install
+    assert '$previous/deploy/server/prismind.service' in install
+    assert "ExecStart=/opt/prismind/current/.venv/bin/python -m uvicorn" in service
+
+
 def test_one_address_cannot_sign_up_many_accounts(accounts, limits_on):
     for number in range(5):
         assert sign_up(accounts, email=f"user{number}@example.test").status_code == 201

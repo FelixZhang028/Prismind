@@ -9,25 +9,29 @@ release="$1"
 dir="$base/releases/$release"
 [ -d "$dir/dashboard/backend" ] || { echo "没有找到 $dir" >&2; exit 1; }
 
-# 数据和 .env 放在版本目录外面，换版本时不动它们。
+# 数据和 .env 放在版本目录外面，换版本时不动它们；pip 缓存跨版本共享以加快安装。
 ln -sfn "$base/data" "$dir/dashboard/backend/data"
 ln -sfn "$base/shared/.env" "$dir/dashboard/backend/.env"
-chown -R prismind:prismind "$dir"
+mkdir -p "$base/.cache/pip"
+chown -R prismind:prismind "$dir" "$base/.cache"
 as_app() { sudo -u prismind -H "$@"; }
 
-echo "[依赖] Python …"
-as_app "$base/venv/bin/pip" install -q --disable-pip-version-check \
+# 每个版本使用独立的 Python 虚拟环境，部署时不改动线上正在运行版本的依赖，回滚也完全隔离。
+echo "[依赖] Python（版本独立环境）…"
+as_app python3 -m venv "$dir/.venv"
+as_app "$dir/.venv/bin/pip" install -q --disable-pip-version-check \
+  --cache-dir "$base/.cache/pip" \
   -r "$dir/dashboard/backend/requirements.txt" -c "$dir/dashboard/backend/requirements.lock"
 for part in landing admin; do
   echo "[打包] $part …"
   (cd "$dir/$part" && as_app npm ci --no-audit --no-fund --loglevel=error && as_app npm run build --silent)
 done
 
+previous="$(readlink -f "$base/current" 2>/dev/null || true)"
 install -m 644 "$dir/deploy/server/prismind.service" /etc/systemd/system/prismind.service
 systemctl daemon-reload
 systemctl enable -q prismind
 
-previous="$(readlink -f "$base/current" 2>/dev/null || true)"
 ln -sfn "$dir" "$base/current"
 systemctl restart prismind
 healthy() {
@@ -44,6 +48,10 @@ else
   echo "[出错] 新版本没有启动成功，切回上一个版本。日志：journalctl -u prismind -n 100" >&2
   if [ -n "$previous" ] && [ "$previous" != "$dir" ]; then
     ln -sfn "$previous" "$base/current"
+    if [ -f "$previous/deploy/server/prismind.service" ]; then
+      install -m 644 "$previous/deploy/server/prismind.service" /etc/systemd/system/prismind.service
+      systemctl daemon-reload
+    fi
     systemctl restart prismind
   fi
   exit 1

@@ -17,8 +17,7 @@ if [ ! -f /swapfile ]; then
 fi
 
 id prismind >/dev/null 2>&1 || useradd --system --create-home --home-dir "$base" --shell /usr/sbin/nologin prismind
-mkdir -p "$base/releases" "$base/data" "$base/shared"
-[ -d "$base/venv" ] || python3 -m venv "$base/venv"
+mkdir -p "$base/releases" "$base/data" "$base/shared" "$base/.cache/pip"
 chown -R prismind:prismind "$base"
 chmod 750 "$base"
 

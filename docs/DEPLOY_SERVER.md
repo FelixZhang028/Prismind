@@ -11,11 +11,11 @@
 
 | 位置 | 内容 |
 |---|---|
-| `/opt/prismind/releases/时间-提交/` | 每次部署的代码，保留最近 5 个 |
+| `/opt/prismind/releases/时间-提交/` | 每次部署的代码和该版本独立的 Python 环境（`.venv/`），保留最近 5 个 |
 | `/opt/prismind/current` | 指向正在用的版本 |
 | `/opt/prismind/data/` | 账户数据库、行情数据、回测结果、`runtime/app-secret.key`（所有版本共用） |
 | `/opt/prismind/shared/.env` | 配置（所有版本共用） |
-| `/opt/prismind/venv/` | Python 环境 |
+| `/opt/prismind/.cache/pip/` | 跨版本共享的 pip 下载缓存，加快每次独立环境安装 |
 | `/etc/systemd/system/prismind.service` | 后端服务，每次部署时从 `deploy/server/prismind.service` 更新 |
 | `/etc/nginx/sites-available/prismind` | Nginx 配置，只在第一次准备时安装，之后由 certbot 加上 https |
 
@@ -58,13 +58,15 @@ scripts/deploy.sh 某个分支或提交   # 部署别的版本
 
 脚本把代码打包传到服务器，装依赖、打包网页、切换 `current`、重启后端并检查 `/api/health`；新版本没启动成功会自动切回上一个版本。重启网站时，正在运行的数据下载任务会继续。
 
-回退到上一个版本：
+回退到上一个版本（每个版本自带独立 `.venv`，切链接并重启即可）：
 
 ```bash
 sudo ls -1t /opt/prismind/releases                     # 找到上一个版本（/opt/prismind 只有 prismind 用户能看，要加 sudo）
 sudo ln -sfn /opt/prismind/releases/上一个版本 /opt/prismind/current
 sudo systemctl restart prismind
 ```
+
+> 从旧版共享 `/opt/prismind/venv` 升级到版本独立环境时，第一次部署会自动更新 `prismind.service`；如果当时启动失败需要自动回退，脚本也会把上一版本的 `prismind.service` 一起还原。连续几次正常部署后，旧的 `/opt/prismind/venv` 可手工删除释放空间。
 
 ## 切换域名（从本机 Tunnel 换到服务器）
 
