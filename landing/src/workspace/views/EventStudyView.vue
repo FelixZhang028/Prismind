@@ -5,9 +5,11 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { eventStudyOptions, runEventStudy } from '../../api.js'
 import { openResearch } from '../researchNavigation.js'
 import {
-  OP_WORDS, SHORT_NAMES, bigNumbers, compareRows, decodePreset, defaultCondition, diffText, histogramBars, pathChart,
-  pct, reading, sentenceParts, signedPct, tone, yearChart,
+  OP_WORDS, SHORT_NAMES, bigNumbers, compareRows, decodePreset, defaultCondition, diffText, entryLabel,
+  hasLimitUpCloseWarning, histogramBars, pathChart, pct, reading, sentenceParts, significanceBadge, signedPct,
+  strategyHandoffFromEvent, tone, yearChart,
 } from '../eventStudy.js'
+import { handOffStrategyDraft } from '../ruleHandoff.js'
 import SectionCard from '../ui/SectionCard.vue'
 import UsefulPrompt from '../ui/UsefulPrompt.vue'
 
@@ -18,10 +20,11 @@ const props = defineProps({
 
 const options = ref(null)
 const loadError = ref('')
-const form = reactive({ conditions: [], scope: 'all', industry: '', start: '', end: '', cooldown: 20, keep_st: false })
+const form = reactive({ conditions: [], scope: 'all', industry: '', start: '', end: '', cooldown: 20, keep_st: false, entry: 'close' })
 const running = ref(false)
 const error = ref('')
 const result = ref(null)
+const submittedConditions = ref([])
 const horizon = ref('20')
 const fromPreset = ref(false)
 const activePreset = ref('')
@@ -31,11 +34,23 @@ const hoverDay = ref(null)
 const kinds = computed(() => options.value?.conditions || [])
 const kindOf = (type) => kinds.value.find((k) => k.type === type)
 const groups = computed(() => [...new Set(kinds.value.map((k) => k.group))].map((group) => ({ group, items: kinds.value.filter((k) => k.group === group) })))
+const entries = computed(() => options.value?.entries || [
+  { value: 'close', label: '事件当天收盘' },
+  { value: 'next_open', label: '次日开盘（跳过一字涨停和停牌）' },
+])
+const limitUpCloseWarning = computed(() => hasLimitUpCloseWarning(form.conditions, form.entry))
 const current = computed(() => result.value?.horizons?.[horizon.value])
 const numbers = computed(() => bigNumbers(horizon.value, current.value))
+const sigBadge = computed(() => significanceBadge(current.value))
 const readingText = computed(() => reading(result.value, horizon.value))
 const rows = computed(() => compareRows(current.value))
 const bars = computed(() => histogramBars(result.value?.histogram))
+const handoff = computed(() => (result.value ? strategyHandoffFromEvent(submittedConditions.value, result.value.conditions) : null))
+const BADGE_CLASSES = {
+  indigo: 'border-indigo-400/40 bg-indigo-500/15 text-indigo-200',
+  amber: 'border-amber-400/40 bg-amber-400/10 text-amber-200',
+  slate: 'border-white/15 bg-white/[0.05] text-slate-300',
+}
 // 图按容器的实际宽度画（不是整张缩放），手机上字也不会变小。
 const chartBox = ref(null)
 const chartWidth = ref(640)
@@ -102,12 +117,35 @@ function ask(preset) {
   fromPreset.value = false
   run()
 }
+function chooseEntry(value) {
+  if (form.entry === value) return
+  form.entry = value
+  if (result.value && !running.value) run()
+}
+function useNextOpenAndRun() {
+  form.entry = 'next_open'
+  if (!running.value) run()
+}
+function toStrategy() {
+  if (!handoff.value) return
+  handOffStrategyDraft({
+    source: 'event-study',
+    sourceLabel: '事件研究',
+    mode: handoff.value.mode,
+    definition: handoff.value.definition,
+    prompt: handoff.value.nlPrompt,
+    note: handoff.value.note,
+  })
+  openResearch('strategy-studio', handoff.value.mode === 'describe' ? { mode: 'describe' } : {})
+}
 async function run() {
   if (running.value) return
   running.value = true
   error.value = ''
+  const snapshot = form.conditions.map((c) => ({ ...c }))
   try {
-    result.value = await runEventStudy({ ...form, conditions: form.conditions.map((c) => ({ ...c })) })
+    result.value = await runEventStudy({ ...form, conditions: snapshot })
+    submittedConditions.value = snapshot
     horizon.value = String(result.value.main_horizon)
     await nextTick()
     resultsEl.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
@@ -187,6 +225,10 @@ const inline = 'mx-0.5 max-w-full cursor-pointer rounded-md border-0 border-b-2 
         <p v-for="condition in form.conditions.filter((c) => kindOf(c.type)?.source !== 'price')" :key="condition.type" class="text-[11px] text-amber-200">
           {{ SHORT_NAMES[condition.type] }}：{{ kindOf(condition.type).source === 'report' ? '财务数据只有最近几期，能比的次数会少一些' : '估值数据的历史比行情短，能比的次数会少一些' }}
         </p>
+        <p v-if="limitUpCloseWarning" class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">
+          <span>当天涨停在收盘时通常买不到，按收盘价统计会偏乐观。</span>
+          <button type="button" :disabled="running" class="font-semibold underline decoration-amber-300/70 underline-offset-2 hover:text-white disabled:opacity-60" @click="useNextOpenAndRun">改用次日开盘统计</button>
+        </p>
         <button v-if="form.conditions.length < options.max_conditions" type="button" class="mt-1 text-sm text-indigo-300 hover:text-indigo-200" @click="addCondition">+ 再加一个条件</button>
 
         <details class="mt-4 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3">
@@ -210,22 +252,38 @@ const inline = 'mx-0.5 max-w-full cursor-pointer rounded-md border-0 border-b-2 
         </details>
 
         <div class="mt-4 flex flex-wrap items-center gap-3">
-          <p v-if="running" class="text-xs text-slate-400" role="status">正在统计全市场的历史数据。数据更新后第一次要先读取全部行情，大约 10～20 秒，之后几秒就好。</p>
-          <p v-if="error" class="text-sm text-rose-300" role="alert">{{ error }}</p>
+          <div class="flex flex-wrap items-center gap-2" role="group" aria-label="入场口径">
+            <span class="text-xs text-slate-400">从哪开始算</span>
+            <button v-for="item in entries" :key="item.value" type="button" :disabled="running"
+              :aria-pressed="form.entry === item.value"
+              class="rounded-full border px-3 py-1.5 text-xs transition disabled:opacity-60"
+              :class="form.entry === item.value ? 'border-indigo-400/50 bg-indigo-500/15 text-white' : 'border-white/10 text-slate-400 hover:border-white/20 hover:text-slate-200'"
+              @click="chooseEntry(item.value)">
+              {{ item.value === 'next_open' ? '次日开盘（跳过一字涨停/停牌）' : '事件当天收盘' }}
+            </button>
+          </div>
           <button type="button" :disabled="running" class="ml-auto rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 transition hover:-translate-y-0.5 disabled:opacity-60" @click="activePreset = ''; run()">{{ running ? '统计中…' : '看看历史上怎么样' }}</button>
         </div>
+        <p v-if="running" class="mt-2 text-xs text-slate-400" role="status">正在统计全市场的历史数据。数据更新后第一次要先读取全部行情，大约 10～20 秒，之后几秒就好。</p>
+        <p v-if="error" class="mt-2 text-sm text-rose-300" role="alert">{{ error }}</p>
       </SectionCard>
     </template>
 
     <div v-if="result" ref="resultsEl" class="scroll-mt-20 space-y-6">
-      <SectionCard title="结果" :hint="`${result.start} 至 ${result.end} · ${result.scope}${result.industries?.length ? '（' + result.industries.join('、') + '）' : ''}`">
+      <SectionCard title="结果" :hint="`${result.start} 至 ${result.end} · ${result.scope}${result.industries?.length ? '（' + result.industries.join('、') + '）' : ''} · ${entryLabel(result.entry)}`">
         <p class="text-sm text-slate-300">当 <span class="text-white">{{ result.conditions.join('，并且 ') }}</span> 的时候</p>
         <template v-if="result.events && current?.events?.count">
-          <div class="mt-4 flex flex-wrap items-center gap-2" role="group" aria-label="看之后多少个交易日">
-            <span class="text-xs text-slate-400">看之后</span>
-            <button v-for="h in Object.keys(result.horizons)" :key="h" type="button" :aria-pressed="horizon === h"
-              class="rounded-full border px-3 py-1 text-xs" :class="horizon === h ? 'border-indigo-400/50 bg-indigo-500/15 text-white' : 'border-white/10 text-slate-400'"
-              @click="horizon = h">{{ h }} 个交易日</button>
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-2">
+            <div class="flex flex-wrap items-center gap-2" role="group" aria-label="看之后多少个交易日">
+              <span class="text-xs text-slate-400">看之后</span>
+              <button v-for="h in Object.keys(result.horizons)" :key="h" type="button" :aria-pressed="horizon === h"
+                class="rounded-full border px-3 py-1 text-xs" :class="horizon === h ? 'border-indigo-400/50 bg-indigo-500/15 text-white' : 'border-white/10 text-slate-400'"
+                @click="horizon = h">{{ h }} 个交易日</button>
+            </div>
+            <span v-if="sigBadge" class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium"
+              :class="BADGE_CLASSES[sigBadge.tone]" :title="sigBadge.detail">
+              {{ sigBadge.text }}
+            </span>
           </div>
           <div class="mt-4 grid gap-3 sm:grid-cols-3">
             <div v-for="n in numbers" :key="n.label" class="rounded-xl bg-white/[0.04] p-4">
@@ -239,12 +297,32 @@ const inline = 'mx-0.5 max-w-full cursor-pointer rounded-md border-0 border-b-2 
         <ul v-if="result.coverage.length" class="mt-2 space-y-1">
           <li v-for="item in result.coverage" :key="item.label" class="text-xs text-amber-200">“{{ item.label }}”要用到的数据，只覆盖了满足前面条件的股票交易日的 {{ pct(item.share, 0) }}{{ item.since ? `（${item.since} 年起才有）` : '' }}，结果主要来自有数据的那部分。</li>
         </ul>
+        <div v-if="handoff" class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-medium text-white">想按真实 A 股费用、涨跌停和仓位回测这个想法？</p>
+            <p v-if="handoff.mode === 'rules'" class="mt-0.5 text-xs text-slate-400">
+              事件研究不含交易成本与仓位限制；带去「新建规则策略」设好持股数量和调仓频率就能做完整回测与审计。
+            </p>
+            <p v-else class="mt-0.5 text-xs text-slate-400">
+              当前条件属于单日盘面触发，定期调仓表单暂不支持直接带入；可以带去「用一句话描述」生成近似规则。
+            </p>
+            <p v-if="handoff.mode === 'rules' && handoff.skippedLabels.length" class="mt-1 text-xs text-amber-200">
+              将带入「{{ handoff.convertedLabels.join('、') }}」；规则表单暂不支持「{{ handoff.skippedLabels.join('、') }}」，跳转后可按需调整。
+            </p>
+          </div>
+          <button type="button"
+            class="shrink-0 rounded-full border border-indigo-400/50 bg-indigo-500/20 px-4 py-2 text-xs font-semibold text-indigo-100 transition hover:bg-indigo-500/30"
+            @click="toStrategy">
+            {{ handoff.mode === 'rules' ? '带条件去建策略回测 →' : '去用一句话描述建策略 →' }}
+          </button>
+        </div>
       </SectionCard>
       <!-- 第一次出结果时问一句“有用吗” -->
       <UsefulPrompt v-if="result.events" feature="event-study" :context="{ preset: routeContext.preset || '' }" />
 
       <template v-if="result.events">
-        <SectionCard v-if="chart" class="min-w-0" title="出现以后，平均每天走到哪里" hint="从出现那天的收盘价算起，之后每一天的平均累计涨跌；把鼠标放在图上看具体数字">
+        <SectionCard v-if="chart" class="min-w-0" title="出现以后，平均每天走到哪里"
+          :hint="result.entry === 'next_open' ? '从事件次日开盘价算起（跳过停牌和一字涨停），之后每一天的平均累计涨跌；把鼠标放在图上看具体数字' : '从出现那天的收盘价算起，之后每一天的平均累计涨跌；把鼠标放在图上看具体数字'">
           <div class="mb-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400">
             <span v-for="line in LINES" :key="line.key" class="flex items-center gap-2">
               <svg width="22" height="6" aria-hidden="true"><line x1="0" y1="3" x2="22" y2="3" :stroke="line.stroke" :stroke-width="line.width" :stroke-dasharray="line.dash" /></svg>{{ line.label }}
@@ -304,10 +382,15 @@ const inline = 'mx-0.5 max-w-full cursor-pointer rounded-md border-0 border-b-2 
                       <td class="py-2 pr-4 text-right text-slate-500">—</td>
                       <td class="py-2 text-right text-xs text-slate-400">跑赢的比例 {{ pct(current.excess.up_share) }}</td>
                     </tr>
+                    <tr v-if="sigBadge" class="text-slate-300">
+                      <td class="py-2 pr-4 text-slate-400">按事件日合并检验</td>
+                      <td colspan="3" class="py-2 text-right text-xs text-slate-300">{{ sigBadge.detail }}</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
-              <p class="mt-2 text-xs text-slate-500">计入 {{ current.events.count.toLocaleString('zh-CN') }} 次；还没满 {{ horizon }} 个交易日的 {{ current.not_yet }} 次、之后退市或长期停牌的 {{ current.left_market }} 次没有计入；平时一共 {{ current.all.count?.toLocaleString('zh-CN') }} 个股票交易日。</p>
+              <p v-if="sigBadge" class="mt-2 text-xs text-slate-500">同一天往往有很多股票同时满足条件；先把每天的平均超额合并成一天再做检验，可避免把一次大盘普跌重复数几十遍。</p>
+              <p class="mt-2 text-xs text-slate-500">计入 {{ current.events.count.toLocaleString('zh-CN') }} 次；<template v-if="result.entry === 'next_open' || current.untradable_entry">次日一字涨停或停牌买不到的 {{ current.untradable_entry || 0 }} 次、</template>还没满 {{ horizon }} 个交易日的 {{ current.not_yet }} 次、之后退市或长期停牌的 {{ current.left_market }} 次没有计入；平时一共 {{ current.all.count?.toLocaleString('zh-CN') }} 个股票交易日。</p>
             </div>
 
             <div class="min-w-0">

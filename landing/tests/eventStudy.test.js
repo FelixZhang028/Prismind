@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  bigNumbers, compareRows, decodePreset, defaultCondition, diffText, encodePreset, histogramBars, pathChart, reading,
-  sentenceParts, statesFromFacts, tone, yearChart,
+  bigNumbers, compareRows, decodePreset, defaultCondition, diffText, encodePreset, entryLabel,
+  hasLimitUpCloseWarning, histogramBars, pathChart, reading, sentenceParts, significanceBadge,
+  statesFromFacts, strategyHandoffFromEvent, tone, yearChart,
 } from '../src/workspace/eventStudy.js'
 
 const kinds = [
@@ -100,4 +101,84 @@ test('从 AI研究员的数据表推出这只股票现在的状态，每个都�
   assert.deepEqual(states[4].conditions, [{ type: 'pe', op: '<=', value: 15 }])
   assert.deepEqual(statesFromFacts([{ key: 'ret_20d', value: 0.02 }]), [])
   assert.equal(statesFromFacts([{ key: 'pe_ttm', value: 80 }])[0].conditions[0].op, '>=')
+})
+
+test('入场口径文案、涨停收盘提醒与按事件日显著性徽标', () => {
+  assert.equal(entryLabel('close'), '事件当天收盘')
+  assert.equal(entryLabel('next_open'), '次日开盘入场')
+  assert.equal(hasLimitUpCloseWarning([{ type: 'limit', direction: 'up' }], 'close'), true)
+  assert.equal(hasLimitUpCloseWarning([{ type: 'limit', direction: 'up' }], 'next_open'), false)
+  assert.equal(hasLimitUpCloseWarning([{ type: 'limit', direction: 'down' }], 'close'), false)
+
+  const sigPos = significanceBadge({ significance: { event_days: 186, daily_mean: 0.0124, t_stat: 2.41, p_value: 0.017, significant: true } })
+  assert.equal(sigPos.tone, 'indigo')
+  assert.match(sigPos.text, /统计较稳定/)
+  assert.match(sigPos.detail, /独立事件日 186 天.*t = 2\.41.*p = 0\.017/)
+
+  const sigNeg = significanceBadge({ significance: { event_days: 60, daily_mean: -0.015, t_stat: -2.9, p_value: 0.005, significant: true } })
+  assert.equal(sigNeg.tone, 'slate')
+  assert.match(sigNeg.text, /弱于同期市场/)
+
+  const sigNone = significanceBadge({ significance: { event_days: 40, daily_mean: 0.008, t_stat: 1.1, p_value: 0.28, significant: false } })
+  assert.equal(sigNone.tone, 'amber')
+  assert.match(sigNone.text, /统计不显著/)
+
+  const sigFew = significanceBadge({ significance: { event_days: 3, significant: false, label: '独立事件日不足 5 天' } })
+  assert.equal(sigFew.tone, 'slate')
+  assert.match(sigFew.text, /独立事件日太少/)
+
+  const enriched = {
+    ...horizon,
+    excess: { mean: 0.025, up_share: 0.56 },
+    untradable_entry: 19,
+    significance: { event_days: 120, daily_mean: 0.02, t_stat: 1.2, p_value: 0.23, significant: false },
+  }
+  assert.equal(bigNumbers('20', enriched)[2].note, '跑赢的占 56% · 覆盖 120 天')
+  const text = reading({ ...result, entry: 'next_open', horizons: { 20: enriched } }, '20')
+  assert.match(text, /暂未达显著水平/)
+  assert.match(text, /另有 19 次因次日一字涨停或停牌无法买入/)
+})
+
+test('事件研究条件转规则策略：全支持、部分支持、单日盘面触发降级一句话描述', async () => {
+  const full = strategyHandoffFromEvent(
+    [
+      { type: 'ret', days: 20, op: '<=', value: -20 },
+      { type: 'pe', op: '<=', value: 15 },
+      { type: 'ma_gap', days: 60, op: '>=', value: 0 },
+    ],
+    ['近 20 个交易日涨跌幅 ≤ -20%', '市盈率 ≤ 15', '收盘价相对 60 日均线 ≥ 0%'],
+  )
+  assert.equal(full.mode, 'rules')
+  assert.deepEqual(full.skippedLabels, [])
+  assert.equal(full.definition.entry_rules.length, 4) // pe <= 15 自动带 pe_ttm > 0 仅算盈利公司
+  assert.deepEqual(full.definition.entry_rules[0], { left: { name: 'return', window: 20 }, operator: 'less_or_equal', value: -0.2 })
+  assert.deepEqual(full.definition.entry_rules[1], { left: { name: 'pe_ttm' }, operator: 'greater_than', value: 0 })
+  assert.deepEqual(full.definition.entry_rules[3], { left: { name: 'close' }, operator: 'greater_or_equal', right: { name: 'moving_average', window: 60 } })
+
+  const partial = strategyHandoffFromEvent(
+    [{ type: 'from_high', op: '<=', value: -30 }, { type: 'amount_ratio', op: '>=', value: 3 }],
+    ['距近一年最高价 ≤ -30%', '当日成交额 / 近 20 日平均 ≥ 3倍'],
+  )
+  assert.equal(partial.mode, 'rules')
+  assert.deepEqual(partial.convertedLabels, ['距近一年最高价 ≤ -30%'])
+  assert.deepEqual(partial.skippedLabels, ['当日成交额 / 近 20 日平均 ≥ 3倍'])
+  assert.deepEqual(partial.definition.entry_rules, [{ left: { name: 'drawdown', window: 250 }, operator: 'less_or_equal', value: -0.3 }])
+  assert.match(partial.note, /暂不支持/)
+
+  const describeOnly = strategyHandoffFromEvent([{ type: 'limit', direction: 'up' }], ['当天涨停'])
+  assert.equal(describeOnly.mode, 'describe')
+  assert.equal(describeOnly.definition, null)
+  assert.match(describeOnly.nlPrompt, /当天涨停/)
+
+  const store = new Map()
+  globalThis.sessionStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  }
+  const { handOffStrategyDraft, takeStrategyDraft } = await import('../src/workspace/ruleHandoff.js')
+  handOffStrategyDraft({ mode: 'describe', prompt: describeOnly.nlPrompt })
+  assert.deepEqual(takeStrategyDraft(), { mode: 'describe', prompt: describeOnly.nlPrompt })
+  assert.equal(takeStrategyDraft(), null)
+  delete globalThis.sessionStorage
 })

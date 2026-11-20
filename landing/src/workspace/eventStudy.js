@@ -98,14 +98,51 @@ export function bigNumbers(horizonKey, h) {
   const ev = h.events
   const all = h.all || {}
   const ex = h.excess || {}
+  const days = h.significance?.event_days
+  const excessNote = ok(days) && days > 0
+    ? `跑赢的占 ${pct(ex.up_share, 0)} · 覆盖 ${days.toLocaleString('zh-CN')} 天`
+    : `跑赢的占 ${pct(ex.up_share, 0)}`
   return [
     { label: `之后 ${horizonKey} 个交易日平均涨跌`, value: signedPct(ev.mean, 1), tone: tone(ev.mean), note: `平时 ${signedPct(all.mean, 1)}` },
     { label: '上涨的比例', value: pct(ev.up_share, 0), tone: 'text-white', note: `平时 ${pct(all.up_share, 0)}` },
-    { label: '和同一天的全部股票比', value: signedPct(ex.mean, 1), tone: tone(ex.mean), note: `跑赢的占 ${pct(ex.up_share, 0)}` },
+    { label: '和同一天的全部股票比', value: signedPct(ex.mean, 1), tone: tone(ex.mean), note: excessNote },
   ]
 }
 
-// 几句话读结果：和平时比、和同一天的全部股票比、每年是不是都这样。只描述历史。
+export function entryLabel(entry) {
+  return entry === 'next_open' ? '次日开盘入场' : '事件当天收盘'
+}
+
+export function hasLimitUpCloseWarning(conditions, entry) {
+  if (entry === 'next_open') return false
+  return (conditions || []).some((c) => c?.type === 'limit' && c?.direction === 'up')
+}
+
+export function significanceBadge(h) {
+  const sig = h?.significance
+  if (!sig) return null
+  const days = Number(sig.event_days || 0)
+  const p = sig.p_value
+  const t = sig.t_stat
+  const pText = ok(p) ? (p < 0.001 ? 'p < 0.001' : `p = ${p.toFixed(3)}`) : null
+  const detailParts = [`独立事件日 ${days.toLocaleString('zh-CN')} 天`]
+  if (ok(sig.daily_mean)) detailParts.push(`日均超额 ${signedPct(sig.daily_mean, 2)}`)
+  if (ok(t)) detailParts.push(`t = ${t.toFixed(2)}`)
+  if (pText) detailParts.push(pText)
+  const detail = ok(t) ? detailParts.join(' · ') : (sig.label || detailParts.join(' · '))
+  if (days < 5) {
+    return { tone: 'slate', text: '独立事件日太少，暂不做检验', detail }
+  }
+  if (sig.significant && ok(sig.daily_mean) && sig.daily_mean > 0) {
+    return { tone: 'indigo', text: '统计较稳定（按事件日检验）', detail }
+  }
+  if (sig.significant && ok(sig.daily_mean) && sig.daily_mean < 0) {
+    return { tone: 'slate', text: '统计较稳定 · 弱于同期市场', detail }
+  }
+  return { tone: 'amber', text: '统计不显著（波动或同日共振较大）', detail }
+}
+
+// 几句话读结果：和平时比、和同一天的全部股票比、每年是不是都这样、统计是否稳定。只描述历史。
 export function reading(result, horizonKey) {
   const h = result?.horizons?.[String(horizonKey)]
   if (!result?.events || !h?.events?.count) return '这段时间里没有满足条件的情况。'
@@ -126,6 +163,13 @@ export function reading(result, horizonKey) {
     }
   } else first += '。'
   sentences.push(first)
+  if (h.significance && ok(x) && Math.abs(x) >= CLOSE && Number(h.significance.event_days || 0) >= 5) {
+    sentences.push(
+      h.significance.significant
+        ? '按发生日期合并检验，这一差异在统计上较稳定。'
+        : '不过按发生日期合并检验后，这一差异暂未达显著水平，可能受少数波动日影响。',
+    )
+  }
   if (String(horizonKey) === String(result.main_horizon)) {
     const years = (result.by_year || []).filter((y) => y.events >= MIN_YEAR_EVENTS && ok(y.mean) && ok(y.all_mean))
     if (years.length >= 3) {
@@ -136,6 +180,9 @@ export function reading(result, horizonKey) {
       const counts = [higher && `${higher} 年比平时高`, lower && `${lower} 年比平时低`, similar && `${similar} 年和平时差不多`].filter(Boolean)
       sentences.push(`次数够多的 ${years.length} 年里，${all(higher) ? '每一年都比平时高' : all(lower) ? '每一年都比平时低' : all(similar) ? '每一年都和平时差不多' : counts.join('，')}。`)
     }
+  }
+  if (result.entry === 'next_open' && Number(h.untradable_entry || 0) > 0) {
+    sentences.push(`另有 ${Number(h.untradable_entry).toLocaleString('zh-CN')} 次因次日一字涨停或停牌无法买入，已从统计中剔除。`)
   }
   if (result.events < 30) sentences.push('次数太少，结果很不稳定，看看就好。')
   return sentences.join('')
@@ -238,4 +285,107 @@ export function statesFromFacts(facts) {
     states.push({ text: `最新财报净利润同比 ${signedPct(growth, 0)}`, conditions: [{ type: 'profit_yoy', op: growth > 0 ? '>=' : '<=', value: growth > 0 ? 30 : -30 }] })
   }
   return states.slice(0, 5)
+}
+
+// ---------------------------------------------------------------- 一键转成规则策略
+
+const roundRatio = (percent) => Math.round(Number(percent) * 1e4) / 1e6
+const mapOp = (op) => (op === '<=' ? 'less_or_equal' : 'greater_or_equal')
+
+function convertCondition(condition) {
+  if (!condition?.type) return null
+  const value = Number(condition.value)
+  switch (condition.type) {
+    case 'ret':
+      if (!Number.isFinite(value)) return null
+      return {
+        rules: [{ left: { name: 'return', window: Number(condition.days || 20) }, operator: mapOp(condition.op), value: roundRatio(value) }],
+        ranking: { indicator: { name: 'return', window: Number(condition.days || 20) }, direction: condition.op === '<=' ? 'ascending' : 'descending' },
+      }
+    case 'from_high':
+      if (!Number.isFinite(value)) return null
+      return {
+        rules: [{ left: { name: 'drawdown', window: 250 }, operator: mapOp(condition.op), value: roundRatio(value) }],
+        ranking: { indicator: { name: 'drawdown', window: 250 }, direction: condition.op === '<=' ? 'ascending' : 'descending' },
+      }
+    case 'ma_gap':
+      if (!Number.isFinite(value) || value !== 0) return null
+      return {
+        rules: [{ left: { name: 'close' }, operator: mapOp(condition.op), right: { name: 'moving_average', window: Number(condition.days || 20) } }],
+        ranking: { indicator: { name: 'return', window: Number(condition.days || 20) }, direction: condition.op === '<=' ? 'ascending' : 'descending' },
+      }
+    case 'pe':
+      if (!Number.isFinite(value)) return null
+      return {
+        rules: [
+          ...(condition.op === '<=' || value <= 0 ? [{ left: { name: 'pe_ttm' }, operator: 'greater_than', value: 0 }] : []),
+          { left: { name: 'pe_ttm' }, operator: mapOp(condition.op), value },
+        ],
+        ranking: { indicator: { name: 'pe_ttm' }, direction: condition.op === '<=' ? 'ascending' : 'descending' },
+      }
+    case 'pb':
+      if (!Number.isFinite(value)) return null
+      return {
+        rules: [
+          ...(condition.op === '<=' || value <= 0 ? [{ left: { name: 'pb_mrq' }, operator: 'greater_than', value: 0 }] : []),
+          { left: { name: 'pb_mrq' }, operator: mapOp(condition.op), value },
+        ],
+        ranking: { indicator: { name: 'pb_mrq' }, direction: condition.op === '<=' ? 'ascending' : 'descending' },
+      }
+    case 'roe':
+      if (!Number.isFinite(value)) return null
+      return {
+        rules: [{ left: { name: 'roe_avg' }, operator: mapOp(condition.op), value: roundRatio(value) }],
+        ranking: { indicator: { name: 'roe_avg' }, direction: condition.op === '<=' ? 'ascending' : 'descending' },
+      }
+    default:
+      return null
+  }
+}
+
+// 把事件研究的条件转换成可带入“新建规则策略”的草稿；不支持的条件明确列出，绝不静默丢弃。
+export function strategyHandoffFromEvent(conditions = [], labels = []) {
+  const convertedRules = []
+  const convertedLabels = []
+  const skippedLabels = []
+  let ranking = null
+  conditions.forEach((condition, index) => {
+    const label = labels[index] || SHORT_NAMES[condition?.type] || '条件'
+    const mapped = convertCondition(condition)
+    if (mapped) {
+      convertedRules.push(...mapped.rules)
+      convertedLabels.push(label)
+      if (!ranking) ranking = mapped.ranking
+    } else {
+      skippedLabels.push(label)
+    }
+  })
+  const joined = (labels.length ? labels : convertedLabels.concat(skippedLabels)).join('，并且')
+  const nlPrompt = joined ? `当股票满足“${joined}”时买入，按近20日涨跌幅排序选前5只` : ''
+  if (!convertedRules.length) {
+    return {
+      mode: 'describe',
+      definition: null,
+      convertedLabels: [],
+      skippedLabels,
+      nlPrompt,
+      note: '当前条件属于单日盘面触发或规则表单暂不支持的指标，已为你填好一句话描述，可以直接生成近似规则。',
+    }
+  }
+  const shortTitle = `事件研究：${convertedLabels[0]}`.slice(0, 30)
+  return {
+    mode: 'rules',
+    definition: {
+      name: shortTitle,
+      entry_logic: 'all',
+      entry_rules: convertedRules,
+      ranking: ranking || { indicator: { name: 'return', window: 20 }, direction: 'descending' },
+    },
+    convertedLabels,
+    skippedLabels,
+    nlPrompt,
+    note: skippedLabels.length
+      ? `已带入「${convertedLabels.join('、')}」；规则策略表单暂不支持「${skippedLabels.join('、')}」，可以按需补充。`
+      : '',
+  }
 }
