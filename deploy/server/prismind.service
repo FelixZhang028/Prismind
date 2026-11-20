@@ -14,7 +14,7 @@ Environment=FELLOWQUANT_ADMIN_DIR=/opt/prismind/current/admin/dist
 # Nginx 把访问者的地址放在 X-Real-IP 里（登录、注册的频率限制要用）。
 Environment=FELLOWQUANT_CLIENT_IP_HEADER=X-Real-IP
 Environment=PYTHONIOENCODING=utf-8
-ExecStart=/opt/prismind/venv/bin/python -m uvicorn app.main:app --app-dir /opt/prismind/current/dashboard/backend --host 127.0.0.1 --port 8000 --no-server-header
+ExecStart=/opt/prismind/current/.venv/bin/python -m uvicorn app.main:app --app-dir /opt/prismind/current/dashboard/backend --host 127.0.0.1 --port 8000 --no-server-header
 Restart=always
 RestartSec=5
 # 重启网站时只停后端本身：它启动的数据下载任务（每日更新、补历史数据）继续运行，完成后自己结束。
