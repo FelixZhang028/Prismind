@@ -4,7 +4,7 @@ import { createPackage, nlGenerate, nlStatus, preflightPackage, studioOptions } 
 import { remainingText } from '../aiPresentation.js'
 import { openResearch } from '../researchNavigation.js'
 import { blankForm, definitionFromForm, formFromDefinition, packagePayload } from '../ruleForm.js'
-import { handOffRules, takeHandedRules } from '../ruleHandoff.js'
+import { handOffRules, takeHandedRules, takeStrategyDraft } from '../ruleHandoff.js'
 import FormField from '../ui/FormField.vue'
 import RuleConditions from '../ui/RuleConditions.vue'
 import SectionCard from '../ui/SectionCard.vue'
@@ -51,6 +51,8 @@ function applyTemplate() {
 function chooseStart(key) {
   start.value = key
   handed.value = false
+  handedSource.value = ''
+  handedNote.value = ''
   if (key === 'template') applyTemplate()
   else if (key === 'blank') {
     form.value = blankForm(options.value)
@@ -94,14 +96,38 @@ async function generate() {
   }
 }
 
-// ---------- 和条件选股互相带条件 ----------
-// 从条件选股带过来的条件：换成“自己填”，表单用这组条件，持股数量和调仓频率用默认值。
-const handed = ref(false)      // 表单里是从条件选股带过来的条件
+// ---------- 和条件选股、事件研究互相带条件 ----------
+const handed = ref(false)            // 表单里是从其他页面带过来的条件
+const handedSource = ref('')         // 来源名称：条件选股 / 事件研究
+const handedNote = ref('')           // 额外说明（如部分未映射条件的提示）
 function applyHandOff() {
-  const definition = options.value && takeHandedRules()
+  if (!options.value) return
+  const draft = takeStrategyDraft()
+  if (draft) {
+    handedSource.value = draft.sourceLabel || '事件研究'
+    handedNote.value = draft.note || ''
+    if (draft.mode === 'describe') {
+      start.value = 'describe'
+      handed.value = true
+      nl.description = draft.prompt || ''
+      props.notify(`已带入来自${handedSource.value}的描述，点击“生成规则”可生成近似策略`)
+      return
+    }
+    if (draft.definition) {
+      start.value = 'blank'
+      handed.value = true
+      form.value = formFromDefinition(draft.definition, { top_n: 5, rebalance: 'weekly' }, options.value)
+      origin.value = null
+      props.notify(`已带入来自${handedSource.value}的条件，设好持股数量和调仓频率就能保存、回测`)
+      return
+    }
+  }
+  const definition = takeHandedRules()
   if (!definition) return
   start.value = 'blank'
   handed.value = true
+  handedSource.value = '条件选股'
+  handedNote.value = ''
   form.value = formFromDefinition(definition, { top_n: 5, rebalance: 'weekly' }, options.value)
   origin.value = null
   props.notify('已带入条件选股里的条件，设好持股数量和调仓频率就能保存、回测')
@@ -152,7 +178,10 @@ async function save() {
 }
 
 watch(() => [tpl.template_id, tpl.style], () => { if (start.value === 'template' && options.value) applyTemplate() })
-watch(() => props.routeContext.mode, (mode) => { if (mode && options.value) chooseStart(startFor(mode)) })
+watch(() => props.routeContext.mode, (mode) => {
+  const next = mode && startFor(mode)
+  if (next && options.value && start.value !== next) chooseStart(next)
+})
 onMounted(async () => {
   try {
     options.value = await studioOptions()
@@ -207,6 +236,7 @@ onActivated(applyHandOff)
         </div>
 
         <div v-else-if="start === 'describe'" class="mt-5 space-y-4">
+          <p v-if="handed && handedNote" class="rounded-xl border border-indigo-400/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200">{{ handedNote }}</p>
           <FormField label="策略的想法" type="textarea" v-model="nl.description" :rows="3"
             placeholder="例如：5日均线高于20日均线并且放量时买入，按20日涨幅从强到弱选前5只" />
           <div class="flex flex-wrap items-center gap-3">
@@ -220,7 +250,10 @@ onActivated(applyHandOff)
           <p v-if="nl.explanation" class="whitespace-pre-wrap rounded-xl border border-white/10 bg-white/5 p-4 text-sm leading-relaxed text-slate-300">{{ nl.explanation }}</p>
         </div>
 
-        <p v-else-if="handed" class="mt-5 text-sm text-slate-400">下面的表单已经填好从条件选股带过来的条件，设好名称、持股数量和调仓频率就能保存。</p>
+        <div v-else-if="handed" class="mt-5 space-y-1.5">
+          <p class="text-sm text-slate-300">下面的表单已经填好从{{ handedSource || '条件选股' }}带过来的条件，设好名称、持股数量和调仓频率就能保存、回测。</p>
+          <p v-if="handedNote" class="text-xs text-amber-200">{{ handedNote }}</p>
+        </div>
         <p v-else class="mt-5 text-sm text-slate-400">下面的表单已经重置为一条空白条件，直接填写即可。</p>
       </SectionCard>
 
