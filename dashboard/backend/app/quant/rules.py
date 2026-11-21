@@ -80,7 +80,7 @@ def definition_to_quant(definition: dict[str, Any]) -> dict[str, Any]:
         rules.append({"left": {"name": "close"}, "operator": "greater_than", "value": 0.0})
 
     ranking = definition.get("ranking") or {}
-    return {
+    result: dict[str, Any] = {
         "schema_version": 1,
         "strategy_id": str(definition.get("strategy_id") or "").strip(),
         "name": str(definition.get("name") or "").strip(),
@@ -92,6 +92,11 @@ def definition_to_quant(definition: dict[str, Any]) -> dict[str, Any]:
             "direction": str(ranking.get("direction") or "descending"),
         },
     }
+    if definition.get("hold_buffer") is not None:
+        result["hold_buffer"] = definition["hold_buffer"]
+    if definition.get("market_timing") is not None:
+        result["market_timing"] = definition["market_timing"]
+    return result
 
 
 def definition_to_frontend(definition: dict[str, Any]) -> dict[str, Any]:
@@ -111,7 +116,7 @@ def definition_to_frontend(definition: dict[str, Any]) -> dict[str, Any]:
             translated["right"] = _indicator_to_frontend(rule["right"])
         rules.append(translated)
     ranking = definition.get("ranking") or {}
-    return {
+    result: dict[str, Any] = {
         "schema_version": definition.get("schema_version", 1),
         "strategy_id": definition.get("strategy_id", ""),
         "name": definition.get("name", ""),
@@ -123,6 +128,11 @@ def definition_to_frontend(definition: dict[str, Any]) -> dict[str, Any]:
             "direction": ranking.get("direction", "descending"),
         },
     }
+    if definition.get("hold_buffer"):
+        result["hold_buffer"] = int(definition["hold_buffer"])
+    if definition.get("market_timing"):
+        result["market_timing"] = dict(definition["market_timing"])
+    return result
 
 
 def parse_definition(definition: dict[str, Any]) -> RuleStrategyDefinition:

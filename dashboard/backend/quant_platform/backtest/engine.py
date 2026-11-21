@@ -74,6 +74,8 @@ class BacktestEngine:
         benchmark_symbol: str | None = None,
         warmup_days: int = 120,
         annualization: int = 252,
+        hold_buffer: int | None = None,
+        market_timing: object | None = None,
     ) -> None:
         self.repository = repository
         self.universe = universe
@@ -94,6 +96,16 @@ class BacktestEngine:
             min_history_days + 20 if min_history_days > 0 else 0,
         )
         self.annualization = annualization
+        self.hold_buffer = (
+            int(hold_buffer)
+            if hold_buffer is not None
+            else int(getattr(strategy, "hold_buffer", 0) or 0)
+        )
+        self.market_timing = (
+            market_timing
+            if market_timing is not None
+            else getattr(strategy, "market_timing", None)
+        )
 
     def run(
         self,
@@ -210,6 +222,9 @@ class BacktestEngine:
             actions_by_date.setdefault(action.ex_date, []).append(action)
         # 基准净值列：首条基准行情锚定为 initial_cash，缺失日期前向填充。
         benchmark_equity = self._benchmark_equity_series(dates, initial_cash)
+        # 大盘择时指数收盘序列：只使用 <= 调仓日 的历史收盘价，含回测起点前的均线预热期。
+        timing_series = self._timing_benchmark_series(end_date)
+        market_timing_triggers = 0
 
         pending: dict[date, list[Order]] = {}
         all_signals: list[Signal] = []
@@ -425,10 +440,70 @@ class BacktestEngine:
             )
             context.require_fields(self.strategy.required_fields)
             signals = self.strategy.generate_signals(context)
+            held_symbols = {
+                symbol for symbol, position in account.positions.items() if position.quantity > 0
+            }
             if hasattr(self.portfolio, "construct_with_history"):
-                targets = self.portfolio.construct_with_history(signals, history)
+                if self.hold_buffer > 0:
+                    targets = self.portfolio.construct_with_history(
+                        signals,
+                        history,
+                        held_symbols=held_symbols,
+                        hold_buffer=self.hold_buffer,
+                    )
+                else:
+                    targets = self.portfolio.construct_with_history(signals, history)
             else:
-                targets = self.portfolio.construct(signals)
+                if self.hold_buffer > 0:
+                    targets = self.portfolio.construct(
+                        signals,
+                        held_symbols=held_symbols,
+                        hold_buffer=self.hold_buffer,
+                    )
+                else:
+                    targets = self.portfolio.construct(signals)
+            if self.market_timing is not None and timing_series is not None:
+                triggered, close_val, ma_val = self._check_market_timing(
+                    timing_series, trade_date, self.market_timing
+                )
+                if triggered:
+                    market_timing_triggers += 1
+                    off_weight = float(self.market_timing.off_weight)
+                    if off_weight <= 0.0:
+                        targets = []
+                    else:
+                        total_w = sum(target.target_weight for target in targets)
+                        if total_w > off_weight + 1e-9:
+                            scale = off_weight / total_w
+                            targets = [
+                                replace(target, target_weight=target.target_weight * scale)
+                                for target in targets
+                            ]
+                    timing_reason = (
+                        f"大盘择时触发：{self.market_timing.benchmark} 收盘 {close_val:.2f} "
+                        f"低于 {self.market_timing.ma_window} 日均线 {ma_val:.2f}，"
+                        + ("目标仓位清空" if off_weight <= 0.0 else f"目标仓位降至 {off_weight:.0%}")
+                    )
+                    risk_rows.append(
+                        {
+                            "trade_date": trade_date,
+                            "strategy_id": self.strategy.strategy_id,
+                            "event_type": "MARKET_TIMING",
+                            "decision": RiskDecision.ADJUST.value,
+                            "action": (
+                                PortfolioRiskAction.LIQUIDATE.value
+                                if off_weight <= 0.0
+                                else PortfolioRiskAction.REDUCE.value
+                            ),
+                            "reason": timing_reason,
+                            "target_count": len(targets),
+                            "total_weight": sum(target.target_weight for target in targets),
+                            "max_weight": max((target.target_weight for target in targets), default=0.0),
+                            "current_total_weight": daily_risk.current_total_weight,
+                            "current_max_weight": daily_risk.current_max_weight,
+                            "current_drawdown": snapshot.drawdown,
+                        }
+                    )
             if self.risk_limits.enabled:
                 targets = constrain_turnover(
                     targets,
@@ -561,6 +636,15 @@ class BacktestEngine:
                 "unknown_market_symbols": validity.unknown_market_symbols,
                 "unknown_status_orders": validity.unknown_status_orders,
                 "missing_adj_factor_rows": validity.missing_adj_factor_rows,
+                **({"hold_buffer": self.hold_buffer} if self.hold_buffer > 0 else {}),
+                **(
+                    {
+                        "market_timing": self.market_timing.to_dict(),
+                        "market_timing_triggers": market_timing_triggers,
+                    }
+                    if self.market_timing is not None
+                    else {}
+                ),
             }
         )
         return BacktestResult(
@@ -725,6 +809,53 @@ class BacktestEngine:
             if first_close is not None and last_close is not None and first_close > 0:
                 series[trade_date] = initial_cash * last_close / first_close
         return series
+
+    def _timing_benchmark_series(self, end_date: date) -> pd.Series | None:
+        """Load point-in-time benchmark closes through ``end_date`` for MA market timing."""
+
+        if self.market_timing is None:
+            return None
+        symbol = str(self.market_timing.benchmark)
+        bars = self.repository.read_table("benchmark_bars")
+        if bars.empty or "symbol" not in bars.columns:
+            raise BacktestValidityError(
+                f"大盘择时缺少 {symbol} 的本地指数行情，请先在数据管理中更新指数行情。"
+            )
+        selected = bars[bars["symbol"].astype(str).eq(symbol)].copy()
+        if selected.empty:
+            raise BacktestValidityError(
+                f"大盘择时缺少 {symbol} 的本地指数行情，请先在数据管理中更新指数行情。"
+            )
+        selected["trade_date"] = pd.to_datetime(selected["trade_date"]).dt.normalize()
+        selected["raw_close"] = pd.to_numeric(selected["raw_close"], errors="coerce")
+        selected = selected[
+            selected["raw_close"].gt(0)
+            & selected["raw_close"].lt(float("inf"))
+            & selected["trade_date"].le(pd.Timestamp(end_date))
+        ]
+        selected = selected.sort_values("trade_date").drop_duplicates("trade_date", keep="last")
+        if selected.empty:
+            raise BacktestValidityError(
+                f"大盘择时缺少 {symbol} 在 {end_date} 及之前的指数行情，请先更新指数行情。"
+            )
+        return pd.Series(
+            selected["raw_close"].to_numpy(dtype=float),
+            index=pd.DatetimeIndex(selected["trade_date"]),
+        )
+
+    @staticmethod
+    def _check_market_timing(
+        timing_series: pd.Series, trade_date: date, timing_spec: object
+    ) -> tuple[bool, float | None, float | None]:
+        """Compare latest close <= trade_date against its trailing moving average."""
+
+        known = timing_series.loc[: pd.Timestamp(trade_date)]
+        window = int(timing_spec.ma_window)
+        if len(known) < window:
+            return False, None, None
+        close_val = float(known.iloc[-1])
+        ma_val = float(known.iloc[-window:].mean())
+        return close_val < ma_val, close_val, ma_val
 
     @staticmethod
     def _history_through(bars: pd.DataFrame, trade_date: date) -> pd.DataFrame:

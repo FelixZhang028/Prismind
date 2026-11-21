@@ -3,7 +3,16 @@ import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { createPackage, nlGenerate, nlStatus, preflightPackage, studioOptions } from '../../api.js'
 import { remainingText } from '../aiPresentation.js'
 import { openResearch } from '../researchNavigation.js'
-import { blankForm, definitionFromForm, formFromDefinition, packagePayload } from '../ruleForm.js'
+import {
+  blankForm,
+  DEFAULT_TIMING_BENCHMARKS,
+  definitionFromForm,
+  formFromDefinition,
+  HOLD_BUFFER_OPTIONS,
+  packagePayload,
+  TIMING_MA_OPTIONS,
+  TIMING_WEIGHT_OPTIONS,
+} from '../ruleForm.js'
 import { handOffRules, takeHandedRules, takeStrategyDraft } from '../ruleHandoff.js'
 import FormField from '../ui/FormField.vue'
 import RuleConditions from '../ui/RuleConditions.vue'
@@ -23,6 +32,9 @@ const STARTS = [
 ]
 const freqOptions = [{ value: 'daily', label: '每日' }, { value: 'weekly', label: '每周' }, { value: 'monthly', label: '每月' }]
 const styleOptions = [{ value: 'conservative', label: '保守' }, { value: 'balanced', label: '均衡' }, { value: 'aggressive', label: '激进' }]
+const timingBenchmarkOptions = computed(() => (
+  options.value?.market_timing_benchmarks?.length ? options.value.market_timing_benchmarks : DEFAULT_TIMING_BENCHMARKS
+))
 
 const options = ref(null)
 const loadError = ref('')
@@ -266,6 +278,38 @@ onActivated(applyHandOff)
         </div>
 
         <RuleConditions class="mt-6" :form="form" :options="options" />
+
+        <div class="mt-6 rounded-xl border border-white/10 bg-white/5 p-4">
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 class="text-sm font-semibold text-white">交易纪律与择时保护（可选）</h3>
+            <span class="text-xs text-slate-400">默认关闭；开启后会写入策略规则，回测与模拟账户都会生效</span>
+          </div>
+          <div class="mt-4 grid gap-4 md:grid-cols-2">
+            <div class="min-w-0 rounded-xl border border-white/10 bg-white/5 p-4">
+              <FormField
+                label="防频繁换手缓冲"
+                type="select"
+                v-model="form.hold_buffer"
+                :options="HOLD_BUFFER_OPTIONS"
+                hint="避免已持股在排名边界反复进出，减少不必要的手续费与印花税；若不再满足买入条件仍会照常卖出。"
+              />
+            </div>
+            <div class="min-w-0 space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
+              <FormField
+                label="大盘均线择时"
+                type="checkbox"
+                v-model="form.market_timing.enabled"
+                hint="大盘走弱时自动降仓"
+              />
+              <p class="text-xs text-slate-400">调仓日收盘时，若参考指数低于所选均线，则按设定比例压缩总仓位，减少系统性下跌时的满仓暴露。</p>
+              <div v-if="form.market_timing.enabled" class="grid gap-3 sm:grid-cols-3">
+                <FormField label="参考指数" type="select" v-model="form.market_timing.benchmark" :options="timingBenchmarkOptions" />
+                <FormField label="均线周期" type="select" v-model="form.market_timing.ma_window" :options="TIMING_MA_OPTIONS" />
+                <FormField label="弱势仓位" type="select" v-model="form.market_timing.off_weight" :options="TIMING_WEIGHT_OPTIONS" />
+              </div>
+            </div>
+          </div>
+        </div>
       </SectionCard>
 
       <!-- 这个策略的意思 -->
