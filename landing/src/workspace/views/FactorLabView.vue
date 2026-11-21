@@ -22,7 +22,7 @@ import FactorDiagnostics from '../ui/FactorDiagnostics.vue'
 import FactorFilter from '../ui/FactorFilter.vue'
 import FactorLibraryTable from '../ui/FactorLibraryTable.vue'
 import { factorsBySource, filterFactors } from '../factorFilters.js'
-import { directionText, directionTone, factorNote } from '../factorPresentation.js'
+import { directionText, directionTone, factorNote, longShortSignMismatchNote, significanceSummary } from '../factorPresentation.js'
 import { neutralizationCoverageSummary } from '../neutralizationPresentation.js'
 import { NEUTRALIZATION_OPTIONS } from '../dataPresentation.js'
 import { FACTOR_STANDARDIZATIONS, openFactorBacktest } from '../factorBacktestDraft.js'
@@ -358,9 +358,19 @@ const compForm = reactive({
   test_start: '',
 })
 const compWeights = reactive({})
+const compDirections = reactive({})
 const compLoading = ref(false)
 const compResult = ref(null)
 const compError = ref('')
+
+function defaultFactorDirection(name) {
+  const found = factors.value.find((item) => item.name === name)
+  return found?.direction === -1 ? -1 : 1
+}
+function factorDisplayName(name) {
+  const found = factors.value.find((item) => item.name === name)
+  return found?.display_name || name
+}
 
 function isSelected(name) {
   return compForm.factor_names.includes(name)
@@ -372,6 +382,7 @@ function toggleFactor(name) {
   } else {
     compForm.factor_names.push(name)
     if (compWeights[name] == null) compWeights[name] = 1
+    if (compDirections[name] == null) compDirections[name] = defaultFactorDirection(name)
   }
 }
 
@@ -381,9 +392,14 @@ async function runComposite() {
   compError.value = ''
   compResult.value = null
   try {
+    const directions = {}
+    compForm.factor_names.forEach((n) => {
+      directions[n] = Number(compDirections[n] ?? defaultFactorDirection(n)) === -1 ? -1 : 1
+    })
     const payload = {
       factor_names: [...compForm.factor_names],
       weight_mode: compForm.weight_mode,
+      directions,
       winsorize: compForm.winsorize,
       standardization: compForm.standardization,
       fill_method: 'drop',
@@ -440,6 +456,7 @@ const researchForm = reactive({
   test_end: defaultTestEnd,
 })
 const researchWeights = reactive({})
+const researchDirections = reactive({})
 const researchLoading = ref(false)
 const researchResult = ref(null)
 const researchError = ref('')
@@ -451,6 +468,7 @@ function toggleResearchFactor(name) {
   } else {
     researchForm.factor_names.push(name)
     if (researchWeights[name] == null) researchWeights[name] = 1
+    if (researchDirections[name] == null) researchDirections[name] = defaultFactorDirection(name)
   }
 }
 
@@ -480,9 +498,14 @@ async function runResearch() {
   researchError.value = ''
   researchResult.value = null
   try {
+    const directions = {}
+    researchForm.factor_names.forEach((n) => {
+      directions[n] = Number(researchDirections[n] ?? defaultFactorDirection(n)) === -1 ? -1 : 1
+    })
     const payload = {
       factor_names: [...researchForm.factor_names],
       weight_mode: researchForm.weight_mode,
+      directions,
       standardization: researchForm.standardization,
       clip: researchForm.clip,
       missing: researchForm.missing,
@@ -624,15 +647,18 @@ async function onDeleteCustom(f) {
 // ---------- 评估报告（评估与组合复用） ----------
 function buildReportView(report) {
   if (!report) return null
+  const sig = significanceSummary(report.significance)
+  const n = report.n_groups || 5
   const metrics = [
     { label: 'IC 均值', value: fmtNum(report.ic_mean, 3), sub: 'Pearson IC', ...signTone(report.ic_mean) },
-    { label: 'Rank IC 均值', value: fmtNum(report.rank_ic_mean, 3), sub: 'Spearman IC', ...signTone(report.rank_ic_mean) },
-    { label: 'Rank IC IR', value: fmtNum(report.rank_ic_ir, 3), sub: 'IC 稳定性', ...signTone(report.rank_ic_ir) },
-    { label: '平均头尾组收益差', value: fmtPct(report.long_short_mean, 2), sub: `持有 ${report.horizon} 个交易日`, ...signTone(report.long_short_mean) },
+    { label: 'Rank IC 均值', value: fmtNum(report.rank_ic_mean, 3), sub: 'Spearman 排序相关', ...signTone(report.rank_ic_mean) },
+    { label: 'Rank IC IR', value: fmtNum(report.rank_ic_ir, 3), sub: 'IC 均值 / 标准差', ...signTone(report.rank_ic_ir) },
+    { label: '平均头尾组收益差', value: fmtPct(report.long_short_mean, 2), sub: `每日 G${n} − G1 等权均值（持有 ${report.horizon} 日，不含成本）`, ...signTone(report.long_short_mean) },
   ]
   const stability = [
     { label: '前半段 Rank IC', value: fmtNum(report.first_half_ic, 3), sub: '样本前半段', ...signTone(report.first_half_ic) },
     { label: '后半段 Rank IC', value: fmtNum(report.second_half_ic, 3), sub: '样本后半段', ...signTone(report.second_half_ic) },
+    { label: 'HAC t 值（显著性）', value: sig.value, sub: sig.sub, up: null, tone: sig.tone },
     { label: '最高组日均成员更替率', value: fmtPct(report.turnover_mean, 2), sub: '相邻交易日最高组新增成员比例的平均值', up: null, tone: '' },
   ]
   const daily = report.daily_ic || []
@@ -640,7 +666,6 @@ function buildReportView(report) {
     { label: 'IC', color: '#818cf8', points: daily.map((d) => d.ic) },
     { label: 'Rank IC', color: '#a78bfa', points: daily.map((d) => d.rank_ic) },
   ]
-  const n = report.n_groups || 5
   const groupCols = Array.from({ length: n }, (_, i) => ({
     key: `G${i + 1}`,
     label: `G${i + 1}`,
@@ -648,7 +673,16 @@ function buildReportView(report) {
   }))
   const g = report.group_mean_returns || {}
   const groupRows = [Object.fromEntries(groupCols.map(({ key }) => [key, g[key] == null ? '—' : fmtPct(g[key], 2)]))]
-  return { metrics, stability, series, dates: daily.map((row) => row.date), groupCols, groupRows, notes: report.notes }
+  return {
+    metrics,
+    stability,
+    series,
+    dates: daily.map((row) => row.date),
+    groupCols,
+    groupRows,
+    notes: report.notes,
+    mismatchNote: longShortSignMismatchNote(report),
+  }
 }
 
 const evalView = computed(() => buildReportView(evalResult.value))
@@ -674,7 +708,7 @@ const corrRows = computed(() => {
 const weightCaption = computed(() => {
   const spec = compResult.value?.composite_spec || []
   if (!spec.length) return ''
-  return spec.map((s) => `${s.display_name || s.name} ${fmtPct(Number(s.weight), 2)}`).join(' · ')
+  return spec.map((s) => `${s.display_name || s.name}${s.direction === -1 ? '（反向）' : ''} ${fmtPct(Number(s.weight), 2)}`).join(' · ')
 })
 const standardizationLabel = (result) => FACTOR_STANDARDIZATIONS.find(
   (option) => option.value === result.composite_spec?.[0]?.standardization,
@@ -842,8 +876,8 @@ onBeforeUnmount(() => {
         </section>
         <p v-if="evalView.notes" class="rounded-xl border border-amber-400/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-200" role="note">{{ evalView.notes }}</p>
 
-        <SectionCard title="稳定性" hint="样本分段 Rank IC 与最高组日度成员更替率">
-          <div class="grid gap-5 sm:grid-cols-3">
+        <SectionCard title="稳定性与显著性" hint="样本分段 Rank IC、Newey-West HAC 统计显著性与最高组日度成员更替率">
+          <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard v-for="s in evalView.stability" :key="s.label" :label="s.label" :value="s.value" :sub="s.sub" :up="s.up" :tone="s.tone" />
           </div>
         </SectionCard>
@@ -852,8 +886,11 @@ onBeforeUnmount(() => {
           <LineChart :series="evalView.series" :dates="evalView.dates" :height="180" :baseline="0" />
         </SectionCard>
 
-        <SectionCard title="分层收益" hint="按因子值排序分为 N 组，各组平均收益 · 基于历史数据，仅供研究参考">
+        <SectionCard title="分层收益" hint="每日按「因子值 × 方向」等分 N 组，统计 t+1 收盘买入、持有 N 日的各组等权均值（不计交易成本）">
           <DataTable :columns="evalView.groupCols" :rows="evalView.groupRows" empty="暂无数据" />
+          <p v-if="evalView.mismatchNote" class="mt-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-200">
+            {{ evalView.mismatchNote }}
+          </p>
         </SectionCard>
         <FactorDiagnostics :report="evalResult" />
       </template>
@@ -875,6 +912,7 @@ onBeforeUnmount(() => {
           >
             <input type="checkbox" :checked="isSelected(f.name)" @change="toggleFactor(f.name)" class="h-4 w-4 rounded border-white/20 bg-white/5 accent-indigo-500" />
             <span class="min-w-0 flex-1 truncate">{{ f.display_name || f.name }}</span>
+            <span class="shrink-0 text-xs" :class="directionTone(f.direction)">{{ directionText(f.direction) }}</span>
             <span class="shrink-0 text-xs text-slate-500">{{ f.name }}</span>
             <button
               type="button"
@@ -885,6 +923,35 @@ onBeforeUnmount(() => {
               <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>
             </button>
           </label>
+        </div>
+
+        <div v-if="compForm.factor_names.length" class="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <span class="text-xs font-medium text-slate-300">已选因子方向{{ compForm.weight_mode === 'custom' ? '与自定义权重' : '' }}</span>
+            <span class="text-xs text-slate-500">可临时切换为「反向（越小越好）」，直接带入合成与回测</span>
+          </div>
+          <div class="mt-3 grid gap-3 sm:grid-cols-2">
+            <div v-for="n in compForm.factor_names" :key="n" class="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+              <span class="min-w-0 flex-1 truncate text-xs text-slate-200">{{ factorDisplayName(n) }}</span>
+              <select
+                v-model.number="compDirections[n]"
+                :aria-label="`${n} 方向`"
+                class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-white outline-none focus:border-indigo-400/40"
+              >
+                <option :value="1" class="bg-ink">正向（越大越好）</option>
+                <option :value="-1" class="bg-ink">反向（越小越好）</option>
+              </select>
+              <input
+                v-if="compForm.weight_mode === 'custom'"
+                v-model.number="compWeights[n]"
+                type="number"
+                min="0"
+                step="0.05"
+                :aria-label="`${n} 权重`"
+                class="w-20 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-right text-xs text-white outline-none focus:border-indigo-400/40"
+              />
+            </div>
+          </div>
         </div>
 
         <div class="mt-5 grid gap-5 lg:grid-cols-2">
@@ -900,12 +967,6 @@ onBeforeUnmount(() => {
               >
                 {{ m.label }}
               </button>
-            </div>
-            <div v-if="compForm.weight_mode === 'custom'" class="mt-3 grid gap-3 sm:grid-cols-2">
-              <label v-for="n in compForm.factor_names" :key="n" class="block">
-                <span class="mb-1 block text-xs text-slate-400">权重 · {{ n }}</span>
-                <input v-model.number="compWeights[n]" type="number" min="0" step="0.05" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/40" />
-              </label>
             </div>
           </div>
           <div class="space-y-4">
@@ -982,8 +1043,8 @@ onBeforeUnmount(() => {
             <MetricCard v-for="m in compView.metrics" :key="m.label" :label="m.label" :value="m.value" :sub="m.sub" :up="m.up" :tone="m.tone" />
           </section>
 
-          <SectionCard title="稳定性" hint="合成因子样本分段 IC 与调仓换手">
-            <div class="grid gap-5 sm:grid-cols-3">
+          <SectionCard title="稳定性与显著性" hint="合成因子样本分段 IC、HAC 统计显著性与调仓换手">
+            <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
               <MetricCard v-for="s in compView.stability" :key="s.label" :label="s.label" :value="s.value" :sub="s.sub" :up="s.up" :tone="s.tone" />
             </div>
           </SectionCard>
@@ -992,8 +1053,11 @@ onBeforeUnmount(() => {
             <LineChart :series="compView.series" :height="180" />
           </SectionCard>
 
-          <SectionCard title="合成因子分层收益" hint="按合成因子值排序分为 N 组，各组平均收益 · 基于历史数据，仅供研究参考">
+          <SectionCard title="合成因子分层收益" hint="每日按合成因子值等分 N 组，统计 t+1 收盘买入、持有 N 日的各组等权均值（不计交易成本）">
             <DataTable :columns="compView.groupCols" :rows="compView.groupRows" empty="暂无数据" />
+            <p v-if="compView.mismatchNote" class="mt-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-200">
+              {{ compView.mismatchNote }}
+            </p>
           </SectionCard>
         </template>
       </template>
@@ -1013,6 +1077,7 @@ onBeforeUnmount(() => {
           >
             <input type="checkbox" :checked="researchForm.factor_names.includes(f.name)" @change="toggleResearchFactor(f.name)" class="h-4 w-4 rounded border-white/20 bg-white/5 accent-indigo-500" />
             <span class="min-w-0 flex-1 truncate">{{ f.display_name || f.name }}</span>
+            <span class="shrink-0 text-xs" :class="directionTone(f.direction)">{{ directionText(f.direction) }}</span>
             <span class="shrink-0 text-xs text-slate-500">{{ f.name }}</span>
             <button
               type="button"
@@ -1023,6 +1088,35 @@ onBeforeUnmount(() => {
               <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>
             </button>
           </label>
+        </div>
+
+        <div v-if="researchForm.factor_names.length" class="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <span class="text-xs font-medium text-slate-300">已选因子方向{{ researchForm.weight_mode === 'manual' ? '与自定义权重' : '' }}</span>
+            <span class="text-xs text-slate-500">可为“越低越好”的因子切换为反向；训练期 IC 加权与样本外组合都会按设定方向计算</span>
+          </div>
+          <div class="mt-3 grid gap-3 sm:grid-cols-2">
+            <div v-for="n in researchForm.factor_names" :key="n" class="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+              <span class="min-w-0 flex-1 truncate text-xs text-slate-200">{{ factorDisplayName(n) }}</span>
+              <select
+                v-model.number="researchDirections[n]"
+                :aria-label="`${n} 方向`"
+                class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-white outline-none focus:border-indigo-400/40"
+              >
+                <option :value="1" class="bg-ink">正向（越大越好）</option>
+                <option :value="-1" class="bg-ink">反向（越小越好）</option>
+              </select>
+              <input
+                v-if="researchForm.weight_mode === 'manual'"
+                v-model.number="researchWeights[n]"
+                type="number"
+                min="0"
+                step="0.05"
+                :aria-label="`${n} 权重`"
+                class="w-20 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-right text-xs text-white outline-none focus:border-indigo-400/40"
+              />
+            </div>
+          </div>
         </div>
 
         <div class="mt-5 grid gap-5 lg:grid-cols-2">
@@ -1040,12 +1134,6 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <p class="mt-2 text-xs text-slate-500">训练期 IC 加权：正 IC 参与分配，负 IC 或无效值权重为零。</p>
-            <div v-if="researchForm.weight_mode === 'manual'" class="mt-3 grid gap-3 sm:grid-cols-2">
-              <label v-for="n in researchForm.factor_names" :key="n" class="block">
-                <span class="mb-1 block text-xs text-slate-400">权重 · {{ n }}</span>
-                <input v-model.number="researchWeights[n]" type="number" min="0" step="0.05" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/40" />
-              </label>
-            </div>
           </div>
           <div class="space-y-4">
             <FormField label="每日截面标准化" type="select" v-model="researchForm.standardization" :options="FACTOR_STANDARDIZATIONS" />
@@ -1133,7 +1221,7 @@ onBeforeUnmount(() => {
           <p class="text-xs text-slate-400">我的组合权重（训练期确定） · {{ standardizationLabel(researchResult) }}</p>
           <p class="mt-1 text-sm text-white">
             <template v-if="researchResult.composite_spec?.length">
-              <span v-for="factor in researchResult.composite_spec" :key="factor.name" class="mr-4">{{ factor.display_name || factor.name }} {{ fmtPct(factor.weight, 2) }}</span>
+              <span v-for="factor in researchResult.composite_spec" :key="factor.name" class="mr-4">{{ factor.display_name || factor.name }}{{ factor.direction === -1 ? '（反向）' : '' }} {{ fmtPct(factor.weight, 2) }}</span>
             </template>
             <span v-else>—</span>
           </p>
