@@ -61,6 +61,7 @@ def research_combination(
     test_end: date,
     mode: str = "equal",
     custom_weights: dict[str, float] | None = None,
+    custom_directions: dict[str, int] | None = None,
     clip: bool = True,
     missing: str = "drop",
     standardization: str = "zscore",
@@ -77,6 +78,13 @@ def research_combination(
         raise ValueError("未知权重方式")
     if mode == "manual" and set(custom_weights or {}).difference(f.name for f in components):
         raise ValueError("权重包含未选择的因子。")
+    if custom_directions:
+        unknown_dirs = set(custom_directions).difference(f.name for f in components)
+        if unknown_dirs:
+            raise ValueError("因子方向包含未选择的因子。")
+        for dir_val in custom_directions.values():
+            if type(dir_val) is not int or dir_val not in (1, -1):
+                raise ValueError("因子方向只能是 1（正向）或 -1（反向）。")
     if missing not in {"drop", "median"}:
         raise ValueError("研究组合请选择剔除缺失或中位数填充。")
     if standardization not in STANDARDIZATIONS:
@@ -124,6 +132,10 @@ def research_combination(
     components = tuple(f for f in components if f.name not in dropped)
     if len(components) < 2:
         raise ValueError("训练期剔除高相关因子后不足两个，请更换组合或调高阈值。")
+    directions = {
+        factor.name: int((custom_directions or {}).get(factor.name, factor.direction))
+        for factor in components
+    }
     weights = {}
     for factor in components:
         if mode == "equal":
@@ -134,7 +146,7 @@ def research_combination(
             proxy = FrameFactor(
                 name=factor.name,
                 display_name=factor.display_name,
-                direction=factor.direction,
+                direction=directions[factor.name],
                 values=train_slice[factor.name],
             )
             report = FactorEvaluator(BoundedRepository(repository, train_end, symbols)).evaluate(
@@ -143,7 +155,7 @@ def research_combination(
             weight = report.rank_ic_mean
             weight = max(weight, 0.0) if isfinite(weight) else 0.0
         if not isfinite(weight) or weight < 0:
-            raise ValueError("权重必须是非负有限数值；因子方向由因子定义统一处理。")
+            raise ValueError("权重必须是非负有限数值；如需反转因子请切换因子方向。")
         weights[factor.name] = weight
     scale = max(weights.values())
     if scale <= 0:
@@ -156,12 +168,11 @@ def research_combination(
     frames, _ = frames_until(test_start, test_end, "测试期")
     frames = {f.name: frames[f.name] for f in components}
     cleaned = prepare_frames(frames, clip=clip, missing=missing)
-    directions = {factor.name: factor.direction for factor in components}
     candidates = {
         f"单因子 · {factor.display_name} ({factor.name})": FrameFactor(
             name=factor.name,
             display_name=factor.display_name,
-            direction=factor.direction,
+            direction=directions[factor.name],
             values=cleaned[factor.name],
         )
         for factor in components
@@ -202,7 +213,7 @@ def research_combination(
     spec = [
         {
             "name": f.name, "display_name": f.display_name or f.name, "version": f.version,
-            "weight": weights[f.name], "direction": f.direction,
+            "weight": weights[f.name], "direction": directions[f.name],
             "clip": clip, "missing": missing, "standardization": standardization,
             **({"custom_factor": custom_factor_to_dict(f)} if isinstance(f, CustomFactor) else {}),
         }

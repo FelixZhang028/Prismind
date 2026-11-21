@@ -261,6 +261,27 @@ def factor_report_to_dict(report: FactorReport) -> dict[str, Any]:
         "nav_skipped": report.nav_skipped,
         "industry_distribution": report.industry_distribution,
         "neutralization_coverage": _neutralization_coverage_to_dict(report.neutralization_coverage),
+        "significance": {
+            "observations": int((report.significance or {}).get("observations") or 0),
+            "rank_ic_mean": _round((report.significance or {}).get("rank_ic_mean"), 4),
+            "rank_ic_ir": _round((report.significance or {}).get("rank_ic_ir"), 3),
+            "positive_ratio": _round((report.significance or {}).get("positive_ratio"), 4),
+            "hac_t": _round((report.significance or {}).get("hac_t"), 3),
+            "hac_p": _round((report.significance or {}).get("hac_p"), 4),
+        },
+        "annual": [
+            {
+                "year": int(row["year"]),
+                "observations": int(row["observations"]),
+                "rank_ic": _round(row.get("rank_ic_mean"), 4),
+                "rank_ic_ir": _round(row.get("rank_ic_ir"), 3),
+                "positive_ratio": _round(row.get("positive_ratio"), 4),
+                "hac_t": _round(row.get("hac_t"), 3),
+                "hac_p": _round(row.get("hac_p"), 4),
+            }
+            for row in (report.annual.to_dict(orient="records") if not report.annual.empty else [])
+        ],
+        "style_correlations": list(report.style_correlations or []),
         "rebalance_turnover": [
             {"date": day.date().isoformat(), "turnover": _round(value, 6)}
             for day, value in report.rebalance_turnover.itertuples(index=False, name=None)

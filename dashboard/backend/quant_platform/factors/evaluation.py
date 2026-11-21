@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
+import numpy as np
 import pandas as pd
 
 from quant_platform.core import deadline, progress
@@ -65,6 +66,7 @@ class FactorReport:
     nav_skipped: int = 0
     industry_distribution: dict | None = None
     neutralization_coverage: dict | None = None
+    style_correlations: list[dict] = field(default_factory=list)
 
 
 class FactorEvaluator:
@@ -408,10 +410,19 @@ class FactorEvaluator:
         group_nav, rebalance_turnover = pd.DataFrame(), pd.DataFrame()
         nav_periods = nav_skipped = 0
         industry_distribution = None
+        style_correlations: list[dict] = []
         if diagnostics:
             progress.report("生成分组净值和换手曲线")
             group_nav, nav_periods, nav_skipped = self._group_nav(group_returns, dates, horizon, n_groups)
             industry_distribution = self._industry_distribution(values, dates, horizon, n_groups, changes)
+            style_correlations = self._style_correlations(
+                values,
+                factor_bars,
+                factor_name=factor.name,
+                start_date=start_date,
+                end_date=end_date,
+                symbols=symbols,
+            )
             signals = dates[::horizon]
             rebalance_turnover = self._top_turnover(
                 values[values["date"].isin(signals)], n_groups, dates=signals,
@@ -433,6 +444,7 @@ class FactorEvaluator:
             nav_skipped=nav_skipped,
             industry_distribution=industry_distribution,
             neutralization_coverage=neutralization_coverage,
+            style_correlations=style_correlations,
             factor_name=factor.name,
             display_name=factor.display_name,
             horizon=horizon,
@@ -525,6 +537,139 @@ class FactorEvaluator:
             "date": latest.date().isoformat(), "group_count": group_count, "pool_count": len(sample),
             "rows": rows.reset_index().to_dict(orient="records"),
         }
+
+    def _style_correlations(
+        self,
+        values: pd.DataFrame,
+        factor_bars: pd.DataFrame,
+        *,
+        factor_name: str,
+        start_date: date,
+        end_date: date,
+        symbols: list[str] | None,
+    ) -> list[dict]:
+        """Compute cross-sectional Spearman correlations against standard A-share style factors."""
+
+        valid_values = values[["date", "symbol", "adjusted"]].dropna(subset=["adjusted"])
+        if valid_values.empty:
+            return []
+        target_wide = (
+            valid_values.assign(date=pd.to_datetime(valid_values["date"]).dt.normalize())
+            .pivot_table(index="date", columns="symbol", values="adjusted", aggfunc="last")
+            .sort_index()
+        )
+        target_wide = target_wide.loc[pd.Timestamp(start_date):pd.Timestamp(end_date)]
+        if target_wide.empty:
+            return []
+
+        bars = factor_bars
+        missing_extras = [col for col in ("turnover_rate", "pe_ttm", "pb_mrq") if col not in bars.columns]
+        if missing_extras:
+            extra_cols = extra_columns(missing_extras)
+            if extra_cols:
+                try:
+                    enriched = self.repository.get_daily_bars(
+                        symbols=symbols, end_date=end_date, extras=extra_cols
+                    )
+                    if not enriched.empty:
+                        bars = enriched
+                except Exception:  # noqa: BLE001 - optional extra data should never fail evaluation
+                    pass
+
+        price_col = (
+            "adjusted_close"
+            if "adjusted_close" in bars.columns and bars["adjusted_close"].notna().any()
+            else "raw_close"
+        )
+        close_wide = pivot_field(bars, price_col).sort_index()
+
+        style_specs: list[tuple[str, str, str, str, pd.DataFrame | None]] = []
+
+        # 1. 规模：对数总市值
+        if factor_name != "ln_market_cap" and "raw_close" in bars.columns and hasattr(self.repository, "get_fundamentals"):
+            try:
+                fundamentals = self.repository.get_fundamentals()
+                if not fundamentals.empty:
+                    days = bars[["symbol", "trade_date", "raw_close"]].copy()
+                    days["trade_date"] = pd.to_datetime(days["trade_date"]).astype("datetime64[ns]")
+                    days = days[days["trade_date"].isin(target_wide.index)]
+                    if not days.empty:
+                        shares = point_in_time(days, fundamentals, ["total_shares"])["total_shares"]
+                        cap = market_capitalization(days["raw_close"], shares)
+                        days["ln_cap"] = np.log(cap.where(cap.gt(0)))
+                        cap_wide = (
+                            days.dropna(subset=["ln_cap"])
+                            .pivot_table(index="trade_date", columns="symbol", values="ln_cap", aggfunc="last")
+                        )
+                        style_specs.append(("ln_market_cap", "规模（对数总市值）", "偏大盘", "偏小盘", cap_wide))
+            except Exception:  # noqa: BLE001 - missing fundamentals is acceptable
+                pass
+
+        # 2. 波动率：20日历史波动率
+        if factor_name != "volatility_20" and not close_wide.empty:
+            vol_wide = close_wide.pct_change(fill_method=None).rolling(20, min_periods=20).std()
+            style_specs.append(("volatility_20", "波动率（20日历史波动率）", "偏高波", "偏低波", vol_wide))
+
+        # 3. 动量：20日涨跌幅
+        if factor_name != "momentum_20" and not close_wide.empty:
+            mom_wide = close_wide / close_wide.shift(20) - 1.0
+            style_specs.append(("momentum_20", "动量（20日涨跌幅）", "偏强势动量", "偏超跌反转", mom_wide))
+
+        # 4. 流动性：20日平均换手率
+        if factor_name != "turnover_20" and "turnover_rate" in bars.columns and bars["turnover_rate"].notna().any():
+            turn_wide = pivot_field(bars, "turnover_rate").sort_index().rolling(20, min_periods=20).mean()
+            style_specs.append(("turnover_20", "流动性（20日平均换手率）", "偏高换手", "偏低换手", turn_wide))
+
+        # 5. 估值：盈利收益率 EP (1 / PE_TTM)
+        if factor_name != "ep_ttm" and "pe_ttm" in bars.columns and bars["pe_ttm"].notna().any():
+            pe_wide = pivot_field(bars, "pe_ttm").sort_index()
+            ep_wide = 1.0 / pe_wide.where(pe_wide.gt(0))
+            style_specs.append(("ep_ttm", "估值（盈利收益率 EP）", "偏低估值", "偏高估值", ep_wide))
+
+        # 6. 估值：账面市值比 BP (1 / PB_MRQ)
+        if factor_name != "bp_mrq" and "pb_mrq" in bars.columns and bars["pb_mrq"].notna().any():
+            pb_wide = pivot_field(bars, "pb_mrq").sort_index()
+            bp_wide = 1.0 / pb_wide.where(pb_wide.gt(0))
+            style_specs.append(("bp_mrq", "估值（账面市值比 BP）", "偏低市净率", "偏高市净率", bp_wide))
+
+        results: list[dict] = []
+        for style_key, label, pos_tilt, neg_tilt, style_wide in style_specs:
+            if style_wide is None or style_wide.empty:
+                continue
+            aligned_style = style_wide.reindex(index=target_wide.index, columns=target_wide.columns)
+            aligned_style = aligned_style.replace([float("inf"), -float("inf")], float("nan"))
+            mask = target_wide.notna() & aligned_style.notna()
+            valid_rows = mask.sum(axis=1) >= 3
+            if int(valid_rows.sum()) < 5:
+                continue
+            rx = target_wide.loc[valid_rows].where(mask.loc[valid_rows]).rank(axis=1)
+            ry = aligned_style.loc[valid_rows].where(mask.loc[valid_rows]).rank(axis=1)
+            dx = rx.sub(rx.mean(axis=1), axis=0)
+            dy = ry.sub(ry.mean(axis=1), axis=0)
+            denom = np.sqrt((dx * dx).sum(axis=1) * (dy * dy).sum(axis=1))
+            daily_corr = (dx * dy).sum(axis=1).div(denom.where(denom > 1e-12)).dropna()
+            if len(daily_corr) < 5:
+                continue
+            mean_corr = float(daily_corr.mean())
+            if not np.isfinite(mean_corr):
+                continue
+            if mean_corr >= 0.2:
+                tilt = pos_tilt
+            elif mean_corr <= -0.2:
+                tilt = neg_tilt
+            else:
+                tilt = "关联较弱"
+            results.append(
+                {
+                    "style": style_key,
+                    "label": label,
+                    "correlation": round(mean_corr, 4),
+                    "observations": int(len(daily_corr)),
+                    "tilt": tilt,
+                    "high_overlap": abs(mean_corr) >= 0.4,
+                }
+            )
+        return sorted(results, key=lambda item: -abs(item["correlation"]))
 
     @staticmethod
     def _daily_ic(merged: pd.DataFrame) -> pd.DataFrame:

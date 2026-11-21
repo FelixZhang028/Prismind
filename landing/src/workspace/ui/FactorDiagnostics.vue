@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { annualIcRows, styleCorrelationSummary } from '../factorPresentation.js'
 import { neutralizationCoverageSummary } from '../neutralizationPresentation.js'
 import DataTable from './DataTable.vue'
 import LineChart from './LineChart.vue'
@@ -68,6 +69,23 @@ const industryRows = computed(() => industry.value?.rows.map((row) => ({
   groupWeight: `${pct(row.group_weight).toFixed(1)}%`,
   poolWeight: `${pct(row.pool_weight).toFixed(1)}%`,
 })) || [])
+const annualColumns = [
+  { key: 'year', label: '年份' },
+  { key: 'observations', label: '有效交易日', align: 'right' },
+  { key: 'rankIc', label: '平均 Rank IC', align: 'right' },
+  { key: 'ir', label: 'Rank IC IR', align: 'right' },
+  { key: 'positiveRatio', label: '正 IC 占比', align: 'right' },
+  { key: 'hacT', label: 'HAC t 值', align: 'right' },
+  { key: 'hacP', label: 'HAC p 值', align: 'right' },
+]
+const annualRows = computed(() => annualIcRows(props.report.annual))
+const styleColumns = [
+  { key: 'label', label: '常见风格维度' },
+  { key: 'corrText', label: '横截面 Spearman 相关', align: 'right' },
+  { key: 'tilt', label: '偏向判断' },
+  { key: 'observations', label: '有效交易日', align: 'right' },
+]
+const styleSummary = computed(() => styleCorrelationSummary(props.report.style_correlations))
 </script>
 
 <template>
@@ -100,6 +118,38 @@ const industryRows = computed(() => industry.value?.rows.map((row) => ({
   <SectionCard title="滚动 IC IR" hint="最近 60 个交易日的 IC 均值除以标准差。至少有 20 个有效观测才计算。">
     <p class="mb-3 text-xs text-slate-400">{{ rankIcCoverage }}</p>
     <LineChart :series="irSeries" :dates="irDates" :height="190" :baseline="0" />
+  </SectionCard>
+
+  <SectionCard
+    v-if="annualRows.length"
+    title="分年份 Rank IC 表现"
+    hint="按自然年拆解选股能力，查看因子在哪些年份有效、哪些年份失效；t 值已用 Newey-West HAC 修正持有期重叠自相关。"
+  >
+    <DataTable :columns="annualColumns" :rows="annualRows" empty="暂无分年份数据" />
+  </SectionCard>
+
+  <SectionCard
+    v-if="styleSummary.rows.length"
+    title="常见风格相关性速查"
+    hint="衡量调整方向后的因子值与常见 A 股风格（规模、波动、动量、换手、估值）的横截面 Spearman 相关，便于判断是否与已有风格高度重合。"
+  >
+    <p
+      v-if="styleSummary.warning"
+      class="mb-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+    >
+      {{ styleSummary.warning }}
+    </p>
+    <DataTable :columns="styleColumns" :rows="styleSummary.rows" empty="暂无可用风格数据">
+      <template #cell-tilt="{ row, value }">
+        <span
+          :class="row.high_overlap
+            ? 'inline-block rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200'
+            : 'text-xs text-slate-300'"
+        >
+          {{ row.high_overlap ? `${value}（高度重合）` : value }}
+        </span>
+      </template>
+    </DataTable>
   </SectionCard>
 
   <SectionCard title="分组净值" :hint="`每 ${report.horizon} 个交易日分组一次。G1 因子排名最低，G${report.n_groups} 最高。组内等权，从 1 开始累计，不计交易成本。`">

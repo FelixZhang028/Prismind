@@ -54,3 +54,83 @@ export function factorNote(factor, notes = {}) {
     usage: '可以在「因子评估」里单独检验，也可以和其他因子一起合成、做组合研究。',
   }
 }
+
+// Newey-West HAC 统计显著性展示：用于判断均值 Rank IC 是否显著异于 0。
+export function significanceSummary(significance) {
+  const obs = Number(significance?.observations ?? 0)
+  const t = significance?.hac_t
+  const p = significance?.hac_p
+  const pos = significance?.positive_ratio
+  if (t == null || p == null || !Number.isFinite(Number(t)) || !Number.isFinite(Number(p))) {
+    return {
+      value: '—',
+      badge: '样本不足',
+      sub: obs > 0 ? `有效 ${obs} 日，不足以估计 HAC t 值` : '有效样本不足',
+      tone: 'text-slate-400',
+    }
+  }
+  const tNum = Number(t)
+  const pNum = Number(p)
+  const pText = pNum < 0.001 ? 'p < 0.001' : `p = ${pNum.toFixed(3)}`
+  const posText = pos != null && Number.isFinite(Number(pos)) ? ` · 正 IC 占比 ${(Number(pos) * 100).toFixed(1)}%` : ''
+  const badge = pNum < 0.01 ? '高度显著' : pNum < 0.05 ? '显著' : '未达 5% 显著'
+  return {
+    value: tNum.toFixed(2),
+    badge,
+    sub: `${pText}${posText}（${badge}）`,
+    tone: pNum < 0.05 ? 'text-indigo-200' : 'text-slate-300',
+  }
+}
+
+// Rank IC 与平均头尾组收益差符号相反时给出白话口径说明。
+export function longShortSignMismatchNote(report) {
+  const ic = Number(report?.rank_ic_mean)
+  const ls = Number(report?.long_short_mean)
+  if (!Number.isFinite(ic) || !Number.isFinite(ls)) return ''
+  if (ic * ls < 0 && Math.abs(ic) >= 0.005 && Math.abs(ls) >= 0.0005) {
+    return '当前 Rank IC 与平均头尾组收益差符号相反：Rank IC 反映全市场排序的整体单调性，而头尾组收益差是最高组与最低组等权收益均值之差，容易受组内少数极端涨跌幅股票影响；建议结合下方分组净值、排除 ST 或查看常见风格相关性后再判断。'
+  }
+  return ''
+}
+
+export function annualIcRows(annual) {
+  if (!Array.isArray(annual) || !annual.length) return []
+  const fmt = (value, digits = 3) => (value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(digits))
+  return annual.map((row) => {
+    const p = row.hac_p
+    const pText = p == null || !Number.isFinite(Number(p)) ? '—' : Number(p) < 0.001 ? '< 0.001' : Number(p).toFixed(3)
+    const pos = row.positive_ratio
+    return {
+      year: String(row.year),
+      observations: row.observations ?? 0,
+      rankIc: fmt(row.rank_ic, 3),
+      ir: fmt(row.rank_ic_ir, 3),
+      positiveRatio: pos == null || !Number.isFinite(Number(pos)) ? '—' : `${(Number(pos) * 100).toFixed(1)}%`,
+      hacT: fmt(row.hac_t, 2),
+      hacP: pText,
+    }
+  })
+}
+
+export function styleCorrelationSummary(items) {
+  if (!Array.isArray(items) || !items.length) {
+    return { rows: [], highOverlapLabels: [], warning: '' }
+  }
+  const rows = items.map((item) => {
+    const corr = Number(item.correlation)
+    const sign = Number.isFinite(corr) && corr > 0 ? '+' : ''
+    return {
+      style: item.style,
+      label: item.label,
+      corrText: Number.isFinite(corr) ? `${sign}${corr.toFixed(3)}` : '—',
+      tilt: item.tilt || '关联较弱',
+      observations: item.observations ?? 0,
+      high_overlap: Boolean(item.high_overlap),
+    }
+  })
+  const highOverlapLabels = rows.filter((row) => row.high_overlap).map((row) => row.label)
+  const warning = highOverlapLabels.length
+    ? `当前因子与 ${highOverlapLabels.join('、')} 相关性较高（|r| ≥ 0.40），建议开启行业/市值中性化后再核查增量选股能力。`
+    : ''
+  return { rows, highOverlapLabels, warning }
+}
