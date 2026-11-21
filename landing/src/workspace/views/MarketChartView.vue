@@ -192,7 +192,7 @@ const tradeRows = computed(() => {
   return [
     ...trades.value.fills.map((fill) => ({
       date: fill.date, action: side(fill.side), buy: fill.side === 'BUY', price: fill.price.toFixed(2),
-      quantity: fill.quantity.toLocaleString('zh-CN'), fees: money(fill.fees), slippage: money(fill.slippage_cost), note: '',
+      quantity: fill.quantity.toLocaleString('zh-CN'), fees: money(fill.fees), slippage: money(fill.slippage_cost), note: fill.reason_label || '',
     })),
     ...trades.value.rejected.map((order) => ({
       date: order.date, action: `${side(order.side)}未成交`, rejected: true, price: '—',

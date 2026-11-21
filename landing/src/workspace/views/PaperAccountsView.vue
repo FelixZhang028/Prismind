@@ -6,6 +6,7 @@ import { openResearch } from '../researchNavigation.js'
 import { benchmarkCards, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
 import { CURRENT_POOL, marketChoices, marketLabel, usableMarket } from '../marketPresentation.js'
 import { accountsLeft, checkMark, checkTone, paperPrefill, returnText, returnTone, statusLabel, statusNote, statusTone } from '../paperPresentation.js'
+import { tradeReasonClass } from '../ruleForm.js'
 import SectionCard from '../ui/SectionCard.vue'
 import FormField from '../ui/FormField.vue'
 import MetricCard from '../ui/MetricCard.vue'
@@ -214,6 +215,7 @@ const tradeCols = [
   { key: 'price', label: '价格', align: 'right' },
   { key: 'amount', label: '金额', align: 'right' },
   { key: 'fee', label: '手续费', align: 'right' },
+  { key: 'reason_label', label: '说明' },
 ]
 const positionCols = [
   { key: 'symbol', label: '代码' },
@@ -373,7 +375,11 @@ onActivated(async () => {
           </div>
           <div v-else>
             <p class="mb-3 text-xs text-slate-400">已经成交的记录（共 {{ current.trades.length }} 笔，最近的在上面）</p>
-            <DataTable :columns="tradeCols" :rows="trades" empty="还没有成交" />
+            <DataTable :columns="tradeCols" :rows="trades" empty="还没有成交">
+              <template #cell-reason_label="{ row, value }">
+                <span :class="tradeReasonClass(row.reason)">{{ value || '—' }}</span>
+              </template>
+            </DataTable>
           </div>
         </template>
       </div>

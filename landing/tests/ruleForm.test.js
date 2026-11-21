@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   blankForm, blankRule, chooseIndicator, definitionFromForm, formFromDefinition,
-  packagePayload, sourceLabel, strategyProtectionSummary,
+  packagePayload, sourceLabel, strategyProtectionSummary, tradeReasonClass,
 } from '../src/workspace/ruleForm.js'
 
 const options = {
@@ -121,4 +121,33 @@ test('策略保护摘要按配置拼接防换手与大盘择时说明', () => {
     }),
     '大盘择时：创业板指低于 20 日均线降至 30%（共触发 3 个调仓日）',
   )
+  assert.equal(
+    strategyProtectionSummary({
+      exit_rules: { stop_loss_pct: 0.1, trailing_stop_pct: 0.15 },
+      stop_loss_triggers: 2,
+      trailing_stop_triggers: 4,
+    }),
+    '个股止损：-10%（触发 2 次） · 移动止盈：高点回撤 15%（触发 4 次）',
+  )
+})
+
+test('个股止损与移动止盈在表单和接口定义之间无损往返，并按原因区分说明样式', () => {
+  const form = formFromDefinition(template, { top_n: 5, rebalance: 'weekly' }, options)
+  assert.deepEqual(form.exit_rules, { stop_loss_pct: '', trailing_stop_pct: '' })
+
+  form.exit_rules.stop_loss_pct = '0.1'
+  form.exit_rules.trailing_stop_pct = '0.15'
+  const def = definitionFromForm(form)
+  assert.deepEqual(def.exit_rules, { stop_loss_pct: 0.1, trailing_stop_pct: 0.15 })
+
+  const restored = formFromDefinition(def, { top_n: 5, rebalance: 'weekly' }, options)
+  assert.deepEqual(restored.exit_rules, { stop_loss_pct: 0.1, trailing_stop_pct: 0.15 })
+
+  restored.exit_rules = { stop_loss_pct: '', trailing_stop_pct: '' }
+  assert.deepEqual(definitionFromForm(restored), template)
+
+  assert.match(tradeReasonClass('STOP_LOSS'), /amber/)
+  assert.match(tradeReasonClass('TRAILING_STOP'), /sky/)
+  assert.match(tradeReasonClass('MARKET_TIMING_SELL'), /indigo/)
+  assert.equal(tradeReasonClass('REBALANCE_SELL'), 'text-xs text-slate-400')
 })

@@ -69,6 +69,10 @@ class RuleBasedStrategy(Strategy):
     def market_timing(self):
         return self.config.definition.market_timing
 
+    @property
+    def exit_rules(self):
+        return self.config.definition.exit_rules
+
     def generate_signals(self, context: StrategyContext) -> list[Signal]:
         context.require_fields(self.required_fields)
         definition = self.config.definition

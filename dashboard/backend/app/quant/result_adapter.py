@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from quant_platform.application.backtest_service import BacktestRun
+from quant_platform.execution.models import TRADE_REASON_LABELS
 from quant_platform.factors.evaluation import FactorReport
 
 from .run_evidence import relative_run_dir
@@ -86,6 +87,15 @@ def backtest_run_to_result(run: BacktestRun, names: dict[str, str] | None = None
             if summary.get("market_timing")
             else {}
         ),
+        **(
+            {
+                "exit_rules": summary["exit_rules"],
+                "stop_loss_triggers": int(summary.get("stop_loss_triggers") or 0),
+                "trailing_stop_triggers": int(summary.get("trailing_stop_triggers") or 0),
+            }
+            if summary.get("exit_rules")
+            else {}
+        ),
     }
 
 
@@ -99,6 +109,8 @@ def fills_to_trades(fills: pd.DataFrame) -> list[dict[str, Any]]:
     for record in frame.to_dict(orient="records"):
         quantity = int(record.get("quantity") or 0)
         price = float(record.get("price") or 0.0)
+        raw_reason = record.get("reason")
+        reason = str(raw_reason).strip() if raw_reason is not None and pd.notna(raw_reason) else ""
         rows.append(
             {
                 "date": str(record.get("trade_date")),
@@ -112,6 +124,8 @@ def fills_to_trades(fills: pd.DataFrame) -> list[dict[str, Any]]:
                     + float(record.get("stamp_tax") or 0.0),
                     2,
                 ),
+                "reason": reason,
+                "reason_label": TRADE_REASON_LABELS.get(reason, "—"),
             }
         )
     return rows

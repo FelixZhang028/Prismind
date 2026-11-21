@@ -20,7 +20,7 @@ from quant_platform.core import deadline
 from quant_platform.core.exceptions import BacktestValidityError
 from quant_platform.data.corporate_actions import load_corporate_actions
 from quant_platform.data.interfaces import MarketDataRepository
-from quant_platform.execution.models import Fill, Order
+from quant_platform.execution.models import Fill, Order, OrderSide, TradeReason
 from quant_platform.execution.next_open import NextOpenExecutionModel
 from quant_platform.execution.order_generator import OrderGenerator
 from quant_platform.portfolio.equal_weight import EqualWeightPortfolio
@@ -76,6 +76,7 @@ class BacktestEngine:
         annualization: int = 252,
         hold_buffer: int | None = None,
         market_timing: object | None = None,
+        exit_rules: object | None = None,
     ) -> None:
         self.repository = repository
         self.universe = universe
@@ -105,6 +106,11 @@ class BacktestEngine:
             market_timing
             if market_timing is not None
             else getattr(strategy, "market_timing", None)
+        )
+        self.exit_rules = (
+            exit_rules
+            if exit_rules is not None
+            else getattr(strategy, "exit_rules", None)
         )
 
     def run(
@@ -225,6 +231,12 @@ class BacktestEngine:
         # 大盘择时指数收盘序列：只使用 <= 调仓日 的历史收盘价，含回测起点前的均线预热期。
         timing_series = self._timing_benchmark_series(end_date)
         market_timing_triggers = 0
+        stop_loss_triggers = 0
+        trailing_stop_triggers = 0
+        # 复权口径（raw_price * adj_factor）跟踪个股持仓成本与持仓期最高收盘价，避免除权除息误触发止损。
+        tracked_qty: dict[str, int] = {}
+        position_adj_cost: dict[str, float] = {}
+        position_adj_peak: dict[str, float] = {}
 
         pending: dict[date, list[Order]] = {}
         all_signals: list[Signal] = []
@@ -257,6 +269,9 @@ class BacktestEngine:
                 if not isfinite(cash_per_share) or cash_per_share < 0:
                     raise BacktestValidityError(f"退市结算价格无效：{symbol}")
                 account.cash += account.positions.pop(symbol).quantity * cash_per_share
+                tracked_qty.pop(symbol, None)
+                position_adj_cost.pop(symbol, None)
+                position_adj_peak.pop(symbol, None)
                 settled_count += 1
             day_rows = bars_by_date.get(trade_date, empty_day)
             day_factors = self._valid_factors(day_rows)
@@ -289,6 +304,8 @@ class BacktestEngine:
             todays_orders = pending.pop(trade_date, [])
             for action in day_actions:
                 account.apply_corporate_action(action)
+                if action.symbol in account.positions:
+                    tracked_qty[action.symbol] = account.positions[action.symbol].quantity
                 if action.symbol in last_closing_prices:
                     last_closing_prices[action.symbol] = (
                         last_closing_prices[action.symbol] - action.cash_per_share
@@ -305,6 +322,26 @@ class BacktestEngine:
             )
             all_orders.extend(executed_orders)
             all_fills.extend(fills)
+            for fill in fills:
+                factor = fill.adj_factor if isfinite(fill.adj_factor) and fill.adj_factor > 0 else 1.0
+                adj_fill = fill.price * factor
+                if fill.side == OrderSide.BUY:
+                    old_qty = tracked_qty.get(fill.symbol, 0)
+                    old_cost = position_adj_cost.get(fill.symbol, adj_fill)
+                    new_qty = old_qty + fill.quantity
+                    position_adj_cost[fill.symbol] = (old_qty * old_cost + fill.quantity * adj_fill) / new_qty
+                    tracked_qty[fill.symbol] = new_qty
+                    position_adj_peak[fill.symbol] = (
+                        adj_fill if old_qty == 0 else max(position_adj_peak.get(fill.symbol, adj_fill), adj_fill)
+                    )
+                else:
+                    new_qty = max(tracked_qty.get(fill.symbol, 0) - fill.quantity, 0)
+                    if new_qty == 0 or fill.symbol not in account.positions:
+                        tracked_qty.pop(fill.symbol, None)
+                        position_adj_cost.pop(fill.symbol, None)
+                        position_adj_peak.pop(fill.symbol, None)
+                    else:
+                        tracked_qty[fill.symbol] = new_qty
             # 成交当日既无行因子也无历史因子 → 执行模型已回退比率 1，计入告警。
             missing_adj_factor_events += sum(
                 1
@@ -321,6 +358,12 @@ class BacktestEngine:
                 }
             last_closing_prices.update(closing_prices)
             last_adj_factors.update(day_factors)
+            for symbol in account.positions:
+                observed_close = closing_prices.get(symbol)
+                if observed_close is not None and observed_close > 0:
+                    factor = last_adj_factors.get(symbol) or 1.0
+                    adj_close = observed_close * factor
+                    position_adj_peak[symbol] = max(position_adj_peak.get(symbol, adj_close), adj_close)
             # 实际股数 × 未复权价格；分红现金/应收款已单独入账。
             valuation_prices: dict[str, float] = {}
             for symbol in account.positions:
@@ -399,15 +442,54 @@ class BacktestEngine:
                 next_date = dates[index + 1]
                 corrective_targets = list(daily_risk.targets)
                 all_targets.extend(corrective_targets)
+                corrective_reason = (
+                    TradeReason.RISK_LIQUIDATE.value
+                    if daily_risk.action == PortfolioRiskAction.LIQUIDATE
+                    else TradeReason.RISK_REDUCE.value
+                )
                 corrective_orders = self.order_generator.generate(
                     targets=corrective_targets,
                     account=account,
                     signal_date=trade_date,
                     execution_date=next_date,
                     closing_prices=pricing_map,
+                    default_sell_reason=corrective_reason,
                 )
                 pending[next_date] = corrective_orders
                 continue
+            triggered_exits: dict[str, tuple[str, str]] = {}
+            if self.exit_rules is not None and index + 1 < len(dates) and account.positions:
+                triggered_exits = self._check_position_exits(
+                    account=account,
+                    closing_prices=closing_prices,
+                    last_adj_factors=last_adj_factors,
+                    position_adj_cost=position_adj_cost,
+                    position_adj_peak=position_adj_peak,
+                    exit_rules=self.exit_rules,
+                )
+                for symbol, (reason_code, detail_text) in triggered_exits.items():
+                    if reason_code == TradeReason.STOP_LOSS.value:
+                        stop_loss_triggers += 1
+                    elif reason_code == TradeReason.TRAILING_STOP.value:
+                        trailing_stop_triggers += 1
+                    risk_rows.append(
+                        {
+                            "trade_date": trade_date,
+                            "strategy_id": self.strategy.strategy_id,
+                            "event_type": "POSITION_EXIT",
+                            "decision": RiskDecision.ADJUST.value,
+                            "action": PortfolioRiskAction.REDUCE.value,
+                            "reason": detail_text,
+                            "target_count": max(len(account.positions) - len(triggered_exits), 0),
+                            "total_weight": max(
+                                daily_risk.current_total_weight - weights.get(symbol, 0.0), 0.0
+                            ),
+                            "max_weight": daily_risk.current_max_weight,
+                            "current_total_weight": daily_risk.current_total_weight,
+                            "current_max_weight": daily_risk.current_max_weight,
+                            "current_drawdown": snapshot.drawdown,
+                        }
+                    )
             # 回撤停止线的「停止新开仓」交给下面的目标检查：不买新股票，但已有持仓照常卖出或减少，
             # 否则持仓会一直冻结。单日亏损或行业缺失同时命中时仍跳过这一天，并记下来。
             drawdown_stop = (
@@ -426,9 +508,29 @@ class BacktestEngine:
                     risk_interventions.append(
                         {"trade_date": trade_date, "decision": "REJECT", "reasons": daily_risk.reasons}
                     )
+                if triggered_exits and index + 1 < len(dates):
+                    next_date = dates[index + 1]
+                    pending.setdefault(next_date, []).extend(
+                        self._build_exit_orders(
+                            account=account,
+                            triggered_exits=triggered_exits,
+                            signal_date=trade_date,
+                            execution_date=next_date,
+                        )
+                    )
                 continue
 
             if trade_date not in rebalance_dates or index + 1 >= len(dates):
+                if triggered_exits and index + 1 < len(dates):
+                    next_date = dates[index + 1]
+                    pending.setdefault(next_date, []).extend(
+                        self._build_exit_orders(
+                            account=account,
+                            triggered_exits=triggered_exits,
+                            signal_date=trade_date,
+                            execution_date=next_date,
+                        )
+                    )
                 continue
             history = self._history_through(bars, trade_date)
             symbols = self.universe.select(trade_date, history)
@@ -440,33 +542,43 @@ class BacktestEngine:
             )
             context.require_fields(self.strategy.required_fields)
             signals = self.strategy.generate_signals(context)
+            eligible_signals = (
+                [signal for signal in signals if signal.symbol not in triggered_exits]
+                if triggered_exits
+                else signals
+            )
             held_symbols = {
-                symbol for symbol, position in account.positions.items() if position.quantity > 0
+                symbol
+                for symbol, position in account.positions.items()
+                if position.quantity > 0 and symbol not in triggered_exits
             }
             if hasattr(self.portfolio, "construct_with_history"):
                 if self.hold_buffer > 0:
                     targets = self.portfolio.construct_with_history(
-                        signals,
+                        eligible_signals,
                         history,
                         held_symbols=held_symbols,
                         hold_buffer=self.hold_buffer,
                     )
                 else:
-                    targets = self.portfolio.construct_with_history(signals, history)
+                    targets = self.portfolio.construct_with_history(eligible_signals, history)
             else:
                 if self.hold_buffer > 0:
                     targets = self.portfolio.construct(
-                        signals,
+                        eligible_signals,
                         held_symbols=held_symbols,
                         hold_buffer=self.hold_buffer,
                     )
                 else:
-                    targets = self.portfolio.construct(signals)
+                    targets = self.portfolio.construct(eligible_signals)
+            pre_timing_weights = {target.symbol: target.target_weight for target in targets}
+            timing_triggered = False
             if self.market_timing is not None and timing_series is not None:
                 triggered, close_val, ma_val = self._check_market_timing(
                     timing_series, trade_date, self.market_timing
                 )
                 if triggered:
+                    timing_triggered = True
                     market_timing_triggers += 1
                     off_weight = float(self.market_timing.off_weight)
                     if off_weight <= 0.0:
@@ -504,6 +616,7 @@ class BacktestEngine:
                             "current_drawdown": snapshot.drawdown,
                         }
                     )
+            post_timing_weights = {target.symbol: target.target_weight for target in targets}
             if self.risk_limits.enabled:
                 targets = constrain_turnover(
                     targets,
@@ -512,6 +625,7 @@ class BacktestEngine:
                     reference=TargetPosition(self.strategy.strategy_id, trade_date, "", 0),
                 )
             all_signals.extend(signals)
+            pre_risk_weights = {target.symbol: target.target_weight for target in targets}
             evaluation = evaluate_target_risk(
                 targets,
                 self.risk_limits,
@@ -542,8 +656,35 @@ class BacktestEngine:
                 }
             )
             if evaluation.decision == RiskDecision.REJECT:
+                if triggered_exits:
+                    next_date = dates[index + 1]
+                    pending.setdefault(next_date, []).extend(
+                        self._build_exit_orders(
+                            account=account,
+                            triggered_exits=triggered_exits,
+                            signal_date=trade_date,
+                            execution_date=next_date,
+                        )
+                    )
                 continue
             targets = list(evaluation.targets)
+            sell_reasons: dict[str, str] = {
+                symbol: reason_code for symbol, (reason_code, _) in triggered_exits.items()
+            }
+            if timing_triggered:
+                for symbol, prev_w in pre_timing_weights.items():
+                    if symbol not in sell_reasons and post_timing_weights.get(symbol, 0.0) < prev_w - 1e-9:
+                        sell_reasons[symbol] = TradeReason.MARKET_TIMING_SELL.value
+            if evaluation.decision == RiskDecision.ADJUST:
+                final_weights = {target.symbol: target.target_weight for target in targets}
+                risk_sell_reason = (
+                    TradeReason.RISK_LIQUIDATE.value
+                    if not targets
+                    else TradeReason.RISK_REDUCE.value
+                )
+                for symbol, prev_w in pre_risk_weights.items():
+                    if symbol not in sell_reasons and final_weights.get(symbol, 0.0) < prev_w - 1e-9:
+                        sell_reasons[symbol] = risk_sell_reason
             next_date = dates[index + 1]
             orders = self.order_generator.generate(
                 targets=targets,
@@ -551,6 +692,7 @@ class BacktestEngine:
                 signal_date=trade_date,
                 execution_date=next_date,
                 closing_prices=pricing_map,
+                sell_reasons=sell_reasons or None,
             )
             pending.setdefault(next_date, []).extend(orders)
 
@@ -643,6 +785,15 @@ class BacktestEngine:
                         "market_timing_triggers": market_timing_triggers,
                     }
                     if self.market_timing is not None
+                    else {}
+                ),
+                **(
+                    {
+                        "exit_rules": self.exit_rules.to_dict(),
+                        "stop_loss_triggers": stop_loss_triggers,
+                        "trailing_stop_triggers": trailing_stop_triggers,
+                    }
+                    if self.exit_rules is not None
                     else {}
                 ),
             }
@@ -856,6 +1007,83 @@ class BacktestEngine:
         close_val = float(known.iloc[-1])
         ma_val = float(known.iloc[-window:].mean())
         return close_val < ma_val, close_val, ma_val
+
+    @staticmethod
+    def _check_position_exits(
+        *,
+        account: Account,
+        closing_prices: dict[str, float],
+        last_adj_factors: dict[str, float],
+        position_adj_cost: dict[str, float],
+        position_adj_peak: dict[str, float],
+        exit_rules: object,
+    ) -> dict[str, tuple[str, str]]:
+        """Evaluate per-position stop-loss and trailing-stop using adjusted closing prices."""
+
+        stop_loss_pct = getattr(exit_rules, "stop_loss_pct", None)
+        trailing_stop_pct = getattr(exit_rules, "trailing_stop_pct", None)
+        triggered: dict[str, tuple[str, str]] = {}
+        for symbol in sorted(account.positions):
+            position = account.positions[symbol]
+            if position.quantity <= 0:
+                continue
+            observed_close = closing_prices.get(symbol)
+            if observed_close is None or observed_close <= 0:
+                continue
+            factor = last_adj_factors.get(symbol) or 1.0
+            adj_close = observed_close * factor
+            adj_cost = position_adj_cost.get(symbol, 0.0)
+            if (
+                stop_loss_pct is not None
+                and adj_cost > 0
+                and adj_close <= adj_cost * (1.0 - float(stop_loss_pct)) + 1e-12
+            ):
+                loss_pct = (adj_close / adj_cost - 1.0) * 100.0
+                triggered[symbol] = (
+                    TradeReason.STOP_LOSS.value,
+                    f"个股止损触发：{symbol} 较成本亏损 {loss_pct:.2f}%（阈值 -{float(stop_loss_pct) * 100:.1f}%），次日开盘卖出",
+                )
+                continue
+            adj_peak = position_adj_peak.get(symbol, 0.0)
+            if (
+                trailing_stop_pct is not None
+                and adj_peak > 0
+                and adj_close <= adj_peak * (1.0 - float(trailing_stop_pct)) + 1e-12
+            ):
+                dd_pct = (adj_close / adj_peak - 1.0) * 100.0
+                triggered[symbol] = (
+                    TradeReason.TRAILING_STOP.value,
+                    f"移动止盈触发：{symbol} 从持仓高点回撤 {dd_pct:.2f}%（阈值 -{float(trailing_stop_pct) * 100:.1f}%），次日开盘卖出",
+                )
+        return triggered
+
+    def _build_exit_orders(
+        self,
+        *,
+        account: Account,
+        triggered_exits: dict[str, tuple[str, str]],
+        signal_date: date,
+        execution_date: date,
+    ) -> list[Order]:
+        orders: list[Order] = []
+        for symbol in sorted(triggered_exits):
+            position = account.positions.get(symbol)
+            if position is None or position.quantity <= 0:
+                continue
+            reason_code, _ = triggered_exits[symbol]
+            orders.append(
+                Order.create(
+                    strategy_id=self.strategy.strategy_id,
+                    symbol=symbol,
+                    side=OrderSide.SELL,
+                    quantity=position.quantity,
+                    signal_date=signal_date,
+                    execution_date=execution_date,
+                    priority=0,
+                    reason=reason_code,
+                )
+            )
+        return orders
 
     @staticmethod
     def _history_through(bars: pd.DataFrame, trade_date: date) -> pd.DataFrame:
