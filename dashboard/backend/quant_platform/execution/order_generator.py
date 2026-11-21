@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from quant_platform.accounts.account import Account
-from quant_platform.execution.models import Order, OrderSide
+from quant_platform.execution.models import Order, OrderSide, TradeReason
 from quant_platform.portfolio.models import TargetPosition
 
 
@@ -24,6 +24,10 @@ class OrderGenerator:
         signal_date: date,
         execution_date: date,
         closing_prices: dict[str, float],
+        *,
+        default_buy_reason: str = TradeReason.REBALANCE_BUY.value,
+        default_sell_reason: str = TradeReason.REBALANCE_SELL.value,
+        sell_reasons: dict[str, str] | None = None,
     ) -> list[Order]:
         """Create sell and buy orders without using execution-day prices."""
 
@@ -50,6 +54,9 @@ class OrderGenerator:
             quantity = abs(difference)
             if side == OrderSide.SELL:
                 quantity = min(quantity, current_quantity)
+                reason = (sell_reasons or {}).get(symbol, default_sell_reason)
+            else:
+                reason = default_buy_reason
             if quantity > 0:
                 orders.append(
                     Order.create(
@@ -60,6 +67,7 @@ class OrderGenerator:
                         signal_date=signal_date,
                         execution_date=execution_date,
                         priority=target_priority.get(symbol, len(targets)) if side == OrderSide.BUY else 0,
+                        reason=reason,
                     )
                 )
         return sorted(

@@ -44,6 +44,29 @@ class OrderRejectReason(StrEnum):
     INSUFFICIENT_CASH_OR_QUANTITY = "INSUFFICIENT_CASH_OR_QUANTITY"
 
 
+class TradeReason(StrEnum):
+    """Stable machine-readable reason for why a simulated order or fill was generated."""
+
+    REBALANCE_BUY = "REBALANCE_BUY"
+    REBALANCE_SELL = "REBALANCE_SELL"
+    STOP_LOSS = "STOP_LOSS"
+    TRAILING_STOP = "TRAILING_STOP"
+    MARKET_TIMING_SELL = "MARKET_TIMING_SELL"
+    RISK_REDUCE = "RISK_REDUCE"
+    RISK_LIQUIDATE = "RISK_LIQUIDATE"
+
+
+TRADE_REASON_LABELS: dict[str, str] = {
+    TradeReason.REBALANCE_BUY.value: "调仓买入",
+    TradeReason.REBALANCE_SELL.value: "调仓卖出",
+    TradeReason.STOP_LOSS.value: "个股止损",
+    TradeReason.TRAILING_STOP.value: "移动止盈",
+    TradeReason.MARKET_TIMING_SELL.value: "大盘择时降仓",
+    TradeReason.RISK_REDUCE.value: "风控减仓",
+    TradeReason.RISK_LIQUIDATE.value: "风控清仓",
+}
+
+
 @dataclass(frozen=True)
 class Order:
     """Quantity order created after a signal for a later execution date."""
@@ -59,6 +82,7 @@ class Order:
     filled_quantity: int = 0
     reject_reason: str | None = None
     priority: int = 0
+    reason: str = ""
 
     @classmethod
     def create(
@@ -71,6 +95,7 @@ class Order:
         execution_date: date,
         *,
         priority: int = 0,
+        reason: str = "",
     ) -> Order:
         """Create an order with a unique identifier."""
 
@@ -83,6 +108,7 @@ class Order:
             signal_date,
             execution_date,
             priority=priority,
+            reason=reason,
         )
 
     @property
@@ -124,6 +150,7 @@ class Fill:
     slippage_cost: float
     adj_factor: float = 1.0
     transfer_fee: float = 0.0
+    reason: str = ""
 
     @classmethod
     def create(
@@ -137,6 +164,7 @@ class Fill:
         slippage_cost: float = 0.0,
         adj_factor: float = 1.0,
         transfer_fee: float = 0.0,
+        reason: str | None = None,
     ) -> Fill:
         """Create a fill for an order on its configured execution date."""
 
@@ -155,4 +183,5 @@ class Fill:
             slippage_cost=slippage_cost,
             adj_factor=adj_factor,
             transfer_fee=transfer_fee,
+            reason=order.reason if reason is None else reason,
         )

@@ -10,8 +10,10 @@ import {
   formFromDefinition,
   HOLD_BUFFER_OPTIONS,
   packagePayload,
+  STOP_LOSS_OPTIONS,
   TIMING_MA_OPTIONS,
   TIMING_WEIGHT_OPTIONS,
+  TRAILING_STOP_OPTIONS,
 } from '../ruleForm.js'
 import { handOffRules, takeHandedRules, takeStrategyDraft } from '../ruleHandoff.js'
 import FormField from '../ui/FormField.vue'
@@ -295,18 +297,25 @@ onActivated(applyHandOff)
               />
             </div>
             <div class="min-w-0 space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
-              <FormField
-                label="大盘均线择时"
-                type="checkbox"
-                v-model="form.market_timing.enabled"
-                hint="大盘走弱时自动降仓"
-              />
-              <p class="text-xs text-slate-400">调仓日收盘时，若参考指数低于所选均线，则按设定比例压缩总仓位，减少系统性下跌时的满仓暴露。</p>
-              <div v-if="form.market_timing.enabled" class="grid gap-3 sm:grid-cols-3">
-                <FormField label="参考指数" type="select" v-model="form.market_timing.benchmark" :options="timingBenchmarkOptions" />
-                <FormField label="均线周期" type="select" v-model="form.market_timing.ma_window" :options="TIMING_MA_OPTIONS" />
-                <FormField label="弱势仓位" type="select" v-model="form.market_timing.off_weight" :options="TIMING_WEIGHT_OPTIONS" />
+              <div class="grid gap-3 sm:grid-cols-2">
+                <FormField label="个股止损" type="select" v-model="form.exit_rules.stop_loss_pct" :options="STOP_LOSS_OPTIONS" />
+                <FormField label="移动止盈" type="select" v-model="form.exit_rules.trailing_stop_pct" :options="TRAILING_STOP_OPTIONS" />
               </div>
+              <p class="text-xs text-slate-400">每日收盘按复权价检查持仓，触发后次日开盘卖出，防止单只股票深套或盈利大幅回吐。</p>
+            </div>
+          </div>
+          <div class="mt-4 min-w-0 space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
+            <FormField
+              label="大盘均线择时"
+              type="checkbox"
+              v-model="form.market_timing.enabled"
+              hint="大盘走弱时自动降仓"
+            />
+            <p class="text-xs text-slate-400">调仓日收盘时，若参考指数低于所选均线，则按设定比例压缩总仓位，减少系统性下跌时的满仓暴露。</p>
+            <div v-if="form.market_timing.enabled" class="grid gap-3 sm:grid-cols-3">
+              <FormField label="参考指数" type="select" v-model="form.market_timing.benchmark" :options="timingBenchmarkOptions" />
+              <FormField label="均线周期" type="select" v-model="form.market_timing.ma_window" :options="TIMING_MA_OPTIONS" />
+              <FormField label="弱势仓位" type="select" v-model="form.market_timing.off_weight" :options="TIMING_WEIGHT_OPTIONS" />
             </div>
           </div>
         </div>

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from quant_platform.execution.models import TRADE_REASON_LABELS
+
 from .symbols import to_bare, to_canonical
 
 REJECT_LABELS = {
@@ -63,11 +65,12 @@ def symbol_trades(directory: Path, symbol: str) -> dict:
     """Fills at raw prices, unfilled orders with reasons, and end-of-day holding spans."""
     canonical = to_canonical(symbol)
     fills = _read(directory, "fills", ["symbol", "trade_date", "side", "quantity", "price", "reference_price",
-                                       "commission", "stamp_tax", "transfer_fee", "slippage_cost"])
+                                       "commission", "stamp_tax", "transfer_fee", "slippage_cost", "reason"])
     fills = fills[fills["symbol"].astype(str).map(to_canonical) == canonical].copy()
     fills["date"] = _dates(fills["trade_date"])
     costs = ["commission", "stamp_tax", "transfer_fee", "slippage_cost"]
     fills[costs] = fills[costs].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    fills["reason"] = fills["reason"].fillna("").astype(str).str.strip()
     fills = fills.dropna(subset=["date"]).sort_values("date")
 
     orders = _read(directory, "orders", ["symbol", "execution_date", "side", "quantity", "status", "reject_reason"])
@@ -96,7 +99,9 @@ def symbol_trades(directory: Path, symbol: str) -> dict:
         "fills": [{"date": row.date, "side": str(row.side), "quantity": int(row.quantity),
                    "price": _number(row.price, 4), "reference_price": _number(row.reference_price, 4),
                    "fees": _number(row.commission + row.stamp_tax + row.transfer_fee, 2),
-                   "slippage_cost": _number(row.slippage_cost, 2)}
+                   "slippage_cost": _number(row.slippage_cost, 2),
+                   "reason": row.reason,
+                   "reason_label": TRADE_REASON_LABELS.get(row.reason, "")}
                   for row in fills.itertuples() if _number(row.price, 4)],
         "rejected": [{"date": row.date, "side": str(row.side), "quantity": int(row.quantity),
                       "reason": str(row.reject_reason or ""),

@@ -196,6 +196,7 @@ class DefinitionIn(BaseModel):
     ranking: dict[str, Any] | None = None
     hold_buffer: int = 0
     market_timing: dict[str, Any] | None = None
+    exit_rules: dict[str, Any] | None = None
 
 
 class PackageIn(BaseModel):
@@ -297,7 +298,7 @@ def create_package(body: PackageIn, user: dict = Depends(get_current_user)):
         saved, published = rule_def.to_dict(), preset.definition.to_dict()
         unchanged = all(
             saved.get(key) == published.get(key)
-            for key in ("entry_logic", "entry_rules", "ranking", "hold_buffer", "market_timing")
+            for key in ("entry_logic", "entry_rules", "ranking", "hold_buffer", "market_timing", "exit_rules")
         )
         source = f"{'template' if unchanged else 'template_modified'}:{source.split(':')[1]}:{body.style}"
     package_id = f"{re.sub(r'[^A-Za-z0-9_]', '', rule_def.strategy_id)[:24]}-{random.Random().randint(0, 0xFFFFFFFF):08x}"

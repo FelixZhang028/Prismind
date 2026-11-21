@@ -96,6 +96,8 @@ def definition_to_quant(definition: dict[str, Any]) -> dict[str, Any]:
         result["hold_buffer"] = definition["hold_buffer"]
     if definition.get("market_timing") is not None:
         result["market_timing"] = definition["market_timing"]
+    if definition.get("exit_rules") is not None:
+        result["exit_rules"] = definition["exit_rules"]
     return result
 
 
@@ -132,6 +134,8 @@ def definition_to_frontend(definition: dict[str, Any]) -> dict[str, Any]:
         result["hold_buffer"] = int(definition["hold_buffer"])
     if definition.get("market_timing"):
         result["market_timing"] = dict(definition["market_timing"])
+    if definition.get("exit_rules"):
+        result["exit_rules"] = dict(definition["exit_rules"])
     return result
 
 

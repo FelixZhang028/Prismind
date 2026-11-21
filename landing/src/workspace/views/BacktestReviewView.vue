@@ -20,7 +20,7 @@ import { pendingAuditRun } from '../auditLink.js'
 import { benchmarkCards, benchmarkChoices, benchmarkCoverageNote, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
 import { CURRENT_POOL, marketChoices, marketLabel, marketNote, usableMarket } from '../marketPresentation.js'
 import { paperPrefill, returnTone } from '../paperPresentation.js'
-import { strategyProtectionSummary } from '../ruleForm.js'
+import { strategyProtectionSummary, tradeReasonClass } from '../ruleForm.js'
 import { FACTOR_STANDARDIZATIONS, takeFactorBacktestDraft } from '../factorBacktestDraft.js'
 
 const props = defineProps({
@@ -201,6 +201,7 @@ const tradeCols = [
   { key: 'price', label: '价格', align: 'right' },
   { key: 'amount', label: '金额', align: 'right' },
   { key: 'fee', label: '手续费', align: 'right' },
+  { key: 'reason_label', label: '说明' },
 ]
 const positionCols = [
   { key: 'symbol', label: '标的' },
@@ -539,7 +540,11 @@ onActivated(async () => {
           </section>
           <div>
             <p class="mb-3 text-xs text-slate-400">交易明细</p>
-            <DataTable :columns="tradeCols" :rows="current.trades || []" empty="暂无交易记录" />
+            <DataTable :columns="tradeCols" :rows="current.trades || []" empty="暂无交易记录">
+              <template #cell-reason_label="{ row, value }">
+                <span :class="tradeReasonClass(row.reason)">{{ value || '—' }}</span>
+              </template>
+            </DataTable>
           </div>
         </div>
 
