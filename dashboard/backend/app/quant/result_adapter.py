@@ -77,6 +77,15 @@ def backtest_run_to_result(run: BacktestRun, names: dict[str, str] | None = None
         "output_dir": relative_run_dir(run.output_dir),
         "trades": fills_to_trades(run.result.fills),
         "positions": final_positions(run.result.positions, names=names, as_of=nav_dates[-1] if nav_dates else None),
+        **({"hold_buffer": int(summary["hold_buffer"])} if summary.get("hold_buffer") else {}),
+        **(
+            {
+                "market_timing": summary["market_timing"],
+                "market_timing_triggers": int(summary.get("market_timing_triggers") or 0),
+            }
+            if summary.get("market_timing")
+            else {}
+        ),
     }
 
 

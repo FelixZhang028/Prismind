@@ -115,6 +115,7 @@ from quant_platform.strategies.nl_builder import NLStrategyBuilder, definition_e
 from quant_platform.strategies.rule_schema import (
     IndicatorSpec,
     INDICATOR_LABELS,
+    MARKET_TIMING_BENCHMARKS,
     OPERATOR_LABELS,
     RuleStrategyDefinition,
 )
@@ -193,6 +194,8 @@ class DefinitionIn(BaseModel):
     entry_logic: str = Field("all", description="all / any")
     entry_rules: list[dict[str, Any]] = []
     ranking: dict[str, Any] | None = None
+    hold_buffer: int = 0
+    market_timing: dict[str, Any] | None = None
 
 
 class PackageIn(BaseModel):
@@ -292,7 +295,10 @@ def create_package(body: PackageIn, user: dict = Depends(get_current_user)):
     if preset is not None:
         # 保存的是页面上看到的规则；来源标签如实记录它是否还和模板一致。
         saved, published = rule_def.to_dict(), preset.definition.to_dict()
-        unchanged = all(saved[key] == published[key] for key in ("entry_logic", "entry_rules", "ranking"))
+        unchanged = all(
+            saved.get(key) == published.get(key)
+            for key in ("entry_logic", "entry_rules", "ranking", "hold_buffer", "market_timing")
+        )
         source = f"{'template' if unchanged else 'template_modified'}:{source.split(':')[1]}:{body.style}"
     package_id = f"{re.sub(r'[^A-Za-z0-9_]', '', rule_def.strategy_id)[:24]}-{random.Random().randint(0, 0xFFFFFFFF):08x}"
     with get_conn() as conn:
@@ -699,6 +705,9 @@ def studio_options(user: dict = Depends(get_current_user)):
         "frequencies": _FREQUENCIES,
         "directions": _DIRECTIONS,
         "styles": _STYLES,
+        "market_timing_benchmarks": [
+            {"value": code, "label": label} for code, label in MARKET_TIMING_BENCHMARKS.items()
+        ],
     }
 
 

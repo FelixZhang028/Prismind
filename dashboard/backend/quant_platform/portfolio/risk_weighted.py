@@ -64,8 +64,15 @@ class RiskWeightedPortfolio(EqualWeightPortfolio):
         self.method = method
         self.lookback = lookback
 
-    def construct_with_history(self, signals, history):
-        targets = super().construct(signals)
+    def construct_with_history(
+        self,
+        signals,
+        history,
+        *,
+        held_symbols: set[str] | None = None,
+        hold_buffer: int | None = None,
+    ):
+        targets = super().construct(signals, held_symbols=held_symbols, hold_buffer=hold_buffer)
         if not targets or any(signal.target_weight is not None for signal in signals):
             return targets
         names = [target.symbol for target in targets]

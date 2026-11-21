@@ -20,6 +20,7 @@ import { pendingAuditRun } from '../auditLink.js'
 import { benchmarkCards, benchmarkChoices, benchmarkCoverageNote, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
 import { CURRENT_POOL, marketChoices, marketLabel, marketNote, usableMarket } from '../marketPresentation.js'
 import { paperPrefill, returnTone } from '../paperPresentation.js'
+import { strategyProtectionSummary } from '../ruleForm.js'
 import { FACTOR_STANDARDIZATIONS, takeFactorBacktestDraft } from '../factorBacktestDraft.js'
 
 const props = defineProps({
@@ -95,6 +96,7 @@ const current = ref(null)
 const detailLoading = ref(false)
 
 const result = computed(() => current.value?.result || {})
+const protectionSummary = computed(() => strategyProtectionSummary(result.value))
 const shownStrategy = computed(() => {
   const config = result.value.effective_config || {}
   return strategyName(strategyOptions.value, config.strategy_reference || config.strategy_plugin, current.value?.strategy)
@@ -456,6 +458,7 @@ onActivated(async () => {
         <div v-if="current" class="rounded-xl border border-amber-400/20 bg-white/5 p-4 text-xs text-slate-300">
           <p>数据状态：{{ validityLabel(result) }}；{{ result.metrics_reliable ? '指标可计算，请结合警告审阅' : '指标不可作为可信结论' }}</p>
           <p v-if="result.effective_config" class="mt-2">实际配置：{{ shownStrategy }} · ¥{{ Number(result.effective_config.initial_capital).toLocaleString() }} · 最多 {{ result.effective_config.max_positions }} 只 · {{ rebalances.find(r => r.value === result.effective_config.rebalance)?.label }}调仓 · {{ result.effective_config.from_date }} 至 {{ result.effective_config.to_date }}</p>
+          <p v-if="protectionSummary" class="mt-2">策略保护：{{ protectionSummary }}</p>
           <p v-if="result.pool?.name" class="mt-2">股票池：{{ poolLabel(result.pool) }}</p>
           <p v-if="result.pool?.snapshot_date && current.from_date < result.pool.snapshot_date" class="mt-1 text-amber-300">
             回测起点早于成分股名单快照，可能存在前视偏差。

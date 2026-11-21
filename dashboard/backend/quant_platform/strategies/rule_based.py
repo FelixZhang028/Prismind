@@ -61,6 +61,14 @@ class RuleBasedStrategy(Strategy):
     def min_history(self) -> int:
         return self.config.definition.minimum_history_days
 
+    @property
+    def hold_buffer(self) -> int:
+        return self.config.definition.hold_buffer
+
+    @property
+    def market_timing(self):
+        return self.config.definition.market_timing
+
     def generate_signals(self, context: StrategyContext) -> list[Signal]:
         context.require_fields(self.required_fields)
         definition = self.config.definition

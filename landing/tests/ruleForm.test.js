@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  blankForm, blankRule, chooseIndicator, definitionFromForm, formFromDefinition, packagePayload, sourceLabel,
+  blankForm, blankRule, chooseIndicator, definitionFromForm, formFromDefinition,
+  packagePayload, sourceLabel, strategyProtectionSummary,
 } from '../src/workspace/ruleForm.js'
 
 const options = {
@@ -75,4 +76,49 @@ test('来源标签区分原样的模板和改过的模板', () => {
   assert.equal(sourceLabel('nl_builder'), '一句话生成')
   assert.equal(sourceLabel('visual_builder'), '自己填写')
   assert.equal(sourceLabel(undefined), '规则策略')
+})
+
+test('防换手缓冲与大盘均线择时在表单和接口定义之间无损往返，并兼容下拉框字符串值', () => {
+  const form = formFromDefinition(template, { top_n: 5, rebalance: 'weekly' }, options)
+  assert.equal(form.hold_buffer, 0)
+  assert.deepEqual(form.market_timing, { enabled: false, benchmark: '000300.SH', ma_window: 60, off_weight: 0 })
+
+  // 模拟 HTML <select> 回传字符串
+  form.hold_buffer = '10'
+  form.market_timing = { enabled: true, benchmark: '000905.SH', ma_window: '120', off_weight: '0.3' }
+  const def = definitionFromForm(form)
+  assert.equal(def.hold_buffer, 10)
+  assert.deepEqual(def.market_timing, { benchmark: '000905.SH', ma_window: 120, off_weight: 0.3 })
+
+  const restored = formFromDefinition(def, { top_n: 5, rebalance: 'weekly' }, options)
+  assert.equal(restored.hold_buffer, 10)
+  assert.deepEqual(restored.market_timing, { enabled: true, benchmark: '000905.SH', ma_window: 120, off_weight: 0.3 })
+
+  // 关掉后不再携带这两个字段
+  restored.hold_buffer = '0'
+  restored.market_timing.enabled = false
+  assert.deepEqual(definitionFromForm(restored), template)
+})
+
+test('策略保护摘要按配置拼接防换手与大盘择时说明', () => {
+  assert.equal(strategyProtectionSummary({}), '')
+  assert.equal(
+    strategyProtectionSummary({ hold_buffer: 10 }),
+    '防换手缓冲：已持股跌出前 N+10 名再卖',
+  )
+  assert.equal(
+    strategyProtectionSummary({
+      hold_buffer: 5,
+      market_timing: { benchmark: '000300.SH', ma_window: 60, off_weight: 0 },
+      market_timing_triggers: 8,
+    }),
+    '防换手缓冲：已持股跌出前 N+5 名再卖 · 大盘择时：沪深 300低于 60 日均线空仓等待（共触发 8 个调仓日）',
+  )
+  assert.equal(
+    strategyProtectionSummary({
+      market_timing: { benchmark: '399006.SZ', ma_window: 20, off_weight: 0.3 },
+      market_timing_triggers: 3,
+    }),
+    '大盘择时：创业板指低于 20 日均线降至 30%（共触发 3 个调仓日）',
+  )
 })
