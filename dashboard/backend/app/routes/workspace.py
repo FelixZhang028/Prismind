@@ -17,6 +17,7 @@ from contextlib import nullcontext
 import os
 import random
 import re
+import threading
 from dataclasses import asdict
 from dataclasses import replace as dc_replace
 from datetime import UTC, date, datetime, timedelta
@@ -54,7 +55,7 @@ from ..quant.research_runs import (
 from ..quant import audit, daily_schedule, home, market_sentiment, rate_limit
 from ..quant.backtest_jobs import backtest_slot, save_result
 from ..quant.universe_import import MAX_POOL_SIZE, merge_codes
-from ..quant.compute import cached, computing
+from ..quant.compute import cached, computing, data_version
 from ..quant.runtime import (
     BACKEND_ROOT,
     CONFIG_PATH,
@@ -872,6 +873,7 @@ class FactorEvalIn(BaseModel):
     # 中性化：去掉因子值里能被行业、市值解释的部分。
     neutralization: Literal["none", "industry", "size", "both", "industry_rank"] = "none"
     filters: FactorSampleFilters = Field(default_factory=FactorSampleFilters)
+    cost_bps: float = Field(0.0, ge=0.0, le=100.0)
     # 股票范围：当前股票池，或某个指数当时的成分股（指数代码）。
     universe: str = Field(CURRENT_POOL, max_length=40)
 
@@ -981,6 +983,7 @@ def _evaluate_factor(
         report = evaluator.evaluate(
             factor, start, end, symbols=symbols, horizon=body.horizon, n_groups=body.n_groups,
             neutralization=body.neutralization, diagnostics=True, filters=body.filters,
+            cost_bps=body.cost_bps,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=_sanitize_detail(exc)) from exc
@@ -994,6 +997,7 @@ def _evaluate_factor(
         ),
         "neutralization": body.neutralization,
         "filters": asdict(body.filters),
+        "cost_bps": body.cost_bps,
     }
 
 
@@ -2186,11 +2190,45 @@ def event_study_run(body: EventStudyIn, user: dict = Depends(get_current_user)):
     return result
 
 
+_closed_loop_cache_lock = threading.Lock()
+_closed_loop_cache: tuple[str, dict[str, Any]] | None = None
+
+
+def _closed_loop_cache_key(service: Any) -> str | None:
+    repo = getattr(service, "repository", None)
+    root = getattr(repo, "root", None)
+    if root is None:
+        return None
+    root_path = Path(root)
+    if not root_path.exists():
+        return None
+    parts = [str(root_path), data_version(root_path)]
+    app_cfg = getattr(service, "app", None)
+    if isinstance(app_cfg, dict):
+        runtime_dir = app_cfg.get("app", {}).get("runtime_dir")
+        if runtime_dir:
+            state_path = Path(str(runtime_dir)) / "full_market_backfill_state.json"
+            if state_path.exists():
+                stat = state_path.stat()
+                parts.append(f"{stat.st_size}|{stat.st_mtime_ns}")
+    return "|".join(parts)
+
+
 @router.get("/data-center/closed-loop", summary="全市场数据闭环落地状态（只读，不访问外网）")
 def data_closed_loop_status(user: dict = Depends(get_current_user)):
+    global _closed_loop_cache
     service = build_data_center_service(user)
     try:
-        return service.closed_loop_status()
+        cache_key = _closed_loop_cache_key(service)
+        if cache_key is not None:
+            with _closed_loop_cache_lock:
+                if _closed_loop_cache is not None and _closed_loop_cache[0] == cache_key:
+                    return json.loads(json.dumps(_closed_loop_cache[1], ensure_ascii=False))
+        result = service.closed_loop_status()
+        if cache_key is not None:
+            with _closed_loop_cache_lock:
+                _closed_loop_cache = (cache_key, json.loads(json.dumps(result, ensure_ascii=False)))
+        return result
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=f"读取闭环状态失败：{_sanitize_detail(exc)}")
 

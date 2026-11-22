@@ -46,3 +46,18 @@ export function defaultFactorUniverse(markets, remembered) {
 export function usableMarket(value, markets) {
   return (markets || []).some((item) => item.value === value && item.available) ? value : CURRENT_POOL
 }
+
+// 当用户的「当前股票池」导入的是某个指数的静态快照时，匹配对应的「历史成分股」选项，方便一键切换避免前视偏差。
+export function suggestedHistoricalMarket(poolPreset, markets) {
+  const name = String(poolPreset?.name || '').replace(/\s+/g, '')
+  if (!name || !Array.isArray(markets)) return null
+  const patterns = [
+    { keyword: '中证800', code: '000906.SH' },
+    { keyword: '沪深300', code: '000300.SH' },
+    { keyword: '中证500', code: '000905.SH' },
+    { keyword: '上证50', code: '000016.SH' },
+  ]
+  const matched = patterns.find((item) => name.includes(item.keyword))
+  if (!matched) return null
+  return markets.find((item) => item.value === matched.code && item.available) || null
+}

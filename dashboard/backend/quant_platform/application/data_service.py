@@ -656,6 +656,32 @@ class DataCenterService:
             "latest_pub_date": pd.to_datetime(reports["pub_date"]).max().date().isoformat() if len(reports) else None,
         }
 
+    def total_shares_status(self) -> dict[str, Any]:
+        """总股本（历史市值）的落地情况：有有效总股本的股票数、报告期起止与覆盖率。"""
+
+        bars = self.repository.daily_bar_summary()
+        reports = self.repository.get_fundamentals()
+        reports = reports[reports["pub_date"].notna()]
+        if len(reports) and "total_shares" in reports.columns:
+            has_shares = pd.to_numeric(reports["total_shares"], errors="coerce").gt(0).fillna(False)
+            ts_reports = reports[has_shares]
+        else:
+            ts_reports = reports.iloc[0:0]
+        ts_covered = set(ts_reports["symbol"].astype(str)) & set(bars.index)
+        ts_stat_dates = (
+            pd.to_datetime(ts_reports["stat_date"], errors="coerce")
+            if len(ts_reports)
+            else pd.Series(dtype="datetime64[ns]")
+        )
+        bars_count = int(len(bars))
+        return {
+            "symbols": len(ts_covered),
+            "missing_symbols": bars_count - len(ts_covered),
+            "start_date": ts_stat_dates.min().date().isoformat() if ts_stat_dates.notna().any() else None,
+            "end_date": ts_stat_dates.max().date().isoformat() if ts_stat_dates.notna().any() else None,
+            "coverage": round(len(ts_covered) / bars_count, 4) if bars_count else None,
+        }
+
     @serialized_update
     def backfill_industry(self, start_date: date, end_date: date, *, progress: Any = None) -> dict[str, Any]:
         """下载行业分类的历史：每个季度末一张全市场快照，只保存发生变化的记录。"""
@@ -760,6 +786,7 @@ class DataCenterService:
         status["checkpoint"] = backfill.state.snapshot()
         status["indicators"] = self.indicator_status()
         status["fundamentals"] = self.fundamentals_status()
+        status["total_shares"] = self.total_shares_status()
         status["industry"] = self.industry_status()
         status["index_constituents"] = self.index_constituents_status()
         status["bar_gaps"] = self.bar_gap_status()

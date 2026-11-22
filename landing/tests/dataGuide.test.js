@@ -17,16 +17,28 @@ test('顶部一句话：更新到哪天、多少只、从哪年起、多久更�
   assert.equal(headline(null, { enabled: false, data: {} }), '平台还没有行情数据 · 由管理员定期更新')
 })
 
-test('数据清单：每类一行，还没有的写明由平台更新', () => {
+test('数据清单：每类一行，还没有的写明由平台更新，并单独展示总股本与历史市值覆盖率', () => {
   const rows = Object.fromEntries(guideRows(loop, daily).map((row) => [row.key, row]))
-  assert.deepEqual(Object.keys(rows), ['bars', 'indicators', 'fundamentals', 'actions', 'industry', 'index_constituents', 'universe'])
+  assert.deepEqual(Object.keys(rows), ['bars', 'indicators', 'fundamentals', 'total_shares', 'actions', 'industry', 'index_constituents', 'universe'])
   assert.equal(rows.bars.range, '5,479 只股票，2015-01-05 至 2026-10-13')
   assert.equal(rows.bars.now, '更新到 2026-10-13（这一天 5,224 只有行情）')
   assert.equal(rows.indicators.now, '还有 179 只股票没有')
   assert.equal(rows.fundamentals.now, NOT_READY)
+  assert.equal(rows.total_shares.now, NOT_READY)
   assert.equal(rows.index_constituents.range, '沪深300 2015-01-05 至 2026-10-13')
   assert.equal(rows.universe.range, '5,911 只股票（其中已退市 337 只）')
   assert.ok(guideRows(null, null).every((row) => row.now === NOT_READY))
+
+  const withShares = {
+    ...loop,
+    total_shares: {
+      symbols: 5100, missing_symbols: 379,
+      start_date: '2022-03-31', end_date: '2026-06-30', coverage: 0.9308,
+    },
+  }
+  const rows2 = Object.fromEntries(guideRows(withShares, daily).map((row) => [row.key, row]))
+  assert.equal(rows2.total_shares.range, '5,100 只股票，报告期 2022-03-31 至 2026-06-30')
+  assert.equal(rows2.total_shares.now, '覆盖 93.1%（还有 379 只股票没有）')
 })
 
 test('说明里不叫用户自己下载，也写清楚当前股票池不含退市股', () => {

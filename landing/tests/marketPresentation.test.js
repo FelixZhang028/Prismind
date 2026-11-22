@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { CURRENT_POOL, marketChoices, marketLabel, marketNote, usableMarket } from '../src/workspace/marketPresentation.js'
+import { CURRENT_POOL, marketChoices, marketLabel, marketNote, suggestedHistoricalMarket, usableMarket } from '../src/workspace/marketPresentation.js'
 
 const markets = [
   { value: '当前股票池', label: '当前股票池', available: true },
@@ -53,4 +53,15 @@ test('因子研究的范围说明，以及默认用哪个范围', async () => {
   assert.equal(defaultFactorUniverse(markets, '当前股票池'), '当前股票池')     // 用过的优先
   assert.equal(defaultFactorUniverse(markets, '000905.SH'), '000300.SH')       // 用过的现在不能选了
   assert.equal(defaultFactorUniverse([], ''), CURRENT_POOL)
+})
+
+test('静态成分股快照可匹配对应的历史成分股一键切换项', () => {
+  const with800 = [
+    ...markets,
+    { value: '000906.SH', label: '中证 800历史成分股', available: true, start_date: '2015-01-05', end_date: '2026-10-12' },
+  ]
+  assert.equal(suggestedHistoricalMarket({ name: '中证800成分股' }, with800)?.value, '000906.SH')
+  assert.equal(suggestedHistoricalMarket({ name: '沪深 300 成分股' }, with800)?.value, '000300.SH')
+  assert.equal(suggestedHistoricalMarket({ name: '中证500成分股' }, with800), null) // 未下载不推荐
+  assert.equal(suggestedHistoricalMarket({ name: '自选成长股' }, with800), null)
 })

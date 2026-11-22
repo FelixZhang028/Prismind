@@ -282,6 +282,21 @@ def factor_report_to_dict(report: FactorReport) -> dict[str, Any]:
             for row in (report.annual.to_dict(orient="records") if not report.annual.empty else [])
         ],
         "style_correlations": list(report.style_correlations or []),
+        **(
+            {
+                "cost_summary": {
+                    "cost_bps": _round(report.cost_summary.get("cost_bps"), 1),
+                    "gross_top_return": _round(report.cost_summary.get("gross_top_return"), 4),
+                    "net_top_return": _round(report.cost_summary.get("net_top_return"), 4),
+                    "gross_long_short_total": _round(report.cost_summary.get("gross_long_short_total"), 4),
+                    "net_long_short_total": _round(report.cost_summary.get("net_long_short_total"), 4),
+                    "net_long_short_mean": _round(report.cost_summary.get("net_long_short_mean"), 4),
+                    "avg_top_turnover": _round(report.cost_summary.get("avg_top_turnover"), 4),
+                }
+            }
+            if report.cost_summary
+            else {}
+        ),
         "rebalance_turnover": [
             {"date": day.date().isoformat(), "turnover": _round(value, 6)}
             for day, value in report.rebalance_turnover.itertuples(index=False, name=None)

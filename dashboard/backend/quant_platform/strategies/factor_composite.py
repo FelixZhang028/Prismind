@@ -130,7 +130,7 @@ class FactorCompositeStrategy(Strategy):
             "因子组合定义",
             ParameterKind.STRING,
             "[]",
-            'JSON 列表，如 [{"name": "momentum_20", "weight": 1.0}]',
+            'JSON 列表，如 [{"name": "momentum_20", "weight": 1.0, "direction": 1}]；direction 为 -1 表示反向（越小越好）',
         ),
     )
     required_fields = frozenset({"symbol", "trade_date"})
