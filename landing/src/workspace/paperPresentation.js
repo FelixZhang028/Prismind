@@ -41,11 +41,57 @@ export function checkMark(severity) {
   return severity === 'ok' ? '✓' : severity === 'warning' ? '!' : '·'
 }
 
-// 从一次回测打开“用这套设置开模拟账户”：只有规则策略可以，带上回测时的股票范围、资金、持股数和调仓频率。
+// 解析因子组合 JSON：返回有效的非零权重成分因子列表，解析失败返回空数组。
+export function parseFactorRows(factorsJson) {
+  if (!factorsJson) return []
+  try {
+    const rows = typeof factorsJson === 'string' ? JSON.parse(factorsJson) : factorsJson
+    return Array.isArray(rows) ? rows.filter((row) => row?.name && Number(row.weight ?? 1) !== 0) : []
+  } catch {
+    return []
+  }
+}
+
+// 序列化因子组合：保证 clip / missing / standardization 在所有成分因子上保持一致。
+export function serializeFactorRows(rows) {
+  if (!Array.isArray(rows) || !rows.length) return '[]'
+  const std = rows[0]?.standardization || 'zscore'
+  const clip = Boolean(rows[0]?.clip ?? false)
+  const missing = rows[0]?.missing || 'zero'
+  const normalized = rows.map((row) => ({
+    ...row,
+    weight: Number(row.weight ?? 1),
+    direction: Number(row.direction) === -1 ? -1 : 1,
+    clip,
+    missing,
+    standardization: std,
+  }))
+  return JSON.stringify(normalized)
+}
+
+export function factorSummaryText(factors) {
+  if (!Array.isArray(factors) || !factors.length) return ''
+  return factors
+    .map((f) => `${f.display_name || f.name}（${Number(f.direction) === -1 ? '反向' : '正向'} × ${Number(f.weight ?? 1)}）`)
+    .join(' + ')
+}
+
+// 从一次回测打开“用这套设置开模拟账户”：规则策略和多因子合成策略都可以，带上股票范围、资金、持股数和调仓频率。
 export function paperPrefill(config) {
-  const reference = String(config?.strategy_reference || '')
-  if (!reference.startsWith('package:')) return null
-  const prefill = { package_id: reference.slice('package:'.length) }
+  if (!config || typeof config !== 'object') return null
+  const reference = String(config.strategy_reference || '')
+  const plugin = String(config.strategy_plugin || '')
+  let prefill = null
+  if (reference.startsWith('package:')) {
+    prefill = { strategy_kind: 'rule_builder', package_id: reference.slice('package:'.length) }
+  } else if (plugin === 'factor_composite' || reference === 'factor_composite') {
+    const rawJson = config.strategy_parameters?.factors_json
+    const rows = parseFactorRows(rawJson)
+    if (!rows.length) return null
+    prefill = { strategy_kind: 'factor_composite', factors_json: typeof rawJson === 'string' ? rawJson : JSON.stringify(rows) }
+  } else {
+    return null
+  }
   if (config.market) prefill.market = config.market
   if (Number(config.initial_capital) > 0) prefill.initial_cash = Number(config.initial_capital)
   if (Number(config.max_positions) > 0) prefill.top_n = Number(config.max_positions)

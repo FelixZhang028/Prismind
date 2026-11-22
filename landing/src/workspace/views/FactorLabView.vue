@@ -25,7 +25,7 @@ import { factorsBySource, filterFactors } from '../factorFilters.js'
 import { directionText, directionTone, factorNote, longShortSignMismatchNote, significanceSummary } from '../factorPresentation.js'
 import { neutralizationCoverageSummary } from '../neutralizationPresentation.js'
 import { NEUTRALIZATION_OPTIONS } from '../dataPresentation.js'
-import { FACTOR_STANDARDIZATIONS, openFactorBacktest } from '../factorBacktestDraft.js'
+import { FACTOR_STANDARDIZATIONS, openFactorBacktest, openFactorPaper } from '../factorBacktestDraft.js'
 
 const props = defineProps({
   user: { type: Object, default: null },
@@ -1053,7 +1053,10 @@ onBeforeUnmount(() => {
           <p v-if="compResult.dropped_factors && compResult.dropped_factors.length" class="mt-1 text-xs text-amber-300">
             已剔除高相关因子：{{ compResult.dropped_factors.join('、') }}
           </p>
-          <button v-if="compResult.composite_spec?.length" type="button" class="mt-3 text-sm text-indigo-300 hover:text-indigo-200" @click="openFactorBacktest(compResult)">用此组合回测 →</button>
+          <div v-if="compResult.composite_spec?.length" class="mt-3 flex flex-wrap gap-4">
+            <button type="button" class="text-sm text-indigo-300 hover:text-indigo-200" @click="openFactorBacktest(compResult)">用此组合回测 →</button>
+            <button type="button" class="text-sm text-indigo-300 hover:text-indigo-200" @click="openFactorPaper(compResult)">用此组合开模拟账户 →</button>
+          </div>
         </div>
 
         <template v-if="compView">
@@ -1243,7 +1246,10 @@ onBeforeUnmount(() => {
             </template>
             <span v-else>—</span>
           </p>
-          <button v-if="researchResult.composite_spec?.length" type="button" class="mt-3 text-sm text-indigo-300 hover:text-indigo-200" @click="openFactorBacktest(researchResult)">用此组合回测 →</button>
+          <div v-if="researchResult.composite_spec?.length" class="mt-3 flex flex-wrap gap-4">
+            <button type="button" class="text-sm text-indigo-300 hover:text-indigo-200" @click="openFactorBacktest(researchResult)">用此组合回测 →</button>
+            <button type="button" class="text-sm text-indigo-300 hover:text-indigo-200" @click="openFactorPaper(researchResult)">用此组合开模拟账户 →</button>
+          </div>
         </div>
       </template>
     </template>

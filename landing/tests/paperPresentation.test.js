@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { accountsLeft, checkMark, checkTone, paperPrefill, returnText, returnTone, statusLabel, statusNote } from '../src/workspace/paperPresentation.js'
+import {
+  accountsLeft,
+  checkMark,
+  checkTone,
+  factorSummaryText,
+  paperPrefill,
+  parseFactorRows,
+  returnText,
+  returnTone,
+  serializeFactorRows,
+  statusLabel,
+  statusNote,
+} from '../src/workspace/paperPresentation.js'
 
 test('状态显示成中文，不认识的原样显示', () => {
   assert.equal(statusLabel('WAITING'), '等待第一个交易日')
@@ -20,12 +32,65 @@ test('状态说明：等待时说清楚什么时候出结果，失败时写原�
   assert.equal(statusNote(null), '')
 })
 
-test('只有规则策略的回测能带着设置开模拟账户', () => {
-  assert.deepEqual(paperPrefill({ strategy_reference: 'package:abc', market: '000300.SH', initial_capital: 500000, max_positions: 8, rebalance: 'monthly' }),
-    { package_id: 'abc', market: '000300.SH', initial_cash: 500000, top_n: 8, rebalance: 'monthly' })
-  assert.deepEqual(paperPrefill({ strategy_reference: 'package:abc', rebalance: 'yearly' }), { package_id: 'abc' })
+test('规则策略与多因子合成策略的回测都能带着设置开模拟账户', () => {
+  assert.deepEqual(
+    paperPrefill({ strategy_reference: 'package:abc', market: '000300.SH', initial_capital: 500000, max_positions: 8, rebalance: 'monthly' }),
+    { strategy_kind: 'rule_builder', package_id: 'abc', market: '000300.SH', initial_cash: 500000, top_n: 8, rebalance: 'monthly' },
+  )
+  assert.deepEqual(
+    paperPrefill({ strategy_reference: 'package:abc', rebalance: 'yearly' }),
+    { strategy_kind: 'rule_builder', package_id: 'abc' },
+  )
+  const factorsJson = JSON.stringify([{ name: 'momentum_20', weight: 0.6, direction: 1 }, { name: 'volatility_20', weight: 0.4, direction: -1 }])
+  assert.deepEqual(
+    paperPrefill({
+      strategy_reference: '因子合成策略',
+      strategy_plugin: 'factor_composite',
+      strategy_parameters: { factors_json: factorsJson },
+      market: '000906.SH',
+      initial_capital: 800000,
+      max_positions: 15,
+      rebalance: 'weekly',
+    }),
+    {
+      strategy_kind: 'factor_composite',
+      factors_json: factorsJson,
+      market: '000906.SH',
+      initial_cash: 800000,
+      top_n: 15,
+      rebalance: 'weekly',
+    },
+  )
+  assert.equal(paperPrefill({ strategy_plugin: 'factor_composite', strategy_parameters: { factors_json: '[]' } }), null)
+  assert.equal(paperPrefill({ strategy_plugin: 'factor_composite', strategy_parameters: { factors_json: '{bad' } }), null)
   assert.equal(paperPrefill({ strategy_reference: 'momentum' }), null)
   assert.equal(paperPrefill(null), null)
+})
+
+test('因子组合解析、标准化序列化与中文摘要', () => {
+  const rows = parseFactorRows(JSON.stringify([
+    { name: 'momentum_20', weight: 0.6, direction: 1, clip: true, missing: 'drop', standardization: 'rank' },
+    { name: 'zero_factor', weight: 0, direction: 1 },
+    { name: 'volatility_20', weight: 0.4, direction: -1 },
+  ]))
+  assert.equal(rows.length, 2)
+  assert.deepEqual(parseFactorRows('not-json'), [])
+
+  const serialized = JSON.parse(serializeFactorRows(rows))
+  assert.equal(serialized.length, 2)
+  assert.equal(serialized[1].standardization, 'rank')
+  assert.equal(serialized[1].clip, true)
+  assert.equal(serialized[1].missing, 'drop')
+  assert.equal(serialized[1].direction, -1)
+  assert.equal(serializeFactorRows([]), '[]')
+
+  assert.equal(
+    factorSummaryText([
+      { name: 'momentum_20', display_name: '20日动量', weight: 0.6, direction: 1 },
+      { name: 'volatility_20', display_name: '20日波动率', weight: 0.4, direction: -1 },
+    ]),
+    '20日动量（正向 × 0.6） + 20日波动率（反向 × 0.4）',
+  )
 })
 
 test('数量上限：管理员不限，其他人不会是负数', () => {
