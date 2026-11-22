@@ -13,6 +13,7 @@ from app.routes import workspace
 from quant_platform.application.factor_research_service import research_combination
 from quant_platform.factors.base import FactorDefinition
 from quant_platform.factors.evaluation import FactorEvaluator
+from quant_platform.factors.sample import FactorSampleFilters
 from test_research_integrity import api  # noqa: F401 - pytest fixture
 
 
@@ -36,7 +37,7 @@ class _SyntheticFactorRepo:
         symbols: list[str] | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
-        extras: tuple[str, ...] | None = None,
+        extras: tuple[str, ...] | list[str] | None = None,
     ) -> pd.DataFrame:
         frame = self._bars
         mask = pd.Series(True, index=frame.index)
@@ -46,7 +47,11 @@ class _SyntheticFactorRepo:
             mask &= frame["trade_date"] >= pd.Timestamp(start_date)
         if end_date is not None:
             mask &= frame["trade_date"] <= pd.Timestamp(end_date)
-        return frame.loc[mask].copy()
+        result = frame.loc[mask].copy()
+        # 模拟真实仓库：只返回核心列 + 本次 extras 请求的扩展列，用来严格回归验证缺失列不会被覆盖丢掉
+        base_cols = [c for c in result.columns if c not in {"turnover_rate", "pe_ttm", "pb_mrq"}]
+        requested = [c for c in (extras or ()) if c in result.columns]
+        return result[base_cols + requested]
 
     def get_fundamentals(self) -> pd.DataFrame:
         return self._fundamentals.copy()
@@ -281,4 +286,106 @@ def test_factor_research_and_composite_api_propagate_directions(api, monkeypatch
     res_spec = {item["name"]: item for item in resp_res.json()["composite_spec"]}
     assert res_spec["momentum_20"]["direction"] == -1
     assert res_spec["volatility_20"]["direction"] == -1
+
+
+class _ValuationLikeFactor(FactorDefinition):
+    """Factor requiring pe_ttm/pb_mrq (like roe_ttm) so initial bars lack only turnover_rate."""
+
+    required_fields: tuple[str, ...] = ("pe_ttm", "pb_mrq")
+
+    def compute(self, bars: pd.DataFrame) -> pd.DataFrame:
+        val = pd.to_numeric(bars["pb_mrq"], errors="coerce") / pd.to_numeric(bars["pe_ttm"], errors="coerce")
+        return pd.DataFrame(
+            {
+                "date": pd.to_datetime(bars["trade_date"]).dt.normalize(),
+                "symbol": bars["symbol"],
+                "value": val,
+            }
+        )
+
+
+def test_style_correlations_preserve_valuation_styles_for_fundamental_factors():
+    bars, fundamentals, days = _make_multi_year_panel()
+    repo = _SyntheticFactorRepo(bars, fundamentals)
+    factor = _ValuationLikeFactor(
+        name="roe_like_test",
+        display_name="ROE 代理",
+        direction=1,
+        required_fields=("pe_ttm", "pb_mrq"),
+    )
+    report = FactorEvaluator(repo).evaluate(
+        factor, days[25], days[-1], horizon=3, n_groups=5, diagnostics=True
+    )
+    styles = {row["style"] for row in report.style_correlations}
+    # 关键回归：加载 turnover_rate 补全时绝不能把原有的 pe_ttm / pb_mrq 覆盖丢掉
+    assert {"ln_market_cap", "volatility_20", "momentum_20", "turnover_20", "ep_ttm", "bp_mrq"}.issubset(styles)
+
+
+def test_factor_evaluation_cost_bps_and_limit_move_filter():
+    bars, fundamentals, days = _make_multi_year_panel()
+    bars["up_limit"] = bars["raw_close"] * 1.10
+    bars["down_limit"] = bars["raw_close"] * 0.90
+    # 制造部分涨停日：前两只股票在部分交易日封死涨停
+    limit_dates = {pd.Timestamp(d) for d in days[30:40]}
+    hit_mask = bars["symbol"].isin(["000001.SZ", "000002.SZ"]) & bars["trade_date"].isin(limit_dates)
+    bars.loc[hit_mask, "up_limit"] = bars.loc[hit_mask, "raw_close"]
+    repo = _SyntheticFactorRepo(bars, fundamentals)
+
+    factor = _SmallCapProxyFactor(name="small_cap_proxy", display_name="小盘测试因子", direction=1)
+    report = FactorEvaluator(repo).evaluate(
+        factor,
+        days[25],
+        days[-1],
+        horizon=3,
+        n_groups=5,
+        diagnostics=True,
+        filters=FactorSampleFilters(exclude_limit_moves=True),
+        cost_bps=15.0,
+    )
+    assert any("排除涨跌停" in note for note in report.notes)
+    assert report.cost_summary is not None
+    assert report.cost_summary["cost_bps"] == 15.0
+    assert report.cost_summary["net_top_return"] < report.cost_summary["gross_top_return"]
+    assert report.cost_summary["net_long_short_total"] < report.cost_summary["gross_long_short_total"]
+    assert "net_G5" in report.group_nav.columns
+    assert "net_long_short" in report.group_nav.columns
+
+    payload = factor_report_to_dict(report)
+    assert payload["cost_summary"]["cost_bps"] == 15.0
+    assert payload["cost_summary"]["net_long_short_total"] < payload["cost_summary"]["gross_long_short_total"]
+
+
+def test_closed_loop_status_caches_by_parquet_mtime(api, monkeypatch, tmp_path):
+    client, _, _ = api
+    market_dir = tmp_path / "market"
+    market_dir.mkdir()
+    pq = market_dir / "sample.parquet"
+    pd.DataFrame({"a": [1]}).to_parquet(pq)
+    calls = {"count": 0}
+
+    class _FakeService:
+        def __init__(self) -> None:
+            self.repository = type("Repo", (), {"root": market_dir})()
+            self.app = {}
+
+        def closed_loop_status(self):
+            calls["count"] += 1
+            return {"bars_symbols": 100, "call": calls["count"]}
+
+    workspace._closed_loop_cache = None
+    monkeypatch.setattr(workspace, "build_data_center_service", lambda user: _FakeService())
+
+    first = client.get("/api/v1/data-center/closed-loop")
+    second = client.get("/api/v1/data-center/closed-loop")
+    assert first.status_code == 200 and second.status_code == 200
+    assert calls["count"] == 1
+    assert second.json()["call"] == 1
+
+    # 更新 parquet 文件后缓存必须自动失效
+    pd.DataFrame({"a": [1, 2, 3]}).to_parquet(pq)
+    third = client.get("/api/v1/data-center/closed-loop")
+    assert third.status_code == 200
+    assert calls["count"] == 2
+    assert third.json()["call"] == 2
+
 

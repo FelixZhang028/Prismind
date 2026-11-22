@@ -26,15 +26,40 @@ const irSeries = computed(() => [
   { label: 'Rank IC IR', color: '#a78bfa', points: props.report.daily_ic.map((row) => row.rank_ic_ir) },
 ])
 const navDates = computed(() => datesOf(props.report.group_nav))
-const navSeries = computed(() => Array.from({ length: props.report.n_groups }, (_, i) => {
-  const label = `G${i + 1}`
-  return { label, color: groupColors[i], points: props.report.group_nav.map((row) => row[label]) }
-}))
-const spreadSeries = computed(() => [{
-  label: `G${props.report.n_groups} − G1`,
-  color: '#a78bfa',
-  points: props.report.group_nav.map((row) => pct(row.long_short)),
-}])
+const navSeries = computed(() => {
+  const base = Array.from({ length: props.report.n_groups }, (_, i) => {
+    const label = `G${i + 1}`
+    return { label, color: groupColors[i], points: props.report.group_nav.map((row) => row[label]) }
+  })
+  const netTopKey = `net_G${props.report.n_groups}`
+  if (props.report.cost_summary && props.report.group_nav.some((row) => row[netTopKey] != null)) {
+    base.push({
+      label: `G${props.report.n_groups}（扣成本）`,
+      color: '#f59e0b',
+      dashed: true,
+      points: props.report.group_nav.map((row) => row[netTopKey]),
+    })
+  }
+  return base
+})
+const spreadSeries = computed(() => {
+  const lines = [{
+    label: `G${props.report.n_groups} − G1（毛）`,
+    color: '#a78bfa',
+    points: props.report.group_nav.map((row) => pct(row.long_short)),
+  }]
+  if (props.report.cost_summary && props.report.group_nav.some((row) => row.net_long_short != null)) {
+    lines.push({
+      label: `G${props.report.n_groups} − G1（扣成本）`,
+      color: '#f59e0b',
+      dashed: true,
+      points: props.report.group_nav.map((row) => pct(row.net_long_short)),
+    })
+  }
+  return lines
+})
+const costSummary = computed(() => props.report.cost_summary || null)
+const fmtSignedPct = (value) => (value == null ? '—' : `${value > 0 ? '+' : ''}${(value * 100).toFixed(2)}%`)
 const turnoverDates = computed(() => datesOf(props.report.rebalance_turnover))
 const turnoverAverage = computed(() => {
   const valid = props.report.rebalance_turnover.map(({ turnover }) => turnover).filter(Number.isFinite)
@@ -152,14 +177,32 @@ const styleSummary = computed(() => styleCorrelationSummary(props.report.style_c
     </DataTable>
   </SectionCard>
 
-  <SectionCard title="分组净值" :hint="`每 ${report.horizon} 个交易日分组一次。G1 因子排名最低，G${report.n_groups} 最高。组内等权，从 1 开始累计，不计交易成本。`">
+  <SectionCard title="分组净值" :hint="`每 ${report.horizon} 个交易日分组一次。G1 因子排名最低，G${report.n_groups} 最高。组内等权，从 1 开始累计${costSummary ? `；虚线为按单边 ${costSummary.cost_bps} bps 扣减换仓成本后的最高组净值` : '，不计交易成本'}。`">
     <p class="mb-3 text-xs text-slate-400">
       以信号次日收盘价建仓。组内用有完整价格的股票计算。有效 {{ report.nav_periods }} 期，{{ report.nav_skipped }} 期因分组数据不足跳过。
     </p>
     <LineChart :series="navSeries" :dates="navDates" :height="230" :baseline="1" />
   </SectionCard>
 
-  <SectionCard title="头尾组累计收益差" :hint="`每期以 G${report.n_groups} 收益减去 G1 收益，按固定名义本金累计。`">
+  <SectionCard title="头尾组累计收益差" :hint="`每期以 G${report.n_groups} 收益减去 G1 收益，按固定名义本金累计${costSummary ? `；同时对比单边 ${costSummary.cost_bps} bps 扣成本前后` : ''}。`">
+    <div v-if="costSummary" class="mb-3 flex flex-wrap gap-2 text-xs">
+      <div class="rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+        <span class="text-slate-400">单边估算成本：</span>
+        <span class="font-medium text-white">{{ costSummary.cost_bps }} bps（{{ (costSummary.cost_bps / 100).toFixed(2) }}%）</span>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+        <span class="text-slate-400">最高组累计（毛 → 净）：</span>
+        <span class="font-medium text-white">{{ fmtSignedPct(costSummary.gross_top_return) }} → {{ fmtSignedPct(costSummary.net_top_return) }}</span>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+        <span class="text-slate-400">头尾组累计差（毛 → 净）：</span>
+        <span class="font-medium text-white">{{ fmtSignedPct(costSummary.gross_long_short_total) }} → {{ fmtSignedPct(costSummary.net_long_short_total) }}</span>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+        <span class="text-slate-400">每期净多空均值：</span>
+        <span class="font-medium text-white">{{ fmtSignedPct(costSummary.net_long_short_mean) }}</span>
+      </div>
+    </div>
     <LineChart :series="spreadSeries" :dates="navDates" :height="190" unit="percent" :baseline="0" />
   </SectionCard>
 

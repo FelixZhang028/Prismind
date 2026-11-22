@@ -28,6 +28,7 @@ export function guideRows(loop, daily) {
   const everyDay = daily?.enabled === false ? '管理员定期更新' : `每个交易日 ${time} 以后`
   const indicators = loop?.indicators
   const fundamentals = loop?.fundamentals
+  const totalShares = loop?.total_shares
   const industry = loop?.industry
   const indexes = loop?.index_constituents || []
   const indexReady = indexes.filter((item) => item.start_date)
@@ -52,6 +53,21 @@ export function guideRows(loop, daily) {
       range: fundamentals?.symbols ? `${number(fundamentals.symbols)} 只股票` : '—',
       schedule: '财报季每周六更新（1～4、7～8、10 月）',
       now: fundamentals?.symbols ? `最新报告期 ${fundamentals.latest_stat_date}` : NOT_READY,
+    },
+    {
+      key: 'total_shares', name: '总股本与历史市值',
+      content: '财报总股本配合收盘价计算历史总市值，因子评估做市值中性化和规模风格相关性速查时要用到（按财报公布日生效）',
+      range: totalShares?.symbols
+        ? `${number(totalShares.symbols)} 只股票${span(totalShares.start_date, totalShares.end_date) ? `，报告期 ${span(totalShares.start_date, totalShares.end_date)}` : ''}`
+        : '—',
+      schedule: '随季度财务数据更新',
+      now: totalShares?.symbols
+        ? (
+            totalShares.missing_symbols
+              ? `覆盖 ${((totalShares.coverage ?? 0) * 100).toFixed(1)}%（还有 ${number(totalShares.missing_symbols)} 只股票没有）`
+              : '有行情的股票都有（100%）'
+          )
+        : NOT_READY,
     },
     {
       key: 'actions', name: '分红送转',

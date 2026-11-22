@@ -67,6 +67,7 @@ class FactorReport:
     industry_distribution: dict | None = None
     neutralization_coverage: dict | None = None
     style_correlations: list[dict] = field(default_factory=list)
+    cost_summary: dict | None = None
 
 
 class FactorEvaluator:
@@ -307,6 +308,7 @@ class FactorEvaluator:
         decay_horizons: tuple[int, ...] = (1, 5, 10, 20),
         diagnostics: bool = False,
         filters: FactorSampleFilters = FactorSampleFilters(),
+        cost_bps: float = 0.0,
     ) -> FactorReport:
         """评估因子在 [start_date, end_date] 的横截面选股能力。"""
 
@@ -316,6 +318,9 @@ class FactorEvaluator:
             raise ValueError("n_groups 必须 >= 2")
         if neutralization not in {"none", "industry", "size", "both", "industry_rank"}:
             raise ValueError("未知中性化方式")
+        if not np.isfinite(cost_bps) or not 0.0 <= float(cost_bps) <= 100.0:
+            raise ValueError("单边交易成本（bps）必须在 0 至 100 之间")
+        cost_bps = float(cost_bps)
 
         # 因子值和未来收益均使用截止结束日期的行情。
         progress.report("加载行情")
@@ -368,6 +373,15 @@ class FactorEvaluator:
         close = self._close_prices(factor_bars, filters.exclude_suspended).loc[pd.Timestamp(start_date):pd.Timestamp(end_date)]
         dates = close.index
         entry = close.shift(-1)
+        if filters.exclude_limit_moves:
+            limit_tradable = self._limit_tradable_mask(factor_bars).reindex(
+                index=dates, columns=close.columns, fill_value=False
+            )
+            entry_ok = limit_tradable.shift(-1, fill_value=False)
+            blocked_entries = int((entry.notna() & ~entry_ok).sum().sum())
+            entry = entry.where(entry_ok)
+            if blocked_entries:
+                notes.append(f"建仓日（t+1）触及涨跌停或缺少涨跌停价的 {blocked_entries} 个股票交易日未计入收益")
         returns = self._forward_returns(close, entry, horizon)
         merged = values.merge(returns, on=["date", "symbol"], how="left")
 
@@ -411,9 +425,12 @@ class FactorEvaluator:
         nav_periods = nav_skipped = 0
         industry_distribution = None
         style_correlations: list[dict] = []
+        cost_summary: dict | None = None
         if diagnostics:
             progress.report("生成分组净值和换手曲线")
-            group_nav, nav_periods, nav_skipped = self._group_nav(group_returns, dates, horizon, n_groups)
+            group_nav, nav_periods, nav_skipped, cost_summary = self._group_nav_with_cost(
+                group_returns, dates, horizon, n_groups, values=values, cost_bps=cost_bps
+            )
             industry_distribution = self._industry_distribution(values, dates, horizon, n_groups, changes)
             style_correlations = self._style_correlations(
                 values,
@@ -445,6 +462,7 @@ class FactorEvaluator:
             industry_distribution=industry_distribution,
             neutralization_coverage=neutralization_coverage,
             style_correlations=style_correlations,
+            cost_summary=cost_summary,
             factor_name=factor.name,
             display_name=factor.display_name,
             horizon=horizon,
@@ -486,6 +504,20 @@ class FactorEvaluator:
         return close.where((close > 0) & (close < float("inf")))
 
     @staticmethod
+    def _limit_tradable_mask(bars: pd.DataFrame) -> pd.DataFrame:
+        """Boolean wide mask: True when raw_close is strictly inside (down_limit, up_limit)."""
+
+        frame = bars[["trade_date", "symbol"]].copy()
+        close = pd.to_numeric(bars.get("raw_close", pd.Series(pd.NA, index=bars.index)), errors="coerce")
+        up = pd.to_numeric(bars.get("up_limit", pd.Series(pd.NA, index=bars.index)), errors="coerce")
+        down = pd.to_numeric(bars.get("down_limit", pd.Series(pd.NA, index=bars.index)), errors="coerce")
+        known = close.gt(0) & up.gt(0) & down.gt(0)
+        tradable = known & (close < up - 1e-6) & (close > down + 1e-6)
+        frame["tradable"] = tradable.astype(float)
+        wide = pivot_field(frame, "tradable")
+        return wide.eq(1.0)
+
+    @staticmethod
     def _forward_returns(close: pd.DataFrame, entry: pd.DataFrame, horizon: int) -> pd.DataFrame:
         """t+1 收盘买入、t+horizon+1 收盘卖出；不填补缺失价格。"""
         fwd = close.shift(-(horizon + 1)) / entry - 1.0
@@ -498,6 +530,22 @@ class FactorEvaluator:
         group_returns: pd.DataFrame, dates: pd.DatetimeIndex, horizon: int, n_groups: int
     ) -> tuple[pd.DataFrame, int, int]:
         """按不重叠持有期复利，收益记在平仓日，缺失分组的调仓期留空。"""
+        nav, valid, skipped, _ = FactorEvaluator._group_nav_with_cost(
+            group_returns, dates, horizon, n_groups
+        )
+        return nav, valid, skipped
+
+    @staticmethod
+    def _group_nav_with_cost(
+        group_returns: pd.DataFrame,
+        dates: pd.DatetimeIndex,
+        horizon: int,
+        n_groups: int,
+        *,
+        values: pd.DataFrame | None = None,
+        cost_bps: float = 0.0,
+    ) -> tuple[pd.DataFrame, int, int, dict | None]:
+        """按不重叠持有期复利，收益记在平仓日，缺失分组的调仓期留空；可选按换手扣减单边 cost_bps。"""
         positions = range(0, len(dates) - horizon - 1, horizon)
         groups = list(range(1, n_groups + 1))
         returns = group_returns.pivot(index="date", columns="group", values="ret").reindex(
@@ -506,14 +554,57 @@ class FactorEvaluator:
         covered = returns.dropna()
         skipped = len(returns) - len(covered)
         if covered.empty:
-            return pd.DataFrame(), 0, skipped
+            return pd.DataFrame(), 0, skipped, None
         nav = (1 + covered).cumprod().rename(columns={group: f"G{group}" for group in groups})
         # 固定名义本金的头尾组收益差，逐期相加。
         nav["long_short"] = (covered[n_groups] - covered[1]).cumsum()
+        cost_summary: dict | None = None
+        if cost_bps > 0 and values is not None and not values.empty:
+            rate = float(cost_bps) / 10_000.0
+            member_sets: dict[tuple[pd.Timestamp, int], set[str]] = {}
+            sub = values[values["date"].isin(covered.index) & values["group"].notna()]
+            for (sig_date, grp), grp_df in sub.groupby(["date", "group"], observed=True):
+                member_sets[(pd.Timestamp(sig_date), int(grp))] = set(grp_df["symbol"].astype(str))
+            prev_sets: dict[int, set[str]] = {}
+            net_covered = covered.copy()
+            top_turnovers: list[float] = []
+            for sig_date in covered.index:
+                ts = pd.Timestamp(sig_date)
+                for grp in groups:
+                    curr = member_sets.get((ts, grp), set())
+                    prev = prev_sets.get(grp)
+                    if not prev:
+                        turnover = 1.0
+                        period_cost = rate  # 首次建仓计单边买入成本
+                    else:
+                        overlap = len(prev & curr) / len(curr) if curr else 0.0
+                        turnover = 1.0 - overlap
+                        period_cost = 2.0 * turnover * rate  # 换仓同时产生卖出与买入双边成本
+                    if grp == n_groups:
+                        top_turnovers.append(turnover)
+                    net_covered.loc[sig_date, grp] = float(covered.loc[sig_date, grp]) - period_cost
+                    if curr:
+                        prev_sets[grp] = curr
+            net_top_nav = (1 + net_covered[n_groups]).cumprod()
+            net_ls_series = net_covered[n_groups] - net_covered[1]
+            nav[f"net_G{n_groups}"] = net_top_nav
+            nav["net_long_short"] = net_ls_series.cumsum()
+            cost_summary = {
+                "cost_bps": float(cost_bps),
+                "gross_top_return": float(nav[f"G{n_groups}"].iloc[-1] - 1.0),
+                "net_top_return": float(net_top_nav.iloc[-1] - 1.0),
+                "gross_long_short_total": float(nav["long_short"].iloc[-1]),
+                "net_long_short_total": float(nav["net_long_short"].iloc[-1]),
+                "net_long_short_mean": float(net_ls_series.mean()),
+                "avg_top_turnover": float(np.mean(top_turnovers)) if top_turnovers else 0.0,
+            }
         nav = nav.reindex(returns.index)
         nav.index = dates[[position + horizon + 1 for position in positions]]
-        nav.loc[dates[1]] = [1.0] * n_groups + [0.0]
-        return nav.sort_index().rename_axis("date").reset_index(), len(covered), skipped
+        init_row: list[float] = [1.0] * n_groups + [0.0]
+        if cost_summary is not None:
+            init_row.extend([1.0, 0.0])
+        nav.loc[dates[1]] = init_row
+        return nav.sort_index().rename_axis("date").reset_index(), len(covered), skipped, cost_summary
 
     @staticmethod
     def _industry_distribution(
@@ -563,9 +654,9 @@ class FactorEvaluator:
             return []
 
         bars = factor_bars
-        missing_extras = [col for col in ("turnover_rate", "pe_ttm", "pb_mrq") if col not in bars.columns]
-        if missing_extras:
-            extra_cols = extra_columns(missing_extras)
+        style_extras = ("turnover_rate", "pe_ttm", "pb_mrq")
+        if any(col not in bars.columns for col in style_extras):
+            extra_cols = extra_columns(style_extras)
             if extra_cols:
                 try:
                     enriched = self.repository.get_daily_bars(

@@ -269,7 +269,8 @@ const evalForm = reactive({
   horizon: 5,
   n_groups: 5,
   neutralization: 'none',
-  filters: { exclude_st: false, exclude_suspended: false, exclude_recent_ipos: false },
+  cost_bps: 0,
+  filters: { exclude_st: false, exclude_suspended: false, exclude_recent_ipos: false, exclude_limit_moves: false },
   start_date: defaultStart,
   end_date: defaultEnd,
 })
@@ -277,6 +278,13 @@ const evalFilters = [
   { key: 'exclude_st', label: '排除 ST' },
   { key: 'exclude_suspended', label: '排除停牌' },
   { key: 'exclude_recent_ipos', label: '上市满一年' },
+  { key: 'exclude_limit_moves', label: '排除涨跌停' },
+]
+const COST_BPS_OPTIONS = [
+  { value: 0, label: '不计成本', hint: '纯毛收益对比，不扣除换仓费用' },
+  { value: 10, label: '单边 0.10%（10 bps）', hint: '低冲击估算（约含佣金 + 半程印花税 + 轻度滑点）' },
+  { value: 15, label: '单边 0.15%（15 bps，常用）', hint: 'A 股常规个人账户估算（含佣金、印花税与中等滑点）' },
+  { value: 30, label: '单边 0.30%（30 bps，保守）', hint: '高冲击保守估算，适合检验高换手/中小盘因子' },
 ]
 const evalLoading = ref(false)
 const evalResult = ref(null)
@@ -296,6 +304,7 @@ async function runEvaluate() {
       horizon: Number(evalForm.horizon),
       n_groups: Number(evalForm.n_groups),
       neutralization: evalForm.neutralization,
+      cost_bps: Number(evalForm.cost_bps),
       filters: { ...evalForm.filters },
       start_date: evalForm.start_date,
       end_date: evalForm.end_date,
@@ -819,7 +828,7 @@ onBeforeUnmount(() => {
               {{ option.label }}
             </label>
           </div>
-          <p class="mt-2 text-xs text-slate-500">按信号日判断。缺少所选字段的股票会从当天的样本中剔除。</p>
+          <p class="mt-2 text-xs text-slate-500">按信号日判断；勾选「排除涨跌停」时同时剔除建仓日（t+1）涨跌停的不可成交样本。缺少所选字段的股票会从当天样本中剔除。</p>
         </fieldset>
         <div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2" role="group" aria-label="因子处理">
           <span class="text-xs text-slate-400">因子处理</span>
@@ -828,6 +837,14 @@ onBeforeUnmount(() => {
             :class="evalForm.neutralization === option.value ? 'border-indigo-400/40 bg-indigo-500/20 text-indigo-200' : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'"
             @click="evalForm.neutralization = option.value">{{ option.label }}</button>
           <span class="text-xs text-slate-500">{{ NEUTRALIZATION_OPTIONS.find((option) => option.value === evalForm.neutralization)?.hint }}</span>
+        </div>
+        <div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2" role="group" aria-label="交易成本估算">
+          <span class="text-xs text-slate-400">交易成本估算</span>
+          <button v-for="option in COST_BPS_OPTIONS" :key="option.value" type="button" :aria-pressed="evalForm.cost_bps === option.value"
+            class="rounded-full border px-3 py-1 text-xs transition"
+            :class="evalForm.cost_bps === option.value ? 'border-indigo-400/40 bg-indigo-500/20 text-indigo-200' : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'"
+            @click="evalForm.cost_bps = option.value">{{ option.label }}</button>
+          <span class="text-xs text-slate-500">{{ COST_BPS_OPTIONS.find((option) => option.value === evalForm.cost_bps)?.hint }}</span>
         </div>
         <div class="mt-5 flex items-center gap-3">
           <button
@@ -857,6 +874,7 @@ onBeforeUnmount(() => {
             {{ evalResult.start_date }} 至 {{ evalResult.end_date }} · {{ evalResult.universe_label }}
             · {{ evalResult.n_groups }} 组 · 持有 {{ evalResult.horizon }} 个交易日
             · {{ NEUTRALIZATION_OPTIONS.find((option) => option.value === evalResult.neutralization)?.label }}
+            <template v-if="evalResult.cost_bps > 0"> · 单边估算成本 {{ evalResult.cost_bps }} bps</template>
             <template v-if="reportFilterLabels.length"> · {{ reportFilterLabels.join('、') }}</template>
           </p>
           <p v-if="evalCoverage && !evalCoverage.insufficient" class="mt-1 text-xs text-slate-400">
