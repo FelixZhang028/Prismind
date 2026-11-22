@@ -99,8 +99,13 @@ def test_diagnostics_align_rolling_ic_nav_and_rebalance_turnover(tmp_path):
     assert payload["daily_ic"][-1]["rank_ic_ir"] is None
     assert [row["horizon"] for row in payload["decay"]] == [1, 5, 10, 20]
     five_day = payload["decay"][1]
-    assert five_day == {"horizon": 5, "rank_ic": payload["rank_ic_mean"],
-                        "rank_ic_ir": round(report.rank_ic_ir, 4), "observations": len(valid)}
+    assert {k: five_day[k] for k in ("horizon", "rank_ic", "rank_ic_ir", "observations")} == {
+        "horizon": 5, "rank_ic": payload["rank_ic_mean"],
+        "rank_ic_ir": round(report.rank_ic_ir, 4), "observations": len(valid),
+    }
+    assert five_day["hac_t"] == payload["significance"]["hac_t"]
+    assert five_day["hac_p"] == payload["significance"]["hac_p"]
+    assert five_day["fdr_q"] >= five_day["hac_p"]
 
     dates = pd.DatetimeIndex([DAYS[21], *DAYS[26:-1:5]])
     assert report.group_nav.date.tolist() == list(dates)
