@@ -282,16 +282,21 @@ onActivated(() => {
     </div>
 
     <!-- 审计对象切换 -->
-    <div class="flex gap-2">
-      <button
-        v-for="m in ['平台回测', '外部材料']"
-        :key="m"
-        class="rounded-lg px-4 py-2 text-sm font-medium transition"
-        :class="mode === m ? 'bg-indigo-500 text-white' : 'border border-white/10 bg-white/5 text-slate-400 hover:text-slate-200'"
-        @click="mode = m"
-      >{{ m }}</button>
+    <div class="flex flex-wrap items-center gap-3">
+      <div class="inline-flex rounded-full border border-white/10 bg-white/5 p-1" role="tablist" aria-label="审计对象">
+        <button
+          v-for="m in ['平台回测', '外部材料']"
+          :key="m"
+          type="button"
+          role="tab"
+          :aria-selected="mode === m"
+          class="rounded-full px-4 py-1.5 text-sm font-medium transition"
+          :class="mode === m ? 'bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+          @click="mode = m"
+        >{{ m }}</button>
+      </div>
       <button v-if="mode === '平台回测'" type="button" :disabled="loading"
-        class="ml-auto rounded-lg px-3 py-2 text-sm text-indigo-300 disabled:opacity-60" @click="loadRuns">
+        class="ml-auto rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 text-xs font-medium text-indigo-300 transition hover:bg-white/10 disabled:opacity-60" @click="loadRuns">
         {{ loading ? '正在刷新…' : '刷新记录' }}
       </button>
     </div>
