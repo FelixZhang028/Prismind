@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onActivated, reactive, ref, watch } from 'vue'
-import { getBacktestBenchmark, getBacktestCatalog, getBacktest, getPreferences, getRunAudit, listFactors, listPackages, submitBacktest } from '../../api.js'
+import { getBacktestBenchmark, getBacktestCatalog, getBacktest, getPreferences, getRunAudit, listPackages, submitBacktest } from '../../api.js'
 import { REBALANCE_OPTIONS, backtestDefaults } from '../preferences.js'
 import { openResearch } from '../researchNavigation.js'
 import { setFocus } from '../chatFocus.js'
@@ -8,6 +8,7 @@ import { backtestId, countText, poolLabel, runTime, strategyName, validityLabel 
 import BacktestAiReview from '../ui/BacktestAiReview.vue'
 import BacktestHealthCard from '../ui/BacktestHealthCard.vue'
 import BacktestTasks from '../ui/BacktestTasks.vue'
+import FactorCompositeEditor from '../ui/FactorCompositeEditor.vue'
 import UsefulPrompt from '../ui/UsefulPrompt.vue'
 import RiskSettings from '../ui/RiskSettings.vue'
 import MetricCard from '../ui/MetricCard.vue'
@@ -20,9 +21,9 @@ import StatusPill from '../ui/StatusPill.vue'
 import { pendingAuditRun } from '../auditLink.js'
 import { benchmarkCards, benchmarkChoices, benchmarkCoverageNote, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
 import { CURRENT_POOL, marketChoices, marketLabel, marketNote, suggestedHistoricalMarket, usableMarket } from '../marketPresentation.js'
-import { paperPrefill, returnTone } from '../paperPresentation.js'
+import { paperPrefill, parseFactorRows, returnTone } from '../paperPresentation.js'
 import { strategyProtectionSummary, tradeReasonClass } from '../ruleForm.js'
-import { FACTOR_STANDARDIZATIONS, takeFactorBacktestDraft } from '../factorBacktestDraft.js'
+import { takeFactorBacktestDraft } from '../factorBacktestDraft.js'
 
 const props = defineProps({
   routeContext: { type: Object, default: () => ({}) },
@@ -40,85 +41,7 @@ const catalogLoading = ref(false)
 const catalogErrors = ref([])
 const strategyParameters = reactive({})
 const selectedStrategy = computed(() => strategyOptions.value.find((s) => s.value === form.strategy))
-const factorComposition = computed(() => {
-  if (form.strategy !== 'factor_composite') return []
-  try {
-    const rows = JSON.parse(strategyParameters.factors_json || '[]')
-    return Array.isArray(rows) ? rows.filter((row) => row?.name && Number(row.weight ?? 1) !== 0) : []
-  } catch {
-    return []
-  }
-})
-const factorStandardizationValue = computed(() => factorComposition.value[0]?.standardization || 'zscore')
-const factorStandardization = computed(() => FACTOR_STANDARDIZATIONS.find(
-  (option) => option.value === factorStandardizationValue.value,
-)?.label || 'Z-score')
-const availableFactors = ref([])
-const factorToAdd = ref('')
-async function ensureFactorCatalog() {
-  if (availableFactors.value.length) return
-  try {
-    const res = await listFactors()
-    availableFactors.value = res.factors || []
-  } catch {
-    availableFactors.value = []
-  }
-}
-const addableFactorOptions = computed(() => {
-  const chosen = new Set(factorComposition.value.map((row) => row.name))
-  return availableFactors.value
-    .filter((f) => !chosen.has(f.name))
-    .map((f) => ({ value: f.name, label: `${f.display_name || f.name}（${f.name} · ${f.direction === -1 ? '默认反向' : '默认正向'}）` }))
-})
-function writeFactorRows(rows) {
-  const std = rows[0]?.standardization || 'zscore'
-  const clip = Boolean(rows[0]?.clip ?? false)
-  const missing = rows[0]?.missing || 'zero'
-  const normalized = rows.map((row) => ({
-    ...row,
-    weight: Number(row.weight ?? 1),
-    direction: Number(row.direction) === -1 ? -1 : 1,
-    clip,
-    missing,
-    standardization: std,
-  }))
-  strategyParameters.factors_json = JSON.stringify(normalized)
-}
-function setFactorDirection(index, dir) {
-  const rows = factorComposition.value.map((row, idx) => (idx === index ? { ...row, direction: Number(dir) === -1 ? -1 : 1 } : { ...row }))
-  writeFactorRows(rows)
-}
-function setFactorWeight(index, value) {
-  const numVal = Number(value)
-  if (!Number.isFinite(numVal) || numVal <= 0) return
-  const rows = factorComposition.value.map((row, idx) => (idx === index ? { ...row, weight: numVal } : { ...row }))
-  writeFactorRows(rows)
-}
-function removeFactorRow(index) {
-  const rows = factorComposition.value.filter((_, idx) => idx !== index).map((row) => ({ ...row }))
-  strategyParameters.factors_json = JSON.stringify(rows)
-}
-function setFactorStandardization(value) {
-  const rows = factorComposition.value.map((row) => ({ ...row, standardization: value }))
-  if (rows.length) writeFactorRows(rows)
-}
-function addFactorRow() {
-  const name = factorToAdd.value
-  if (!name) return
-  const meta = availableFactors.value.find((f) => f.name === name)
-  const base = factorComposition.value.map((row) => ({ ...row }))
-  base.push({
-    name,
-    display_name: meta?.display_name || name,
-    weight: 1,
-    direction: meta?.direction === -1 ? -1 : 1,
-    clip: Boolean(base[0]?.clip ?? true),
-    missing: base[0]?.missing || 'drop',
-    standardization: base[0]?.standardization || 'zscore',
-  })
-  writeFactorRows(base)
-  factorToAdd.value = ''
-}
+const factorComposition = computed(() => (form.strategy === 'factor_composite' ? parseFactorRows(strategyParameters.factors_json) : []))
 const poolPreset = ref(null)
 const suggestedHistorical = computed(() => (
   form.market === CURRENT_POOL ? suggestedHistoricalMarket(poolPreset.value, markets.value) : null
@@ -132,7 +55,6 @@ function chooseStrategy() {
   Object.assign(strategyParameters, strategy?.defaults || {})
   if (strategy?.top_n) form.max_positions = strategy.top_n
   if (strategy?.rebalance) form.rebalance = strategy.rebalance
-  if (form.strategy === 'factor_composite') ensureFactorCatalog()
 }
 const rebalances = REBALANCE_OPTIONS
 
@@ -385,7 +307,6 @@ async function loadCatalog() {
           form.to_date = draft.to_date
           strategyParameters.factors_json = JSON.stringify(draft.factors)
         }
-        ensureFactorCatalog()
       }
     } else if (!strategyOptions.value.some((s) => s.value === form.strategy)) {
       form.strategy = catalog.default
@@ -465,67 +386,7 @@ onActivated(async () => {
       </p>
       <p v-if="coverageNote.text" class="mt-2 text-xs" :class="coverageNote.outside ? 'text-amber-300' : 'text-slate-400'">{{ coverageNote.text }}</p>
       <p v-for="(error, i) in catalogErrors" :key="i" role="alert" class="mt-3 text-sm text-amber-300">{{ error }}</p>
-      <div v-if="form.strategy === 'factor_composite'" class="mt-5 space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p class="text-sm font-semibold text-white">因子组合配置 · {{ factorStandardization }}</p>
-            <p class="mt-0.5 text-xs text-slate-400">可为每个因子直接设置方向（正向越大越好 / 反向越小越好）与正数权重；也可从<a class="mx-1 cursor-pointer text-indigo-300 hover:text-indigo-200" href="?view=factor-lab" @click.prevent="openResearch('factor-lab')">因子研究</a>带入。</p>
-          </div>
-          <select
-            v-if="factorComposition.length"
-            :value="factorStandardizationValue"
-            aria-label="截面标准化"
-            class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-400/40"
-            @change="setFactorStandardization($event.target.value)"
-          >
-            <option v-for="o in FACTOR_STANDARDIZATIONS" :key="o.value" :value="o.value" class="bg-ink">{{ o.label }}</option>
-          </select>
-        </div>
-        <div v-if="factorComposition.length" class="space-y-2">
-          <div v-for="(factor, index) in factorComposition" :key="`${factor.name}-${index}`" class="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-300">
-            <span class="min-w-0 flex-1 truncate font-medium text-white">
-              {{ factor.display_name || factor.name }}
-              <span class="ml-1 text-xs font-normal text-slate-500">{{ factor.name }}</span>
-              <code v-if="factor.custom_factor?.expression" class="ml-1 text-xs font-normal text-slate-400">{{ factor.custom_factor.expression }}</code>
-            </span>
-            <select
-              :value="factor.direction === -1 ? -1 : 1"
-              :aria-label="`${factor.name} 方向`"
-              class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-white outline-none focus:border-indigo-400/40"
-              @change="setFactorDirection(index, $event.target.value)"
-            >
-              <option :value="1" class="bg-ink">正向（越大越好）</option>
-              <option :value="-1" class="bg-ink">反向（越小越好）</option>
-            </select>
-            <label class="inline-flex items-center gap-1 text-xs text-slate-400">
-              权重
-              <input
-                type="number"
-                min="0.01"
-                step="0.05"
-                :value="factor.weight ?? 1"
-                :aria-label="`${factor.name} 权重`"
-                class="w-20 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-right text-xs text-white outline-none focus:border-indigo-400/40"
-                @change="setFactorWeight(index, $event.target.value)"
-              />
-            </label>
-            <button type="button" class="rounded-lg px-2 py-1 text-xs text-slate-400 hover:bg-white/10 hover:text-rose-300" @click="removeFactorRow(index)">移除</button>
-          </div>
-        </div>
-        <div v-if="addableFactorOptions.length" class="flex flex-wrap items-center gap-2">
-          <select v-model="factorToAdd" aria-label="添加因子" class="min-w-[220px] flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white outline-none focus:border-indigo-400/40">
-            <option value="" class="bg-ink">选择一个因子添加到组合…</option>
-            <option v-for="o in addableFactorOptions" :key="o.value" :value="o.value" class="bg-ink">{{ o.label }}</option>
-          </select>
-          <button type="button" :disabled="!factorToAdd" class="rounded-full border border-indigo-400/40 bg-indigo-500/15 px-3.5 py-1.5 text-xs font-medium text-indigo-200 transition hover:bg-indigo-500/25 disabled:opacity-40" @click="addFactorRow">+ 添加因子</button>
-        </div>
-        <details class="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-400">
-          <summary class="cursor-pointer">高级：查看 / 编辑原始 JSON（支持 direction: 1 或 -1）</summary>
-          <div class="mt-2">
-            <FormField label="因子组合定义" type="textarea" :rows="3" v-model="strategyParameters.factors_json" hint='JSON 列表，如 [{"name": "momentum_20", "weight": 1.0, "direction": -1}]' />
-          </div>
-        </details>
-      </div>
+      <FactorCompositeEditor v-if="form.strategy === 'factor_composite'" v-model="strategyParameters.factors_json" class="mt-5" />
       <div v-if="selectedStrategy?.parameters?.length && form.strategy !== 'factor_composite'" class="mt-5 grid gap-4 border-t border-white/10 pt-5 md:grid-cols-2 xl:grid-cols-4">
         <FormField v-for="p in selectedStrategy.parameters" :key="p.name" v-model="strategyParameters[p.name]" :label="p.label" :type="p.choices?.length ? 'select' : p.kind === 'boolean' ? 'checkbox' : ['integer', 'number'].includes(p.kind) ? 'number' : 'text'" :options="(p.choices || []).map((v) => ({ value: v, label: v }))" :min="p.minimum" :max="p.maximum" :step="p.kind === 'integer' ? 1 : 'any'" :hint="p.description" />
       </div>
@@ -622,7 +483,14 @@ onActivated(async () => {
           <div class="flex flex-wrap gap-3 text-sm text-indigo-300">
             <button @click="openResearch('research', { baseline: `run-${selectedId}` })">参数验证 →</button>
             <button @click="openResearch('market-chart', { run: selectedId })">在K线上查看成交 →</button>
-            <button v-if="paperPrefill(result.effective_config)" @click="openResearch('paper-accounts', { mode: 'new', strategy: result.effective_config.strategy_reference, run: selectedId })">用这套设置开模拟账户 →</button>
+            <button
+              v-if="paperPrefill(result.effective_config)"
+              @click="openResearch('paper-accounts', {
+                mode: 'new',
+                strategy: result.effective_config.strategy_plugin === 'factor_composite' ? 'factor_composite' : result.effective_config.strategy_reference,
+                run: selectedId,
+              })"
+            >用这套设置开模拟账户 →</button>
           </div>
           <BacktestHealthCard v-if="current.health_check" :health="current.health_check" />
           <!-- 第一次看到回测结果时问一句“有用吗” -->

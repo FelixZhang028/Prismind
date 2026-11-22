@@ -5,10 +5,12 @@ import { REBALANCE_OPTIONS } from '../preferences.js'
 import { openResearch } from '../researchNavigation.js'
 import { benchmarkCards, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
 import { CURRENT_POOL, marketChoices, marketLabel, usableMarket } from '../marketPresentation.js'
-import { accountsLeft, checkMark, checkTone, paperPrefill, returnText, returnTone, statusLabel, statusNote, statusTone } from '../paperPresentation.js'
+import { accountsLeft, checkMark, checkTone, paperPrefill, parseFactorRows, returnText, returnTone, statusLabel, statusNote, statusTone } from '../paperPresentation.js'
+import { takeFactorPaperDraft } from '../factorBacktestDraft.js'
 import { tradeReasonClass } from '../ruleForm.js'
 import SectionCard from '../ui/SectionCard.vue'
 import FormField from '../ui/FormField.vue'
+import FactorCompositeEditor from '../ui/FactorCompositeEditor.vue'
 import MetricCard from '../ui/MetricCard.vue'
 import LineChart from '../ui/LineChart.vue'
 import DataTable from '../ui/DataTable.vue'
@@ -45,6 +47,10 @@ async function loadList() {
 }
 
 // ---------- 新建 ----------
+const STRATEGY_KINDS = [
+  { value: 'rule_builder', label: '规则策略' },
+  { value: 'factor_composite', label: '多因子合成' },
+]
 const packages = ref([])
 const markets = ref([])
 const marketOptions = computed(() => marketChoices(markets.value).map(option => {
@@ -53,9 +59,23 @@ const marketOptions = computed(() => marketChoices(markets.value).map(option => 
     ? { ...option, label: `${option.label}（成分股待更新）`, disabled: true }
     : option
 }))
-const form = reactive({ package_id: '', name: '', market: CURRENT_POOL, initial_cash: 1000000, top_n: 10, rebalance: 'weekly' })
+const form = reactive({
+  strategy_kind: 'rule_builder',
+  package_id: '',
+  factors_json: '[]',
+  name: '',
+  market: CURRENT_POOL,
+  initial_cash: 1000000,
+  top_n: 10,
+  rebalance: 'weekly',
+})
 const selectedMarket = computed(() => markets.value.find(item => item.value === form.market))
 const selectedPackage = computed(() => packages.value.find(item => item.package_id === form.package_id))
+const factorRows = computed(() => parseFactorRows(form.factors_json))
+const canCreate = computed(() => {
+  if (creating.value || prefillLoading.value || !marketAvailable(form.market) || left.value <= 0) return false
+  return form.strategy_kind === 'factor_composite' ? factorRows.value.length > 0 : Boolean(selectedPackage.value)
+})
 const latestBacktest = ref(null)
 const referenceBacktest = ref(null)
 const referenceLoading = ref(false)
@@ -84,8 +104,29 @@ const packageOptions = computed(() => [
   ...packages.value.map((item) => ({ value: item.package_id, label: item.name })),
 ])
 
+function chooseStrategyKind(kind) {
+  if (form.strategy_kind === kind) return selection
+  const version = ++selection
+  form.strategy_kind = kind
+  latestBacktest.value = null
+  referenceBacktest.value = null
+  referenceError.value = ''
+  prefillLoading.value = false
+  if (kind === 'factor_composite') {
+    referenceLoading.value = true
+    loadBacktestReference('factor_composite', version)
+  } else if (selectedPackage.value) {
+    referenceLoading.value = true
+    loadBacktestReference(form.package_id, version)
+  } else {
+    referenceLoading.value = false
+  }
+  return version
+}
+
 function choosePackage(id) {
   const version = ++selection
+  form.strategy_kind = 'rule_builder'
   form.package_id = id
   const item = selectedPackage.value
   if (item) Object.assign(form, { top_n: item.top_n, rebalance: item.rebalance })
@@ -113,17 +154,24 @@ async function loadBacktestReference(id, version) {
 
 function applyBacktestSettings(backtest) {
   const settings = paperPrefill(backtest?.config)
-  if (settings?.package_id !== form.package_id) return
-  const { package_id, market, ...parameters } = settings
+  if (!settings || settings.strategy_kind !== form.strategy_kind) return
+  if (settings.strategy_kind === 'rule_builder' && settings.package_id !== form.package_id) return
+  const { strategy_kind, package_id, market, top_n, ...parameters } = settings
   referenceBacktest.value = backtest
   Object.assign(form, parameters)
+  if (top_n != null) form.top_n = Math.min(50, Math.max(1, Number(top_n)))
   if (market && marketAvailable(market)) form.market = market
 }
 
 function backtestSummary(backtest) {
   const settings = paperPrefill(backtest?.config)
-  return settingFields.filter(({ key }) => settings?.[key] != null)
-    .map(({ label, key, format }) => `${label} ${format(settings[key])}`).join(' · ')
+  const items = settingFields.filter(({ key }) => settings?.[key] != null)
+    .map(({ label, key, format }) => `${label} ${format(settings[key])}`)
+  if (settings?.strategy_kind === 'factor_composite') {
+    const count = parseFactorRows(settings.factors_json).length
+    if (count) items.unshift(`${count} 个因子`)
+  }
+  return items.join(' · ')
 }
 
 function backtestTime(backtest) {
@@ -142,10 +190,53 @@ async function loadOptions() {
   }
 }
 
-// 从回测结果页过来：带上那次回测的策略和设置。
+// 从回测结果页或因子研究页过来：带上策略/因子组合和设置。
 async function applyPrefill() {
   if (props.routeContext.mode !== 'new') { appliedRoute = ''; return }
   const reference = String(props.routeContext.strategy || '')
+  if (reference === 'factor_composite') {
+    const draft = takeFactorPaperDraft()
+    if (draft?.factors?.length) {
+      const version = ++selection
+      form.strategy_kind = 'factor_composite'
+      form.factors_json = JSON.stringify(draft.factors)
+      if (draft.market && marketAvailable(draft.market)) form.market = draft.market
+      latestBacktest.value = null
+      referenceBacktest.value = null
+      referenceError.value = ''
+      prefillLoading.value = false
+      referenceLoading.value = true
+      loadBacktestReference('factor_composite', version)
+      appliedRoute = 'factor_composite/draft'
+      showCreate()
+      return
+    }
+    const run = String(props.routeContext.run || '').replace(/^run-/, '')
+    const route = `factor_composite/${run}`
+    if (appliedRoute === route) return
+    appliedRoute = route
+    const version = ++selection
+    form.strategy_kind = 'factor_composite'
+    latestBacktest.value = null
+    referenceBacktest.value = null
+    referenceError.value = ''
+    referenceLoading.value = true
+    loadBacktestReference('factor_composite', version)
+    showCreate()
+    if (!run) return
+    prefillLoading.value = true
+    try {
+      const backtest = await getBacktest(run)
+      if (version === selection && props.routeContext.mode === 'new')
+        applyBacktestSettings({ id: backtest.id, created_at: backtest.created_at, config: backtest.result?.effective_config })
+    } catch {
+      if (version === selection) props.notify('这次回测设置加载失败，请手动配置因子组合。')
+    } finally {
+      if (version === selection) prefillLoading.value = false
+    }
+    return
+  }
+
   const packageId = reference.startsWith('package:') ? reference.slice('package:'.length) : ''
   if (!packages.value.some(item => item.package_id === packageId)) return
   const run = String(props.routeContext.run || '').replace(/^run-/, '')
@@ -168,17 +259,29 @@ async function applyPrefill() {
 }
 
 async function onCreate() {
-  if (!selectedPackage.value || prefillLoading.value || !marketAvailable(form.market)) return
+  if (!canCreate.value) return
   creating.value = true
   try {
-    const account = await createPaperAccount({
-      package_id: form.package_id,
-      name: form.name.trim(),
-      market: form.market,
-      initial_cash: Number(form.initial_cash),
-      top_n: Number(form.top_n),
-      rebalance: form.rebalance,
-    })
+    const payload = form.strategy_kind === 'factor_composite'
+      ? {
+          strategy_kind: 'factor_composite',
+          factors_json: form.factors_json,
+          name: form.name.trim(),
+          market: form.market,
+          initial_cash: Number(form.initial_cash),
+          top_n: Number(form.top_n),
+          rebalance: form.rebalance,
+        }
+      : {
+          strategy_kind: 'rule_builder',
+          package_id: form.package_id,
+          name: form.name.trim(),
+          market: form.market,
+          initial_cash: Number(form.initial_cash),
+          top_n: Number(form.top_n),
+          rebalance: form.rebalance,
+        }
+    const account = await createPaperAccount(payload)
     props.notify('模拟账户已创建')
     form.name = ''
     await loadList()
@@ -274,7 +377,7 @@ async function onDelete() {
 }
 
 watch(() => props.routeContext.account, loadDetail)
-watch(() => [props.routeContext.mode, props.routeContext.strategy, props.routeContext.run], applyPrefill)
+watch(() => [props.routeContext.mode, props.routeContext.strategy, props.routeContext.run, props.routeContext.source], applyPrefill)
 onActivated(async () => {
   await Promise.all([loadList(), loadOptions()])
   await applyPrefill()
@@ -287,12 +390,12 @@ onActivated(async () => {
     <div class="glass glass-sheen rounded-2xl p-6">
       <h1 class="text-xl font-bold text-white">模拟账户</h1>
       <p class="mt-2 text-sm text-slate-400">
-        固定一套规则策略，从今天开始，每个交易日收盘数据更新后自动推进到最新一天。只显示已经成交的记录和收盘持仓，按你设定的规则计算，不是投资建议。
+        固定一套规则策略或多因子合成组合，从今天开始，每个交易日收盘数据更新后自动推进到最新一天。只显示已经成交的记录和收盘持仓，按你设定的规则计算，不是投资建议。
       </p>
     </div>
 
     <!-- 详情 -->
-    <SectionCard v-if="routeContext.account" :title="current?.display_name || '模拟账户'" hint="创建时锁住的规则和设置 · 每个交易日自动推进">
+    <SectionCard v-if="routeContext.account" :title="current?.display_name || '模拟账户'" hint="创建时锁住的策略和设置 · 每个交易日自动推进">
       <template #actions>
         <button class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5" @click="openResearch('paper-accounts')">← 全部模拟账户</button>
       </template>
@@ -301,6 +404,7 @@ onActivated(async () => {
       <div v-else class="space-y-5">
         <div class="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
           <span class="inline-flex rounded-full border px-2.5 py-0.5 text-xs" :class="statusTone(current.status)">{{ statusLabel(current.status) }}</span>
+          <span v-if="current.strategy_kind === 'factor_composite'" class="inline-flex rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-0.5 text-xs text-indigo-200">多因子合成</span>
           <span class="whitespace-nowrap"><span class="text-slate-400">策略 </span><span class="text-white">{{ current.strategy_name }}</span></span>
           <span class="whitespace-nowrap"><span class="text-slate-400">股票范围 </span><span class="text-white">{{ current.market_label }}</span></span>
           <span class="whitespace-nowrap"><span class="text-slate-400">开始 </span><span class="text-white">{{ current.start_date }}</span></span>
@@ -308,7 +412,24 @@ onActivated(async () => {
           <span class="whitespace-nowrap"><span class="text-slate-400">持股 </span><span class="text-white">最多 {{ current.top_n }} 只 · {{ rebalanceLabel(current.rebalance) }}调仓</span></span>
         </div>
         <p v-if="note" class="text-sm" :class="current.status === 'FAILED' ? 'text-rose-300' : 'text-slate-300'">{{ note }}</p>
-        <p v-if="current.describe_text" class="text-xs text-slate-400">锁住的规则：{{ current.describe_text }}</p>
+        <div v-if="current.describe_text || current.factors?.length" class="space-y-2">
+          <p v-if="current.describe_text" class="text-xs text-slate-400">
+            {{ current.strategy_kind === 'factor_composite' ? '锁住的因子组合：' : '锁住的规则：' }}{{ current.describe_text }}
+          </p>
+          <div v-if="current.factors?.length" class="flex flex-wrap gap-2">
+            <span
+              v-for="f in current.factors"
+              :key="f.name"
+              :title="f.expression || f.name"
+              class="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300"
+            >
+              <span class="font-medium text-white">{{ f.display_name || f.name }}</span>
+              <span :class="f.direction === -1 ? 'text-amber-300' : 'text-emerald-300'">{{ f.direction === -1 ? '反向' : '正向' }}</span>
+              <span class="text-slate-400">× {{ f.weight }}</span>
+              <span v-if="f.has_custom_factor" class="text-indigo-300">· 自定义</span>
+            </span>
+          </div>
+        </div>
 
         <div>
           <div class="flex flex-wrap gap-3">
@@ -389,9 +510,9 @@ onActivated(async () => {
     <SectionCard title="我的模拟账户" :hint="limit === null ? '数量不限' : `每人最多 ${limit} 个，还能建 ${left} 个`">
       <div v-if="listLoading && !accounts.length" class="text-sm text-slate-400">加载中…</div>
       <div v-else-if="!accounts.length" class="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-400">
-        <p>还没有模拟账户。选一个规则策略，就能从今天开始跟踪。</p>
+        <p>还没有模拟账户。选一个规则策略，或配一组多因子合成组合，就能从今天开始跟踪。</p>
         <button class="mt-4 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5"
-          @click="packages.length ? showCreate() : openResearch('strategy-studio')">{{ packages.length ? '新建模拟账户' : '先新建一个规则策略' }}</button>
+          @click="showCreate()">新建模拟账户</button>
       </div>
       <div v-else class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <button v-for="item in accounts" :key="item.account_id" type="button"
@@ -414,25 +535,50 @@ onActivated(async () => {
     <!-- 新建 -->
     <div ref="createSection">
     <SectionCard title="新建模拟账户" :hint="`开始日期：今天（${today || '—'}），不能选以前的日期`">
-      <div v-if="!packages.length" class="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-400">
-        <p>模拟账户使用规则策略，你还没有规则策略。可以从模板开始，一两分钟就能建好；保存后点「开模拟账户」会回到这里。</p>
-        <button data-guide="paper-create" class="mt-4 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5" @click="openResearch('strategy-studio')">去新建规则策略</button>
+      <div class="mb-5 flex flex-wrap items-center gap-3">
+        <div class="inline-flex rounded-full border border-white/10 bg-white/5 p-1" role="tablist" aria-label="策略类型">
+          <button
+            v-for="item in STRATEGY_KINDS"
+            :key="item.value"
+            type="button"
+            role="tab"
+            :aria-selected="form.strategy_kind === item.value"
+            class="rounded-full px-4 py-1.5 text-sm font-medium transition"
+            :class="form.strategy_kind === item.value ? 'bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+            @click="chooseStrategyKind(item.value)"
+          >{{ item.label }}</button>
+        </div>
+        <span class="text-xs text-slate-400">
+          {{ form.strategy_kind === 'factor_composite' ? '按多因子权重每日截面打分选股，支持正向/反向与自定义因子' : '使用策略创建页保存的规则策略' }}
+        </span>
+      </div>
+
+      <div v-if="form.strategy_kind === 'rule_builder' && !packages.length" class="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-400">
+        <p>你还没有规则策略。可以从模板开始，一两分钟就能建好；也可以切换到上方「多因子合成」直接用因子组合开模拟账户。</p>
+        <div class="mt-4 flex flex-wrap justify-center gap-3">
+          <button data-guide="paper-create" class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5" @click="openResearch('strategy-studio')">去新建规则策略</button>
+          <button type="button" class="rounded-full border border-white/10 bg-white/5 px-5 py-2 text-sm text-slate-200 transition hover:bg-white/10" @click="chooseStrategyKind('factor_composite')">改用多因子合成 →</button>
+        </div>
       </div>
       <template v-else>
+        <div v-if="form.strategy_kind === 'factor_composite'" class="mb-4">
+          <FactorCompositeEditor v-model="form.factors_json" :disabled="prefillLoading" />
+        </div>
         <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <FormField label="规则策略" type="select" :model-value="form.package_id" :options="packageOptions" @update:model-value="choosePackage" />
+          <FormField v-if="form.strategy_kind === 'rule_builder'" label="规则策略" type="select" :model-value="form.package_id" :options="packageOptions" @update:model-value="choosePackage" />
           <FormField label="股票范围" type="select" v-model="form.market" :options="marketOptions" :disabled="prefillLoading" />
           <FormField label="名称（可不填）" v-model="form.name" placeholder="默认用策略名和日期" />
           <FormField label="初始资金" type="number" v-model="form.initial_cash" :min="10000" :step="10000" :disabled="prefillLoading" />
           <FormField label="最多持股" type="number" v-model="form.top_n" :min="1" :max="50" :step="1" :disabled="prefillLoading" />
           <FormField label="调仓频率" type="select" v-model="form.rebalance" :options="rebalances" :disabled="prefillLoading" />
         </div>
-        <div v-if="selectedPackage" class="mt-4 space-y-2 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300" aria-live="polite">
-          <p>策略保存值 · 最多持股 {{ selectedPackage.top_n }} 只 · {{ rebalanceLabel(selectedPackage.rebalance) }}调仓</p>
+        <div v-if="selectedPackage || form.strategy_kind === 'factor_composite'" class="mt-4 space-y-2 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300" aria-live="polite">
+          <p v-if="selectedPackage && form.strategy_kind === 'rule_builder'">策略保存值 · 最多持股 {{ selectedPackage.top_n }} 只 · {{ rebalanceLabel(selectedPackage.rebalance) }}调仓</p>
+          <p v-else-if="form.strategy_kind === 'factor_composite'">当前配置 · 已选 {{ factorRows.length }} 个因子 · 最多持股 {{ form.top_n }} 只 · {{ rebalanceLabel(form.rebalance) }}调仓</p>
           <p v-if="referenceLoading">正在加载最近一次回测…</p>
           <p v-else-if="referenceError">{{ referenceError }}</p>
           <div v-else-if="latestBacktest" class="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <p>最近一次回测 · {{ backtestTime(latestBacktest) }} · {{ backtestSummary(latestBacktest) }}</p>
+            <p>最近一次{{ form.strategy_kind === 'factor_composite' ? '因子合成' : '' }}回测 · {{ backtestTime(latestBacktest) }} · {{ backtestSummary(latestBacktest) }}</p>
             <button type="button" class="text-indigo-300 hover:text-indigo-200 disabled:opacity-60" :disabled="prefillLoading" @click="applyBacktestSettings(latestBacktest)">使用这次回测设置</button>
           </div>
           <p v-else>暂无可对照的回测。</p>
@@ -453,10 +599,10 @@ onActivated(async () => {
           </p>
         </div>
         <p class="mt-3 text-xs text-slate-400">
-          创建时会把策略规则、股票范围（选股票池时是现在的股票池）和现在的风控设置复制一份锁住，以后修改它们都不影响这个账户。风控可以先在「策略回测」页的风险设置里改好。
+          创建时会把{{ form.strategy_kind === 'factor_composite' ? '因子组合快照（含自定义因子定义）' : '策略规则' }}、股票范围（选股票池时是现在的股票池）和现在的风控设置复制一份锁住，以后修改它们都不影响这个账户。风控可以先在「策略回测」页的风险设置里改好。
         </p>
         <div class="mt-5 flex justify-end">
-          <button data-guide="paper-create" :disabled="creating || prefillLoading || !selectedPackage || !marketAvailable(form.market) || left <= 0"
+          <button data-guide="paper-create" :disabled="!canCreate"
             class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70"
             @click="onCreate">
             {{ creating ? '创建中…' : left <= 0 ? '已达到数量上限' : '创建模拟账户' }}

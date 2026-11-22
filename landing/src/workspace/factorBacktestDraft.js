@@ -1,6 +1,7 @@
 import { openResearch } from './researchNavigation.js'
 
 let draft = null
+let paperDraft = null
 
 export function openFactorBacktest(result) {
   draft = {
@@ -15,6 +16,20 @@ export function openFactorBacktest(result) {
 export function takeFactorBacktestDraft() {
   const pending = draft
   draft = null
+  return pending
+}
+
+export function openFactorPaper(result) {
+  paperDraft = {
+    factors: result.composite_spec,
+    market: result.universe,
+  }
+  openResearch('paper-accounts', { mode: 'new', strategy: 'factor_composite', source: 'factor-lab' })
+}
+
+export function takeFactorPaperDraft() {
+  const pending = paperDraft
+  paperDraft = null
   return pending
 }
 

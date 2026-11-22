@@ -293,3 +293,126 @@ def _package_dict():
 
     preset = beginner_templates()[0].presets["balanced"]
     return StrategyPackage("p", "x", preset.definition, preset.top_n, preset.rebalance, "test", datetime(2026, 10, 28)).to_dict()
+
+
+def test_factor_composite_account_creates_locks_and_advances(env):
+    client, _, _, state = env
+    factors_json = json.dumps([
+        {"name": "momentum_20", "weight": 0.6, "direction": 1, "clip": True, "missing": "drop", "standardization": "rank"},
+        {"name": "volatility_20", "weight": 0.4, "direction": -1, "clip": True, "missing": "drop", "standardization": "rank"},
+    ])
+    resp = client.post("/api/v1/paper-accounts", json={
+        "strategy_kind": "factor_composite",
+        "factors_json": factors_json,
+        "initial_cash": 800000,
+        "top_n": 8,
+        "rebalance": "monthly",
+    })
+    assert resp.status_code == 201, resp.text
+    account = resp.json()
+    assert account["strategy_kind"] == "factor_composite"
+    assert account["package_id"] is None
+    assert account["status"] == "WAITING"
+    assert account["top_n"] == 8
+    assert account["rebalance"] == "monthly"
+    assert account["standardization"] == "rank"
+    assert len(account["factors"]) == 2
+    assert account["factors"][1]["direction"] == -1
+    assert "百分位排名" in account["describe_text"]
+    assert "反向" in account["describe_text"]
+    checks = {item["title"]: item for item in account["checks"]}
+    assert "已锁定 2 个因子" in checks["因子组合"]["detail"]
+
+    state.bounds, state.calendar = (date(2020, 1, 2), date(2026, 10, 29)), [TODAY, date(2026, 10, 29)]
+    active = client.post(f"/api/v1/paper-accounts/{account['account_id']}/advance").json()
+    request = state.requests[-1]
+    assert request.strategy_plugin == "factor_composite"
+    assert request.top_n == 8 and request.rebalance == "monthly"
+    assert request.risk_limits.max_positions == 8
+    locked_rows = json.loads(request.strategy_parameters["factors_json"])
+    assert [(r["name"], r["weight"], r["direction"]) for r in locked_rows] == [
+        ("momentum_20", 0.6, 1),
+        ("volatility_20", 0.4, -1),
+    ]
+    assert active["status"] == "ACTIVE" and active["last_date"] == "2026-10-29"
+    assert active["result"]["effective_config"]["strategy_plugin"] == "factor_composite"
+    assert active["result"]["effective_config"]["strategy_reference"] == f"paper:{account['account_id']}"
+
+    # 列表返回 strategy_kind，K 线成交接口也正常工作。
+    listed = client.get("/api/v1/paper-accounts").json()["items"]
+    assert listed[0]["strategy_kind"] == "factor_composite"
+    traded = client.get(f"/api/v1/runs/paper-{account['account_id']}/trades")
+    assert traded.status_code == 200 and traded.json()["symbols"][0]["symbol"] == "600000"
+
+
+def test_factor_composite_account_snapshots_custom_factor_definitions(env):
+    from quant_platform.strategies.factor_composite import FactorCompositeParameters
+
+    client, connect, _, state = env
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO custom_factors (user_id, name, display_name, description, field, operator, window, window2, direction, expression, created_at)
+               VALUES (1, 'my_alpha', '自建短期反转', '测试', 'close', 'expression', 20, NULL, -1, 'ret(close, 5) - ret(close, 20)', '2026-10-28')"""
+        )
+    factors_json = json.dumps([
+        {"name": "my_alpha", "weight": 0.5, "direction": -1, "clip": False, "missing": "zero", "standardization": "zscore"},
+        {"name": "momentum_20", "weight": 0.5, "direction": 1, "clip": False, "missing": "zero", "standardization": "zscore"},
+    ])
+    resp = client.post("/api/v1/paper-accounts", json={
+        "strategy_kind": "factor_composite",
+        "factors_json": factors_json,
+    })
+    assert resp.status_code == 201, resp.text
+    account = resp.json()
+    assert account["factors"][0]["has_custom_factor"] is True
+    assert account["factors"][0]["display_name"] == "自建短期反转"
+    checks = {item["title"]: item for item in account["checks"]}
+    assert "自定义因子定义快照" in checks["因子组合"]["detail"]
+
+    # 创建后删除自定义因子，模拟账户仍可按锁住的快照正常推进。
+    with connect() as conn:
+        conn.execute("DELETE FROM custom_factors WHERE user_id = 1 AND name = 'my_alpha'")
+    state.bounds, state.calendar = (date(2020, 1, 2), date(2026, 10, 29)), [TODAY, date(2026, 10, 29)]
+    active = client.post(f"/api/v1/paper-accounts/{account['account_id']}/advance").json()
+    assert active["status"] == "ACTIVE"
+    parsed = FactorCompositeParameters.from_json(state.requests[-1].strategy_parameters["factors_json"])
+    assert parsed.components[0].custom_factor is not None
+    assert parsed.components[0].custom_factor.expression == "ret(close, 5) - ret(close, 20)"
+
+
+def test_factor_composite_account_validation_and_backtest_reference(env):
+    client, connect, _, _ = env
+    assert client.post("/api/v1/paper-accounts", json={"strategy_kind": "factor_composite"}).status_code == 422
+    assert client.post("/api/v1/paper-accounts", json={"strategy_kind": "factor_composite", "factors_json": "[]"}).status_code == 422
+    assert client.post("/api/v1/paper-accounts", json={
+        "strategy_kind": "factor_composite",
+        "factors_json": json.dumps([{"name": "not_a_real_factor", "weight": 1}]),
+    }).status_code == 422
+    assert client.post("/api/v1/paper-accounts", json={"strategy_kind": "rule_builder"}).status_code == 422
+
+    # 最近一次因子合成回测参照
+    fc_config = {
+        "strategy_reference": "factor_composite",
+        "strategy_plugin": "factor_composite",
+        "strategy_parameters": {"factors_json": json.dumps([{"name": "momentum_20", "weight": 1.0, "direction": 1}])},
+        "market": "000300.SH",
+        "initial_capital": 600_000,
+        "max_positions": 12,
+        "rebalance": "monthly",
+    }
+    with connect() as conn:
+        conn.executemany(
+            """INSERT INTO backtests (user_id, strategy, market, from_date, to_date, status, result, created_at)
+               VALUES (?, '因子合成策略', '000300.SH', '2025-01-01', '2025-12-31', ?, ?, '2026-10-27')""",
+            [
+                (1, "完成", json.dumps({"effective_config": {"strategy_reference": "package:p1", "max_positions": 5}})),
+                (1, "完成", json.dumps({"effective_config": fc_config})),
+                (1, "失败", json.dumps({"effective_config": fc_config | {"max_positions": 20}})),
+                (2, "完成", json.dumps({"effective_config": fc_config | {"max_positions": 30}})),
+            ],
+        )
+    ref = client.get("/api/v1/paper-accounts/backtest-reference/factor_composite").json()["backtest"]
+    assert ref["id"] == 2
+    assert ref["config"]["strategy_plugin"] == "factor_composite"
+    assert ref["config"]["max_positions"] == 12
+    assert "momentum_20" in ref["config"]["strategy_parameters"]["factors_json"]
