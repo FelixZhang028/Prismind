@@ -134,3 +134,54 @@ export function styleCorrelationSummary(items) {
     : ''
   return { rows, highOverlapLabels, warning }
 }
+
+// 统一 p 值 / BH-FDR q 值格式化。
+export function formatPValue(value) {
+  if (value == null || value === '' || !Number.isFinite(Number(value))) return '—'
+  const num = Number(value)
+  return num < 0.001 ? '< 0.001' : num.toFixed(3)
+}
+
+// BH-FDR 多重检验校正后的徽章文案与颜色。
+export function fdrBadge(qValue) {
+  if (qValue == null || qValue === '' || !Number.isFinite(Number(qValue))) {
+    return { label: '样本不足', tone: 'text-slate-400' }
+  }
+  const q = Number(qValue)
+  if (q < 0.05) return { label: '通过 (FDR<5%)', tone: 'text-emerald-300' }
+  if (q < 0.10) return { label: '边缘显著 (FDR<10%)', tone: 'text-amber-300' }
+  return { label: '未通过 (可能偶然)', tone: 'text-slate-400' }
+}
+
+export function fdrVerdictTone(verdict) {
+  const text = String(verdict || '')
+  if (text.includes('FDR<5%') || text.includes('p<0.05')) return 'text-emerald-300'
+  if (text.includes('FDR<10%')) return 'text-amber-300'
+  return 'text-slate-400'
+}
+
+// 组合研究页的多重检验白话结论摘要。
+export function multipleTestingSummary(summary) {
+  if (!summary || typeof summary !== 'object') return null
+  const tested = Number(summary.tested_factors ?? 0)
+  const total = Number(summary.total_factors ?? tested)
+  const rawPassed = Number(summary.raw_passed_005 ?? 0)
+  const passed = Number(summary.passed_005 ?? 0)
+  const passed10 = Number(summary.passed_010 ?? passed)
+  if (tested <= 0) {
+    return {
+      text: `多重检验校正（BH-FDR）：本次候选 ${total} 个单因子的测试期有效样本均不足，暂无法给出校正后显著性结论。`,
+      tone: 'border-white/10 bg-white/5 text-slate-300',
+    }
+  }
+  const filteredOut = Math.max(0, rawPassed - passed)
+  const filterNote = filteredOut > 0
+    ? `（过滤掉 ${filteredOut} 个单看 p<0.05 但多重检验未通过、可能碰运气的因子）`
+    : ''
+  const marginalNote = passed === 0 && passed10 > 0 ? `；另有 ${passed10} 个处于 FDR < 10% 边缘显著区间` : ''
+  const text = `多重检验校正（BH-FDR）：本次测试期共检验 ${tested} 个候选单因子，未校正 p < 0.05 有 ${rawPassed} 个，经 BH-FDR 校正后 q < 0.05 有 ${passed} 个${filterNote}${marginalNote}。`
+  const tone = filteredOut > 0 || passed === 0
+    ? 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+    : 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+  return { text, tone }
+}

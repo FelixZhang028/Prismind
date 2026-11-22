@@ -15,6 +15,7 @@ from quant_platform.factors.base import FactorDefinition
 from quant_platform.factors.combine import STANDARDIZATIONS, combine_factors, correlation_matrix, prepare_frames, drop_highly_correlated
 from quant_platform.factors.custom import CustomFactor, custom_factor_to_dict
 from quant_platform.factors.evaluation import FactorEvaluator, FactorReport
+from quant_platform.factors.statistics import benjamini_hochberg, fdr_verdict
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ class CombinationResult:
     dropped: list[str] = field(default_factory=list)
     train_signal_end: date | None = None
     purged_sessions: int = 0
+    multiple_testing: dict | None = None
 
 
 def research_combination(
@@ -191,12 +193,21 @@ def research_combination(
         )
     reports = {}
     rows = []
+    single_indices: list[int] = []
+    single_p_values: list[float | None] = []
     evaluator = FactorEvaluator(BoundedRepository(repository, test_end, symbols))
     for label, factor in candidates.items():
         report = evaluator.evaluate(
             factor, test_start, test_end, horizon=horizon, n_groups=n_groups
         )
         reports[label] = report
+        sig = report.significance or {}
+        hac_t = sig.get("hac_t")
+        hac_p = sig.get("hac_p")
+        is_single = label.startswith("单因子 · ")
+        if is_single:
+            single_indices.append(len(rows))
+            single_p_values.append(hac_p if hac_p is not None and isfinite(float(hac_p)) else None)
         rows.append(
             {
                 "方案": label,
@@ -206,10 +217,45 @@ def research_combination(
                 "同日多空收益差": report.long_short_mean,
                 "成员更替率": report.turnover_mean,
                 "有效 IC 天数": int(report.daily_ic.rank_ic.notna().sum()),
+                "HAC t 值": hac_t,
+                "HAC p 值": hac_p,
+                "BH-FDR q 值": float("nan"),
+                "多重检验结论": (
+                    "组合方案"
+                    if not is_single
+                    else "样本不足"
+                ),
             }
         )
     if not any(row["有效 IC 天数"] for row in rows):
         raise ValueError("测试期没有有效 IC 样本，请检查日期、股票数量和因子是否为常数。")
+
+    q_values = benjamini_hochberg(single_p_values)
+    for row_idx, q_val in zip(single_indices, q_values, strict=True):
+        rows[row_idx]["BH-FDR q 值"] = float("nan") if q_val is None else q_val
+        rows[row_idx]["多重检验结论"] = fdr_verdict(q_val)
+    for row_idx, row in enumerate(rows):
+        if row_idx in single_indices:
+            continue
+        p_val = row.get("HAC p 值")
+        if p_val is None or not isfinite(float(p_val)):
+            row["多重检验结论"] = "组合 · 样本不足"
+        elif float(p_val) < 0.05:
+            row["多重检验结论"] = "组合 · p<0.05"
+        else:
+            row["多重检验结论"] = "组合 · 未达5%"
+
+    valid_ps = [p for p in single_p_values if p is not None]
+    valid_qs = [q for q in q_values if q is not None]
+    multiple_testing = {
+        "method": "BH-FDR",
+        "tested_factors": len(valid_ps),
+        "total_factors": len(single_indices),
+        "raw_passed_005": sum(1 for p in valid_ps if p < 0.05),
+        "passed_005": sum(1 for q in valid_qs if q < 0.05),
+        "passed_010": sum(1 for q in valid_qs if q < 0.10),
+    }
+
     spec = [
         {
             "name": f.name, "display_name": f.display_name or f.name, "version": f.version,
@@ -219,4 +265,6 @@ def research_combination(
         }
         for f in components
     ]
-    return CombinationResult(weights, correlation, pd.DataFrame(rows), reports, spec, dropped, signal_end, purge)
+    return CombinationResult(
+        weights, correlation, pd.DataFrame(rows), reports, spec, dropped, signal_end, purge, multiple_testing
+    )

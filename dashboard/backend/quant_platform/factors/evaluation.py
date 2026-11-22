@@ -26,7 +26,7 @@ from quant_platform.data.industry import EXPOSURES_TABLE, MISSING_INDUSTRY_MESSA
 from quant_platform.data.repositories.parquet_repository import ParquetMarketDataRepository
 from quant_platform.factors.base import FactorDefinition, pivot_field
 from quant_platform.factors.sample import FactorSampleFilters
-from quant_platform.factors.statistics import annual_ic, ic_statistics, neutralize_exposures
+from quant_platform.factors.statistics import annual_ic, benjamini_hochberg, ic_statistics, neutralize_exposures
 
 
 ROLLING_IC_WINDOW = 60
@@ -419,6 +419,9 @@ class FactorEvaluator:
                 sample = values[["date", "symbol", "adjusted"]].merge(forward, on=["date", "symbol"])
                 decay_ic = self._daily_ic(sample.dropna(subset=["adjusted"])).rank_ic
             decay_rows.append({"horizon": period, **ic_statistics(decay_ic, period)})
+        decay_qs = benjamini_hochberg([row.get("hac_p") for row in decay_rows])
+        for row, q_val in zip(decay_rows, decay_qs, strict=True):
+            row["fdr_q"] = float("nan") if q_val is None else q_val
 
         annual = annual_ic(daily_ic, horizon)
         group_nav, rebalance_turnover = pd.DataFrame(), pd.DataFrame()

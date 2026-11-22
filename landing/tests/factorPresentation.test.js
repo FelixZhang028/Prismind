@@ -2,7 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ALPHA101_NOTE, annualIcRows, directionText, directionTone, factorNote, factorSummary,
-  historyText, longShortSignMismatchNote, significanceSummary, styleCorrelationSummary,
+  fdrBadge, fdrVerdictTone, formatPValue, historyText, longShortSignMismatchNote,
+  multipleTestingSummary, significanceSummary, styleCorrelationSummary,
 } from '../src/workspace/factorPresentation.js'
 
 const alpha = {
@@ -67,4 +68,30 @@ test('HAC 显著性、多空反号提示、分年份 IC 与风格相关性速查
   assert.equal(styles.rows[1].corrText, '+0.080')
   assert.deepEqual(styles.highOverlapLabels, ['规模（对数总市值）'])
   assert.match(styles.warning, /规模（对数总市值）/)
+})
+
+test('BH-FDR 格式化、徽章结论与组合研究多重检验白话摘要', () => {
+  assert.equal(formatPValue(0.0002), '< 0.001')
+  assert.equal(formatPValue(0.0421), '0.042')
+  assert.equal(formatPValue(null), '—')
+
+  assert.deepEqual(fdrBadge(0.012), { label: '通过 (FDR<5%)', tone: 'text-emerald-300' })
+  assert.deepEqual(fdrBadge(0.075), { label: '边缘显著 (FDR<10%)', tone: 'text-amber-300' })
+  assert.deepEqual(fdrBadge(0.25), { label: '未通过 (可能偶然)', tone: 'text-slate-400' })
+  assert.deepEqual(fdrBadge(null), { label: '样本不足', tone: 'text-slate-400' })
+  assert.equal(fdrVerdictTone('组合 · p<0.05'), 'text-emerald-300')
+  assert.equal(fdrVerdictTone('边缘显著 (FDR<10%)'), 'text-amber-300')
+
+  const filtered = multipleTestingSummary({
+    method: 'BH-FDR', tested_factors: 5, total_factors: 5, raw_passed_005: 3, passed_005: 1, passed_010: 2,
+  })
+  assert.match(filtered.text, /共检验 5 个候选单因子/)
+  assert.match(filtered.text, /过滤掉 2 个/)
+  assert.match(filtered.tone, /amber/)
+
+  const clean = multipleTestingSummary({
+    method: 'BH-FDR', tested_factors: 2, total_factors: 2, raw_passed_005: 2, passed_005: 2, passed_010: 2,
+  })
+  assert.doesNotMatch(clean.text, /过滤掉/)
+  assert.match(clean.tone, /emerald/)
 })

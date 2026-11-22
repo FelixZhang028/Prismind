@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { annualIcRows, styleCorrelationSummary } from '../factorPresentation.js'
+import { annualIcRows, fdrBadge, formatPValue, styleCorrelationSummary } from '../factorPresentation.js'
 import { neutralizationCoverageSummary } from '../neutralizationPresentation.js'
 import DataTable from './DataTable.vue'
 import LineChart from './LineChart.vue'
@@ -74,14 +74,26 @@ const decayColumns = [
   { key: 'period', label: '持有期' },
   { key: 'rankIc', label: '平均 Rank IC', align: 'right' },
   { key: 'ir', label: 'Rank IC IR', align: 'right' },
+  { key: 'hacT', label: 'HAC t 值', align: 'right' },
+  { key: 'hacP', label: 'HAC p 值', align: 'right' },
+  { key: 'fdrQ', label: 'BH-FDR q 值', align: 'right' },
+  { key: 'verdict', label: '多重检验结论' },
   { key: 'observations', label: '有效交易日', align: 'right' },
 ]
-const decayRows = computed(() => props.report.decay.map((row) => ({
-  period: `${row.horizon} 个交易日`,
-  rankIc: fmt(row.rank_ic),
-  ir: fmt(row.rank_ic_ir),
-  observations: row.observations,
-})))
+const decayRows = computed(() => props.report.decay.map((row) => {
+  const badge = fdrBadge(row.fdr_q)
+  return {
+    period: `${row.horizon} 个交易日`,
+    rankIc: fmt(row.rank_ic),
+    ir: fmt(row.rank_ic_ir),
+    hacT: row.hac_t == null ? '—' : Number(row.hac_t).toFixed(2),
+    hacP: formatPValue(row.hac_p),
+    fdrQ: formatPValue(row.fdr_q),
+    verdict: badge.label,
+    verdictTone: badge.tone,
+    observations: row.observations,
+  }
+}))
 const industryColumns = [
   { key: 'industry', label: '行业（证监会）' },
   { key: 'group_count', label: '组内股票数', align: 'right' },
@@ -217,7 +229,11 @@ const styleSummary = computed(() => styleCorrelationSummary(props.report.style_c
     <LineChart :series="turnoverSeries" :dates="turnoverDates" :height="190" unit="percent" :baseline="0" />
   </SectionCard>
 
-  <SectionCard title="因子衰减" hint="对照不同持有期的 Rank IC 和 Rank IC IR，查看因子的预测能力如何随持有期变化。">
-    <DataTable :columns="decayColumns" :rows="decayRows" empty="暂无数据" />
+  <SectionCard title="因子衰减" hint="对照不同持有期的 Rank IC、Rank IC IR 与 BH-FDR 多重检验校正后的 q 值，避免因同时试多个持有期而把碰运气当有效。">
+    <DataTable :columns="decayColumns" :rows="decayRows" empty="暂无数据">
+      <template #cell-verdict="{ row }">
+        <span :class="row.verdictTone">{{ row.verdict }}</span>
+      </template>
+    </DataTable>
   </SectionCard>
 </template>

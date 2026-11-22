@@ -20,7 +20,7 @@ test('普通用户的侧栏不放账户页面，也看不到数据运维；这�
   for (const key of [...accountMenu, 'data-update']) assert.ok(!keys.includes(key), key)
   assert.ok(visibleGroups(true).flatMap((g) => g.items.map((i) => i.key)).includes('data-update'))
   for (const key of accountMenu) assert.ok(allItems.some((i) => i.key === key), key)
-  assert.deepEqual(accountMenu.map(itemLabel), ['个人中心', '积分与打卡', '设置'])
+  assert.deepEqual(accountMenu.map(itemLabel), ['个人中心', '积分与打卡', '更新日志', '设置'])
 })
 
 test('页内的子页面在侧栏上点亮所属的那一项', () => {

@@ -48,11 +48,12 @@ const utilityItems = [
   // 账户相关的页面在右上角的头像菜单里，不占侧栏。
   { key: 'account', label: '个人中心' },
   { key: 'points', label: '积分与打卡' },
+  { key: 'changelog', label: '更新日志' },
   { key: 'settings', label: '设置' },
 ]
 
-// 右上角头像菜单：个人中心、积分、设置，最后是退出登录（由外壳处理）。
-export const accountMenu = ['account', 'points', 'settings']
+// 右上角头像菜单：个人中心、积分、更新日志、设置，最后是退出登录（由外壳处理）。
+export const accountMenu = ['account', 'points', 'changelog', 'settings']
 export const allItems = [{ key: overviewKey, label: '首页' }, ...groups.flatMap((g) =>
   g.items.flatMap((item) => item.children || [item])), ...utilityItems]
 
@@ -130,4 +131,5 @@ export const views = {
   settings: defineAsyncComponent(() => import('./views/SettingsView.vue')),
   account: defineAsyncComponent(() => import('./views/AccountView.vue')),
   points: defineAsyncComponent(() => import('./views/PointsView.vue')),
+  changelog: defineAsyncComponent(() => import('./views/ChangelogView.vue')),
 }

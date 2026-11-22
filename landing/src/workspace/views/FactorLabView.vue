@@ -22,7 +22,7 @@ import FactorDiagnostics from '../ui/FactorDiagnostics.vue'
 import FactorFilter from '../ui/FactorFilter.vue'
 import FactorLibraryTable from '../ui/FactorLibraryTable.vue'
 import { factorsBySource, filterFactors } from '../factorFilters.js'
-import { directionText, directionTone, factorNote, longShortSignMismatchNote, significanceSummary } from '../factorPresentation.js'
+import { directionText, directionTone, factorNote, fdrVerdictTone, formatPValue, longShortSignMismatchNote, multipleTestingSummary, significanceSummary } from '../factorPresentation.js'
 import { neutralizationCoverageSummary } from '../neutralizationPresentation.js'
 import { NEUTRALIZATION_OPTIONS } from '../dataPresentation.js'
 import { FACTOR_STANDARDIZATIONS, openFactorBacktest, openFactorPaper } from '../factorBacktestDraft.js'
@@ -485,11 +485,23 @@ const comparisonCols = [
   { key: '方案', label: '方案' },
   { key: 'Rank IC', label: 'Rank IC', align: 'right' },
   { key: 'Rank IC IR', label: 'Rank IC IR', align: 'right' },
-  { key: 'IC', label: 'IC', align: 'right' },
+  { key: 'HAC t 值', label: 'HAC t 值', align: 'right' },
+  { key: 'HAC p 值', label: 'HAC p 值', align: 'right' },
+  { key: 'BH-FDR q 值', label: 'BH-FDR q 值', align: 'right' },
+  { key: '多重检验结论', label: '多重检验结论' },
   { key: '同日多空收益差', label: '多空收益差', align: 'right' },
   { key: '成员更替率', label: '成员更替率', align: 'right' },
   { key: '有效 IC 天数', label: '有效IC天数', align: 'right' },
 ]
+
+const researchMultipleTesting = computed(() => multipleTestingSummary(researchResult.value?.multiple_testing))
+const researchComparisonRows = computed(() => (researchResult.value?.comparison || []).map((row) => ({
+  ...row,
+  'HAC t 值': row['HAC t 值'] == null ? '—' : Number(row['HAC t 值']).toFixed(2),
+  'HAC p 值': formatPValue(row['HAC p 值']),
+  'BH-FDR q 值': formatPValue(row['BH-FDR q 值']),
+  '多重检验结论': row['多重检验结论'] || '—',
+})))
 
 const researchCorrRows = computed(() => {
   const corr = researchResult.value?.correlation_matrix || {}
@@ -898,6 +910,11 @@ onBeforeUnmount(() => {
           <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard v-for="s in evalView.stability" :key="s.label" :label="s.label" :value="s.value" :sub="s.sub" :up="s.up" :tone="s.tone" />
           </div>
+          <p class="mt-3 text-xs text-slate-400">
+            提示：此处的 HAC p 值仅针对单次检验。若同一批筛选多个因子，请在
+            <button type="button" class="text-indigo-300 underline hover:text-indigo-200" @click="activeTab = 'research'">组合研究</button>
+            中一并查看 Benjamini-Hochberg（BH-FDR）多重检验校正后的 q 值；下方「因子衰减」表已对多个持有期自动做 BH-FDR 校正。
+          </p>
         </SectionCard>
 
         <SectionCard title="IC 时序" hint="日度 Pearson IC 和 Rank IC">
@@ -1230,8 +1247,19 @@ onBeforeUnmount(() => {
           </p>
         </div>
 
-        <SectionCard title="测试期结果对比" hint="各单因子 / 等权组合 / 我的组合在独立测试期的表现">
-          <DataTable :columns="comparisonCols" :rows="researchResult.comparison" empty="暂无数据" />
+        <SectionCard title="测试期结果对比" hint="各单因子 / 等权组合 / 我的组合在独立测试期的表现；候选单因子自动执行 BH-FDR 多重检验校正">
+          <p
+            v-if="researchMultipleTesting"
+            class="mb-3 rounded-xl border px-3.5 py-2.5 text-xs leading-relaxed"
+            :class="researchMultipleTesting.tone"
+          >
+            {{ researchMultipleTesting.text }}
+          </p>
+          <DataTable :columns="comparisonCols" :rows="researchComparisonRows" empty="暂无数据">
+            <template #cell-多重检验结论="{ value }">
+              <span :class="fdrVerdictTone(value)">{{ value }}</span>
+            </template>
+          </DataTable>
         </SectionCard>
 
         <SectionCard title="训练期因子相关性" hint="训练期两两因子相关系数">
