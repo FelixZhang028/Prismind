@@ -389,3 +389,96 @@ def test_closed_loop_status_caches_by_parquet_mtime(api, monkeypatch, tmp_path):
     assert third.json()["call"] == 2
 
 
+def test_benjamini_hochberg_fdr_exact_values_and_missing_handling():
+    from quant_platform.factors.statistics import benjamini_hochberg, fdr_verdict
+
+    # 标准手工检验：p = [0.005, 0.04, 0.03, 0.20]，m=4
+    # 排序: (0,0.005)->0.02, (2,0.03)->0.06->min(0.0533)=0.0533, (1,0.04)->0.0533, (3,0.20)->0.20
+    qs = benjamini_hochberg([0.005, 0.04, 0.03, 0.20])
+    assert qs[0] == pytest.approx(0.02, abs=1e-9)
+    assert qs[2] == pytest.approx(0.04 * 4 / 3, abs=1e-9)
+    assert qs[1] == pytest.approx(0.04 * 4 / 3, abs=1e-9)
+    assert qs[3] == pytest.approx(0.20, abs=1e-9)
+
+    # 含 None / NaN 时排除出分母 m，原位置返回 None
+    mixed = benjamini_hochberg([None, 0.01, float("nan"), 0.05])
+    assert mixed[0] is None and mixed[2] is None
+    assert mixed[1] == pytest.approx(0.02, abs=1e-9)
+    assert mixed[3] == pytest.approx(0.05, abs=1e-9)
+    assert benjamini_hochberg([]) == []
+    assert benjamini_hochberg([None, float("nan")]) == [None, None]
+
+    assert fdr_verdict(None) == "样本不足"
+    assert fdr_verdict(0.01) == "通过 (FDR<5%)"
+    assert fdr_verdict(0.08) == "边缘显著 (FDR<10%)"
+    assert fdr_verdict(0.25) == "未通过 (可能偶然)"
+
+
+def test_decay_and_research_combination_report_bh_fdr_q_values(api, monkeypatch):
+    bars, fundamentals, days = _make_multi_year_panel()
+    repo = _SyntheticFactorRepo(bars, fundamentals)
+    f_good = _SmallCapProxyFactor(name="small_cap_proxy", display_name="小盘测试因子", direction=1)
+    f_inv = _InverseSignalFactor(name="inverse_alpha", display_name="需反转测试因子", direction=1)
+
+    # 1. 单因子评估的 IC 衰减表透出 hac_t / hac_p / fdr_q，且 q >= p
+    report = FactorEvaluator(repo).evaluate(
+        f_good, days[25], days[-1], horizon=3, n_groups=5, diagnostics=True
+    )
+    payload = factor_report_to_dict(report)
+    assert len(payload["decay"]) >= 2
+    for row in payload["decay"]:
+        assert {"horizon", "hac_t", "hac_p", "fdr_q"} <= set(row.keys())
+        if row["hac_p"] is not None and row["fdr_q"] is not None:
+            assert row["fdr_q"] >= row["hac_p"] - 1e-4
+
+    # 2. 组合研究对比表对候选单因子计算 BH-FDR，且不把组合行计入单因子分母
+    res = research_combination(
+        repo,
+        (f_good, f_inv),
+        train_start=days[0],
+        train_end=days[40],
+        test_start=days[41],
+        test_end=days[-1],
+        mode="equal",
+        horizon=2,
+        n_groups=5,
+    )
+    assert res.multiple_testing is not None
+    assert res.multiple_testing["method"] == "BH-FDR"
+    assert res.multiple_testing["total_factors"] == 2
+    assert res.multiple_testing["tested_factors"] <= 2
+    assert {"HAC t 值", "HAC p 值", "BH-FDR q 值", "多重检验结论"} <= set(res.comparison.columns)
+    combo_rows = res.comparison[res.comparison["方案"].isin(["等权组合", "我的组合"])]
+    assert combo_rows["BH-FDR q 值"].isna().all()
+    assert all(str(v).startswith("组合 · ") for v in combo_rows["多重检验结论"])
+
+    # 3. API 透传 multiple_testing 字段
+    client, _, root = api
+    repo.root = root  # type: ignore[attr-defined]
+    monkeypatch.setattr(workspace, "market_repository", lambda: repo)
+    monkeypatch.setattr(workspace, "local_data_bounds", lambda: (days[0], days[-1]))
+    monkeypatch.setattr(
+        workspace,
+        "_factor_scope",
+        lambda user, universe, start, end, submitted_symbols=None: (repo, sorted(bars["symbol"].unique())),
+    )
+    resp = client.post(
+        "/api/v1/factors/research",
+        json={
+            "factor_names": ["momentum_20", "volatility_20"],
+            "weight_mode": "equal",
+            "horizon": 2,
+            "n_groups": 5,
+            "train_start": days[0].isoformat(),
+            "train_end": days[40].isoformat(),
+            "test_start": days[41].isoformat(),
+            "test_end": days[-1].isoformat(),
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["multiple_testing"]["method"] == "BH-FDR"
+    assert body["multiple_testing"]["total_factors"] == 2
+    assert any("BH-FDR q 值" in row for row in body["comparison"])
+
+

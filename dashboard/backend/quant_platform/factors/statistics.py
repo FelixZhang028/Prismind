@@ -1,8 +1,58 @@
-"""HAC mean inference, annual summaries, and point-in-time neutralization."""
+"""HAC mean inference, multiple-testing FDR correction, annual summaries, and point-in-time neutralization."""
+
+from collections.abc import Sequence
+from math import isfinite
 
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
+
+
+def benjamini_hochberg(p_values: Sequence[float | None]) -> list[float | None]:
+    """Benjamini-Hochberg FDR adjusted q-values preserving input order.
+
+    Invalid / missing p-values are excluded from the test count ``m`` and map to ``None``.
+    """
+    valid: list[tuple[int, float]] = []
+    for idx, raw in enumerate(p_values):
+        if raw is None:
+            continue
+        try:
+            p = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if isfinite(p) and 0.0 <= p <= 1.0:
+            valid.append((idx, p))
+
+    adjusted: list[float | None] = [None] * len(p_values)
+    m = len(valid)
+    if m == 0:
+        return adjusted
+
+    ordered = sorted(valid, key=lambda pair: pair[1])
+    q_sorted = [0.0] * m
+    running = 1.0
+    for rank_idx in range(m - 1, -1, -1):
+        _, p = ordered[rank_idx]
+        rank = rank_idx + 1
+        running = min(running, p * m / rank)
+        q_sorted[rank_idx] = min(1.0, max(0.0, running))
+
+    for (orig_idx, _), q in zip(ordered, q_sorted, strict=True):
+        adjusted[orig_idx] = float(q)
+    return adjusted
+
+
+def fdr_verdict(q_value: float | None) -> str:
+    """Plain-Chinese significance label for a BH-FDR adjusted q-value."""
+    if q_value is None or not isfinite(float(q_value)):
+        return "样本不足"
+    q = float(q_value)
+    if q < 0.05:
+        return "通过 (FDR<5%)"
+    if q < 0.10:
+        return "边缘显著 (FDR<10%)"
+    return "未通过 (可能偶然)"
 
 
 def ic_statistics(values: pd.Series, lags: int) -> dict:

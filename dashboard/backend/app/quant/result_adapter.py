@@ -302,8 +302,15 @@ def factor_report_to_dict(report: FactorReport) -> dict[str, Any]:
             for day, value in report.rebalance_turnover.itertuples(index=False, name=None)
         ],
         "decay": [
-            {"horizon": int(row["horizon"]), "rank_ic": _round(row["rank_ic_mean"], 4),
-             "rank_ic_ir": _round(row["rank_ic_ir"], 4), "observations": int(row["observations"])}
+            {
+                "horizon": int(row["horizon"]),
+                "rank_ic": _round(row["rank_ic_mean"], 4),
+                "rank_ic_ir": _round(row["rank_ic_ir"], 4),
+                "observations": int(row["observations"]),
+                "hac_t": _round(row.get("hac_t"), 3),
+                "hac_p": _round(row.get("hac_p"), 4),
+                "fdr_q": _round(row.get("fdr_q"), 4),
+            }
             for row in report.decay.to_dict(orient="records")
         ],
         # 每条说明各自以句号结尾，接在一起时不再加分号，免得出现「。；」。
