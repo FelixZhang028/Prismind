@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from ..database import _now, get_conn
 from ..quant.benchmark_view import benchmark_comparison, benchmark_options
+from ..quant.backtest_health import backtest_health_check
 from ..quant.backtest_jobs import backtest_slot, save_result
 from ..quant.compute import computing
 from ..quant.markets import CURRENT_POOL, market_options, use_market
@@ -220,7 +221,19 @@ def get_backtest(bid: int, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="回测不存在")
     result = with_run_evidence(json.loads(row["result"]) if row["result"] else {})
     directory = run_directory(result)
-    bars = market_repository().read_table("benchmark_bars") if directory else None
+    repo = market_repository() if directory else None
+    bars = repo.read_table("benchmark_bars") if repo is not None else None
+    exposures = None
+    fundamentals = None
+    if repo is not None:
+        try:
+            exposures = repo.read_table("security_exposures")
+        except Exception:  # noqa: BLE001
+            exposures = None
+        try:
+            fundamentals = repo.get_fundamentals()
+        except Exception:  # noqa: BLE001
+            fundamentals = None
     return {
         "id": row["id"],
         "strategy": row["strategy"],
@@ -236,6 +249,14 @@ def get_backtest(bid: int, user: dict = Depends(get_current_user)):
         "benchmark": benchmark_comparison(directory, bars=bars),
         # 本地有行情的常用指数：结果页可以换一个指数来比较。
         "benchmark_options": benchmark_options(bars) if bars is not None else [],
+        # 白话体检卡：同样从运行目录实时算出，历史回测打开即有。
+        "health_check": backtest_health_check(
+            directory,
+            result,
+            names=security_names(),
+            exposures=exposures,
+            fundamentals=fundamentals,
+        ),
     }
 
 
