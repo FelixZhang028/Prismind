@@ -131,12 +131,14 @@ html[data-theme='light'] .text-slate-500 { color: #64748b; }
 html[data-theme='light'] .text-slate-600 { color: #475569; }
 html[data-theme='light'] .text-slate-300\/80 { color: rgba(51, 65, 85, 0.8); }
 
-/* 主文本：白 → 近黑（元素自身带品牌渐变底色时保持白字） */
+/* 主文本：白 → 近黑（元素自身带品牌渐变或深色品牌底色时保持白字） */
 html[data-theme='light'] .text-white { color: #0f172a; }
 html[data-theme='light'] .text-white.bg-gradient-to-r,
 html[data-theme='light'] .text-white.bg-gradient-to-br,
 html[data-theme='light'] .text-white.bg-gradient-to-l,
-html[data-theme='light'] .text-white.bg-gradient-to-t { color: #fff; }
+html[data-theme='light'] .text-white.bg-gradient-to-t,
+html[data-theme='light'] .text-white.bg-indigo-500,
+html[data-theme='light'] .text-white.bg-indigo-600 { color: #fff; }
 
 /* ---- 彩色状态文本：300/200 亮色 → 700 深色 ---- */
 html[data-theme='light'] .text-emerald-300 { color: #047857; }

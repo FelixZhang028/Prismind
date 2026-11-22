@@ -6,6 +6,7 @@ import { openResearch } from '../researchNavigation.js'
 import { setFocus } from '../chatFocus.js'
 import { backtestId, countText, poolLabel, runTime, strategyName, validityLabel } from '../runRecords.js'
 import BacktestAiReview from '../ui/BacktestAiReview.vue'
+import BacktestHealthCard from '../ui/BacktestHealthCard.vue'
 import BacktestTasks from '../ui/BacktestTasks.vue'
 import UsefulPrompt from '../ui/UsefulPrompt.vue'
 import RiskSettings from '../ui/RiskSettings.vue'
@@ -623,6 +624,7 @@ onActivated(async () => {
             <button @click="openResearch('market-chart', { run: selectedId })">在K线上查看成交 →</button>
             <button v-if="paperPrefill(result.effective_config)" @click="openResearch('paper-accounts', { mode: 'new', strategy: result.effective_config.strategy_reference, run: selectedId })">用这套设置开模拟账户 →</button>
           </div>
+          <BacktestHealthCard v-if="current.health_check" :health="current.health_check" />
           <!-- 第一次看到回测结果时问一句“有用吗” -->
           <UsefulPrompt feature="backtest-review" :context="{ run: selectedId }" />
           <BacktestAiReview :backtest-id="selectedId" :notify="notify" />
