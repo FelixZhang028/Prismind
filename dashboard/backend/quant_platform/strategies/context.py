@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 import pandas as pd
@@ -19,6 +19,8 @@ class StrategyContext:
     universe: tuple[str, ...]
     _history: pd.DataFrame
     portfolio_drawdown: float = 0.0
+    industry_map: dict[str, str] = field(default_factory=dict)
+    market_caps: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -28,6 +30,8 @@ class StrategyContext:
         universe: Iterable[str],
         *,
         portfolio_drawdown: float = 0.0,
+        industry_map: dict[str, str] | None = None,
+        market_caps: dict[str, float] | None = None,
     ) -> StrategyContext:
         """Build a context that removes future and out-of-universe rows."""
 
@@ -41,11 +45,24 @@ class StrategyContext:
             history["symbol"].isin(symbols) & (pd.to_datetime(history["trade_date"]) <= cutoff)
         ].copy()
         available["trade_date"] = pd.to_datetime(available["trade_date"]).dt.normalize()
+        symbol_set = set(symbols)
+        scoped_industries = {
+            str(sym): str(ind)
+            for sym, ind in (industry_map or {}).items()
+            if str(sym) in symbol_set and ind
+        }
+        scoped_caps = {
+            str(sym): float(cap)
+            for sym, cap in (market_caps or {}).items()
+            if str(sym) in symbol_set and cap is not None and float(cap) > 0
+        }
         return cls(
             trade_date=trade_date,
             universe=symbols,
             _history=available.sort_values(["symbol", "trade_date"]),
             portfolio_drawdown=float(portfolio_drawdown),
+            industry_map=scoped_industries,
+            market_caps=scoped_caps,
         )
 
     def require_fields(self, fields: Iterable[str]) -> None:

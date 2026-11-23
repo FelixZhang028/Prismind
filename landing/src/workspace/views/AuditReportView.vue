@@ -197,7 +197,18 @@ function fmtBool(v) {
 const assumptionRows = computed(() => {
   const a = report.value?.assumptions || {}
   return [
-    { name: '历史分期费率', value: fmtBool(a.historical_fees) },
+    {
+      name: '佣金率（双边）',
+      value: a.commission_rate != null ? `${(Number(a.commission_rate) * 100).toFixed(3)}%（万 ${(Number(a.commission_rate) * 10000).toFixed(1)}）` : '未记录',
+    },
+    {
+      name: '单笔最低佣金',
+      value: a.minimum_commission != null ? `¥${Number(a.minimum_commission).toFixed(2)}` : '未记录',
+    },
+    { name: '历史分期税费', value: fmtBool(a.historical_fees) },
+    ...(a.historical_fees === false && a.stamp_tax_rate != null
+      ? [{ name: '固定印花税率（卖出）', value: `${(Number(a.stamp_tax_rate) * 100).toFixed(3)}%` }]
+      : []),
     {
       name: '参与率上限',
       value: a.max_participation != null ? `${(Number(a.max_participation) * 100).toFixed(1)}%` : '未记录',

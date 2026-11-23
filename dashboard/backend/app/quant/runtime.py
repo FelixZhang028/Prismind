@@ -172,6 +172,7 @@ def user_risk_limits(user_id: int) -> RiskLimits:
             "daily_position_limits": bool(row["daily_position_limits"]),
             "drawdown_action": row["drawdown_action"],
             "drawdown_target_weight": row["drawdown_target_weight"],
+            "max_industry_weight": row["max_industry_weight"] if "max_industry_weight" in row.keys() and row["max_industry_weight"] is not None else 1.0,
         }
     )
 

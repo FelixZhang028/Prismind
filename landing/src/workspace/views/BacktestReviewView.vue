@@ -4,7 +4,7 @@ import { getBacktestBenchmark, getBacktestCatalog, getBacktest, getPreferences, 
 import { REBALANCE_OPTIONS, backtestDefaults } from '../preferences.js'
 import { openResearch } from '../researchNavigation.js'
 import { setFocus } from '../chatFocus.js'
-import { backtestId, countText, poolLabel, runTime, strategyName, validityLabel } from '../runRecords.js'
+import { backtestId, countText, executionSummaryText, filterSummaryText, poolLabel, runTime, strategyName, validityLabel } from '../runRecords.js'
 import BacktestAiReview from '../ui/BacktestAiReview.vue'
 import BacktestHealthCard from '../ui/BacktestHealthCard.vue'
 import BacktestTasks from '../ui/BacktestTasks.vue'
@@ -49,6 +49,67 @@ const suggestedHistorical = computed(() => (
 const benchmarkCoverage = ref(null)
 const riskEditor = ref(null)
 const riskOpen = ref(false)
+const execFilterOpen = ref(false)
+const executionDefaults = ref(null)
+const filterDefaults = ref(null)
+let execFilterInitialized = false
+const execForm = reactive({
+  commission_wan: 3, // 万分之几，3 = 0.0003（万三）
+  minimum_commission: 5,
+  historical_fees: true,
+  stamp_tax_wan: 5, // 固定印花税模式下的万分比，5 = 0.0005（万五）
+  slippage_bps: 5, // 基点，5 = 0.0005（0.05%）
+})
+const filterForm = reactive({
+  exclude_st: true,
+  exclude_suspended: true,
+  minimum_listing_days: 60,
+  minimum_history_days: 120,
+  minimum_average_amount: 0,
+})
+function syncExecFilterFromDefaults(execSrc, filterSrc) {
+  if (execSrc) {
+    execForm.commission_wan = Number(((execSrc.commission_rate ?? 0.0003) * 10000).toFixed(2))
+    execForm.minimum_commission = Number(execSrc.minimum_commission ?? 5)
+    execForm.historical_fees = execSrc.historical_fees !== false
+    execForm.stamp_tax_wan = Number(((execSrc.stamp_tax_rate ?? 0.0005) * 10000).toFixed(2))
+    execForm.slippage_bps = Number(((execSrc.slippage_rate ?? 0.0005) * 10000).toFixed(2))
+  }
+  if (filterSrc) {
+    filterForm.exclude_st = Boolean(filterSrc.exclude_st ?? true)
+    filterForm.exclude_suspended = Boolean(filterSrc.exclude_suspended ?? true)
+    filterForm.minimum_listing_days = Number(filterSrc.minimum_listing_days ?? 60)
+    filterForm.minimum_history_days = Number(filterSrc.minimum_history_days ?? 120)
+    filterForm.minimum_average_amount = Number(filterSrc.minimum_average_amount ?? 0)
+  }
+}
+function resetExecFilterDefaults() {
+  syncExecFilterFromDefaults(executionDefaults.value, filterDefaults.value)
+}
+const currentExecOverrides = computed(() => ({
+  commission_rate: Math.max(0, Number(execForm.commission_wan) || 0) / 10000,
+  minimum_commission: Math.max(0, Number(execForm.minimum_commission) || 0),
+  historical_fees: Boolean(execForm.historical_fees),
+  stamp_tax_rate: Math.max(0, Number(execForm.stamp_tax_wan) || 0) / 10000,
+  slippage_rate: Math.max(0, Number(execForm.slippage_bps) || 0) / 10000,
+}))
+const currentFilterOverrides = computed(() => ({
+  exclude_st: Boolean(filterForm.exclude_st),
+  exclude_suspended: Boolean(filterForm.exclude_suspended),
+  minimum_listing_days: Math.max(0, Math.round(Number(filterForm.minimum_listing_days) || 0)),
+  minimum_history_days: Math.max(0, Math.round(Number(filterForm.minimum_history_days) || 0)),
+  minimum_average_amount: Math.max(0, Number(filterForm.minimum_average_amount) || 0),
+}))
+const formExecSummary = computed(() => executionSummaryText(currentExecOverrides.value))
+const formFilterSummary = computed(() => filterSummaryText(currentFilterOverrides.value))
+const resultExecutionSummary = computed(() => executionSummaryText(result.value?.effective_config?.execution))
+const resultFilterSummary = computed(() => filterSummaryText(result.value?.effective_config?.filters))
+const costRatioPct = computed(() => {
+  const cap = num(result.value?.effective_config?.initial_capital)
+  const cost = num(totalCost.value)
+  if (!cap || cap <= 0 || cost === null) return ''
+  return `占初始资金 ${((cost / cap) * 100).toFixed(2)}%`
+})
 function chooseStrategy() {
   const strategy = selectedStrategy.value
   for (const key of Object.keys(strategyParameters)) delete strategyParameters[key]
@@ -253,6 +314,7 @@ async function loadDetail() {
         }
         form.market = usableMarket(config.market, markets.value)
         if (!reference.startsWith('package:')) Object.assign(strategyParameters, config.strategy_parameters || {})
+        if (config.execution || config.filters) syncExecFilterFromDefaults(config.execution, config.filters)
       }
     }
     audit.value = null
@@ -287,6 +349,8 @@ async function onSubmit() {
       max_positions: Number(form.max_positions),
       rebalance: form.rebalance,
       strategy_parameters: { ...strategyParameters },
+      execution_overrides: currentExecOverrides.value,
+      filter_overrides: currentFilterOverrides.value,
     })
     props.notify('回测已提交。可在「回测任务」中查看进度或取消任务。')
     tasksRefresh.value += 1
@@ -308,6 +372,12 @@ async function loadCatalog() {
     const [catalog, packages] = await Promise.all([getBacktestCatalog(), listPackages()])
     poolPreset.value = catalog.pool_preset || null
     benchmarkCoverage.value = catalog.benchmark_coverage || null
+    if (catalog.execution_defaults) executionDefaults.value = catalog.execution_defaults
+    if (catalog.filter_defaults) filterDefaults.value = catalog.filter_defaults
+    if (!execFilterInitialized && (catalog.execution_defaults || catalog.filter_defaults)) {
+      syncExecFilterFromDefaults(catalog.execution_defaults, catalog.filter_defaults)
+      execFilterInitialized = true
+    }
     strategyOptions.value = [
       ...(packages.items || []).map((p) => ({ value: `package:${p.package_id}`, label: `${p.name} · 规则策略`, top_n: p.top_n, rebalance: p.rebalance })),
       ...catalog.items,
@@ -411,8 +481,54 @@ onActivated(async () => {
       <div v-if="selectedStrategy?.parameters?.length && form.strategy !== 'factor_composite'" class="mt-5 grid gap-4 border-t border-white/10 pt-5 md:grid-cols-2 xl:grid-cols-4">
         <FormField v-for="p in selectedStrategy.parameters" :key="p.name" v-model="strategyParameters[p.name]" :label="p.label" :type="p.choices?.length ? 'select' : p.kind === 'boolean' ? 'checkbox' : ['integer', 'number'].includes(p.kind) ? 'number' : 'text'" :options="(p.choices || []).map((v) => ({ value: v, label: v }))" :min="p.minimum" :max="p.maximum" :step="p.kind === 'integer' ? 1 : 'any'" :hint="p.description" />
       </div>
-      <details :open="riskOpen" class="mt-5 rounded-xl border border-white/10 bg-white/5" @toggle="riskOpen = $event.target.open">
-        <summary class="cursor-pointer px-4 py-3 text-sm text-slate-300">风险设置 <span v-if="riskEditor?.dirty" class="text-amber-300">· 有未保存修改</span></summary>
+      <details :open="execFilterOpen" class="mt-5 rounded-xl border border-white/10 bg-white/5" @toggle="execFilterOpen = $event.target.open">
+        <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-sm text-slate-300">
+          <span class="font-medium text-white">交易成本与股票过滤</span>
+          <span class="text-xs text-slate-400">{{ formExecSummary }} · {{ formFilterSummary }}</span>
+        </summary>
+        <div class="space-y-5 border-t border-white/10 p-4 text-sm">
+          <div>
+            <div class="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+              <p class="text-xs font-semibold text-white">交易成本设置（仅对本次回测生效）</p>
+              <button type="button" class="text-xs text-indigo-300 hover:text-indigo-200" @click="resetExecFilterDefaults">恢复平台默认</button>
+            </div>
+            <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <FormField label="佣金率（万分之几，双边）" type="number" v-model="execForm.commission_wan" :min="0" :max="100" :step="0.5" hint="如 3 表示万三（0.03%）" />
+              <FormField label="单笔最低佣金（元）" type="number" v-model="execForm.minimum_commission" :min="0" :max="100" :step="1" hint="A 股常见为 ¥5" />
+              <FormField label="基础滑点（bps）" type="number" v-model="execForm.slippage_bps" :min="0" :max="200" :step="1" hint="5 bps = 0.05%（另叠加成交量冲击）" />
+              <FormField label="固定印花税（万分之几，仅卖出）" type="number" v-model="execForm.stamp_tax_wan" :min="0" :max="100" :step="1" :disabled="execForm.historical_fees" hint="关闭历史分期税费时生效" />
+            </div>
+            <div class="mt-3">
+              <FormField label="" type="checkbox" v-model="execForm.historical_fees" hint="按 A 股历史真实税费自动分期（2023-08-28 前卖出千一，之后卖出万五；过户费同步按历史分期）" />
+            </div>
+          </div>
+
+          <div class="border-t border-white/10 pt-4">
+            <p class="mb-2.5 text-xs font-semibold text-white">可交易性与股票过滤（仅对本次回测生效）</p>
+            <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div class="space-y-2.5">
+                <FormField label="" type="checkbox" v-model="filterForm.exclude_st" hint="排除 ST / *ST 股票" />
+                <FormField label="" type="checkbox" v-model="filterForm.exclude_suspended" hint="排除停牌股票" />
+                <p class="text-xs text-slate-400">✓ 开盘一字涨停无法买入、开盘跌停无法卖出（引擎默认强制执行，不可关闭）</p>
+              </div>
+              <div>
+                <FormField label="最少上市天数（交易日/自然日口径）" type="number" v-model="filterForm.minimum_listing_days" :min="0" :max="1000" :step="10" />
+                <div class="mt-1.5 flex flex-wrap gap-2 text-xs">
+                  <button type="button" class="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-slate-300 hover:bg-white/10" @click="filterForm.minimum_listing_days = 0">不限</button>
+                  <button type="button" class="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-slate-300 hover:bg-white/10" @click="filterForm.minimum_listing_days = 60">60 天</button>
+                  <button type="button" class="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-slate-300 hover:bg-white/10" @click="filterForm.minimum_listing_days = 250">250 天（约1年）</button>
+                </div>
+              </div>
+              <div class="space-y-3">
+                <FormField label="最少历史行情天数" type="number" v-model="filterForm.minimum_history_days" :min="0" :max="500" :step="10" />
+                <FormField label="最低日均成交额（元，0 为不限）" type="number" v-model="filterForm.minimum_average_amount" :min="0" :step="1000000" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </details>
+      <details :open="riskOpen" class="mt-3 rounded-xl border border-white/10 bg-white/5" @toggle="riskOpen = $event.target.open">
+        <summary class="cursor-pointer px-4 py-3 text-sm text-slate-300">风险设置（含单一行业仓位上限） <span v-if="riskEditor?.dirty" class="text-amber-300">· 有未保存修改</span></summary>
         <div class="p-3 pt-0"><RiskSettings ref="riskEditor" :notify="notify" /></div>
       </details>
       <p v-if="runError" class="mt-4 text-sm text-rose-300">{{ runError }}</p>
@@ -473,6 +589,8 @@ onActivated(async () => {
         <div v-if="current" class="rounded-xl border border-amber-400/20 bg-white/5 p-4 text-xs text-slate-300">
           <p>数据状态：{{ validityLabel(result) }}；{{ result.metrics_reliable ? '指标可计算，请结合警告审阅' : '指标不可作为可信结论' }}</p>
           <p v-if="result.effective_config" class="mt-2">实际配置：{{ shownStrategy }} · ¥{{ Number(result.effective_config.initial_capital).toLocaleString() }} · 最多 {{ result.effective_config.max_positions }} 只 · {{ rebalances.find(r => r.value === result.effective_config.rebalance)?.label }}调仓 · {{ result.effective_config.from_date }} 至 {{ result.effective_config.to_date }}</p>
+          <p v-if="resultExecutionSummary" class="mt-1.5">交易费率：{{ resultExecutionSummary }}</p>
+          <p v-if="resultFilterSummary" class="mt-1.5">股票过滤：{{ resultFilterSummary }}</p>
           <p v-if="protectionSummary" class="mt-2">策略保护：{{ protectionSummary }}</p>
           <p v-if="result.pool?.name" class="mt-2">股票池：{{ poolLabel(result.pool) }}</p>
           <p v-if="result.pool?.snapshot_date && current.from_date < result.pool.snapshot_date" class="mt-1 text-amber-300">
@@ -587,12 +705,18 @@ onActivated(async () => {
         <!-- 交易与成本 -->
         <div v-else-if="activeTab === '交易与成本'" class="space-y-5">
           <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-5">
-            <MetricCard label="订单数" :value="countText(result.orders)" />
-            <MetricCard label="成交笔数" :value="countText(result.fills)" />
+            <MetricCard label="总交易成本" :value="fmtMoney(totalCost)" :sub="costRatioPct" />
+            <MetricCard label="佣金" :value="fmtMoney(result.commission)" />
+            <MetricCard label="印花税" :value="fmtMoney(result.stamp_tax)" />
+            <MetricCard label="滑点与冲击" :value="fmtMoney(result.slippage_cost)" />
             <MetricCard label="年化换手" :value="result.annualized_turnover == null ? '—' : `${Number(result.annualized_turnover).toFixed(1)}%`" sub="单边年化" />
-            <MetricCard label="胜率" :value="fmtPct(result.win_rate)" :tone="num(result.win_rate) === null ? '' : num(result.win_rate) >= 50 ? 'text-emerald-300' : 'text-rose-300'" />
-            <MetricCard label="总交易成本" :value="fmtMoney(totalCost)" />
           </section>
+          <div class="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-slate-300">
+            <span>订单数：<strong class="text-white">{{ countText(result.orders) }}</strong></span>
+            <span>成交笔数：<strong class="text-white">{{ countText(result.fills) }}</strong></span>
+            <span>日胜率：<strong :class="num(result.win_rate) === null ? 'text-white' : num(result.win_rate) >= 50 ? 'text-rose-300' : 'text-emerald-300'">{{ fmtPct(result.win_rate) }}</strong></span>
+            <span v-if="resultExecutionSummary" class="text-slate-400">采用费率：{{ resultExecutionSummary }}</span>
+          </div>
           <div>
             <p class="mb-3 text-xs text-slate-400">交易明细</p>
             <DataTable :columns="tradeCols" :rows="current.trades || []" empty="暂无交易记录">

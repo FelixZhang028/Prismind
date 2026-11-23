@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { backtestId, countText, recordsSummary, runTime, runningText, strategyName, toggleSelection, validityLabel } from '../src/workspace/runRecords.js'
+import { backtestId, countText, executionSummaryText, filterSummaryText, recordsSummary, runTime, runningText, strategyName, toggleSelection, validityLabel } from '../src/workspace/runRecords.js'
 
 test('链接里的记录编号带不带 run- 前缀都能读出，无效写法不当成记录', () => {
   assert.equal(backtestId('run-12'), 12)
@@ -56,4 +56,39 @@ test('回测运行中的提示写出已经等了多久', () => {
   assert.match(runningText(8), /^已运行 8 秒。通常需要 1 分钟左右/)
   assert.match(runningText(65), /^已运行 1 分 05 秒。/)
   assert.match(runningText(-3), /^正在读取/)
+})
+
+test('交易费率与股票过滤白话摘要准确描述配置', () => {
+  const histText = executionSummaryText({
+    commission_rate: 0.0003,
+    minimum_commission: 5,
+    historical_fees: true,
+    slippage_rate: 0.0005,
+  })
+  assert.match(histText, /佣金万3（最低 ¥5）/)
+  assert.match(histText, /印花税按历史分期/)
+  assert.match(histText, /滑点 5bps/)
+
+  const fixedText = executionSummaryText({
+    commission_rate: 0.00015,
+    minimum_commission: 0,
+    historical_fees: false,
+    stamp_tax_rate: 0.0005,
+    slippage_rate: 0.001,
+  })
+  assert.match(fixedText, /佣金万1\.5/)
+  assert.match(fixedText, /固定印花税卖出 0\.05%/)
+  assert.match(fixedText, /滑点 10bps/)
+
+  const filterText = filterSummaryText({
+    exclude_st: true,
+    exclude_suspended: true,
+    minimum_listing_days: 250,
+    minimum_history_days: 120,
+    minimum_average_amount: 0,
+  })
+  assert.match(filterText, /排除 ST/)
+  assert.match(filterText, /排除停牌/)
+  assert.match(filterText, /上市满 250 天/)
+  assert.match(filterText, /开盘涨跌停自动拒单/)
 })

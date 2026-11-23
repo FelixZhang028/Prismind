@@ -200,6 +200,24 @@ class BacktestEngine:
         if not exposures.empty:
             exposures["date"] = pd.to_datetime(exposures["date"])
             exposures = exposures.sort_values("date")
+        market_cap_by_date: dict[date, dict[str, float]] = {}
+        if getattr(self.strategy, "needs_market_cap", False) and "raw_close" in bars.columns:
+            fundamentals = self.repository.get_fundamentals()
+            if not fundamentals.empty:
+                from quant_platform.data.fundamentals import market_capitalization, point_in_time
+
+                day_bars = bars[bars["trade_date"].isin(pd.to_datetime(dates))][
+                    ["symbol", "trade_date", "raw_close"]
+                ].copy()
+                if not day_bars.empty:
+                    shares = point_in_time(day_bars, fundamentals, ["total_shares"])["total_shares"]
+                    day_bars["market_cap"] = market_capitalization(day_bars["raw_close"], shares)
+                    valid_caps = day_bars.dropna(subset=["market_cap"])
+                    valid_caps = valid_caps[valid_caps["market_cap"] > 0]
+                    for ts, grp in valid_caps.groupby("trade_date", sort=False):
+                        market_cap_by_date[ts.date()] = dict(
+                            zip(grp["symbol"].astype(str), grp["market_cap"].astype(float), strict=True)
+                        )
         missing_fields = sorted(self.strategy.required_fields.difference(bars.columns))
         if missing_fields:
             raise ValueError(f"Market data does not satisfy strategy fields: {missing_fields}")
@@ -539,6 +557,8 @@ class BacktestEngine:
                 history,
                 symbols,
                 portfolio_drawdown=snapshot.drawdown,
+                industry_map=industry_map,
+                market_caps=market_cap_by_date.get(trade_date),
             )
             context.require_fields(self.strategy.required_fields)
             signals = self.strategy.generate_signals(context)
@@ -552,6 +572,16 @@ class BacktestEngine:
                 for symbol, position in account.positions.items()
                 if position.quantity > 0 and symbol not in triggered_exits
             }
+            industry_cap_kwargs: dict[str, object] = {}
+            if (
+                self.risk_limits.enabled
+                and self.risk_limits.max_industry_weight < 1.0 - 1e-9
+                and industry_map
+            ):
+                industry_cap_kwargs = {
+                    "max_industry_weight": self.risk_limits.max_industry_weight,
+                    "industry_map": industry_map,
+                }
             if hasattr(self.portfolio, "construct_with_history"):
                 if self.hold_buffer > 0:
                     targets = self.portfolio.construct_with_history(
@@ -563,14 +593,14 @@ class BacktestEngine:
                 else:
                     targets = self.portfolio.construct_with_history(eligible_signals, history)
             else:
+                from quant_platform.portfolio.equal_weight import EqualWeightPortfolio
+
+                construct_kwargs: dict[str, object] = {}
                 if self.hold_buffer > 0:
-                    targets = self.portfolio.construct(
-                        eligible_signals,
-                        held_symbols=held_symbols,
-                        hold_buffer=self.hold_buffer,
-                    )
-                else:
-                    targets = self.portfolio.construct(eligible_signals)
+                    construct_kwargs.update(held_symbols=held_symbols, hold_buffer=self.hold_buffer)
+                if industry_cap_kwargs and isinstance(self.portfolio, EqualWeightPortfolio):
+                    construct_kwargs.update(industry_cap_kwargs)
+                targets = self.portfolio.construct(eligible_signals, **construct_kwargs)
             pre_timing_weights = {target.symbol: target.target_weight for target in targets}
             timing_triggered = False
             if self.market_timing is not None and timing_series is not None:

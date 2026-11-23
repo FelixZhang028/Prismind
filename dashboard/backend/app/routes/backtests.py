@@ -14,8 +14,10 @@
 import json
 from dataclasses import asdict, replace as dc_replace
 from datetime import date
+from pathlib import Path
 from uuid import uuid4
 
+import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Any, Literal
@@ -48,6 +50,24 @@ from quant_platform.data.index_constituents import INDEX_UNIVERSES
 router = APIRouter(prefix="/api/v1/backtests", tags=["backtests"])
 
 
+class ExecutionOverridesIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    commission_rate: float | None = Field(None, ge=0.0, le=0.01, allow_inf_nan=False)
+    minimum_commission: float | None = Field(None, ge=0.0, le=100.0, allow_inf_nan=False)
+    historical_fees: bool | None = None
+    stamp_tax_rate: float | None = Field(None, ge=0.0, le=0.01, allow_inf_nan=False)
+    slippage_rate: float | None = Field(None, ge=0.0, le=0.02, allow_inf_nan=False)
+
+
+class FilterOverridesIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    exclude_st: bool | None = None
+    exclude_suspended: bool | None = None
+    minimum_listing_days: int | None = Field(None, ge=0, le=1000)
+    minimum_history_days: int | None = Field(None, ge=0, le=500)
+    minimum_average_amount: float | None = Field(None, ge=0.0, allow_inf_nan=False)
+
+
 class BacktestIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     strategy: str = Field(..., max_length=160)
@@ -58,6 +78,89 @@ class BacktestIn(BaseModel):
     max_positions: int = Field(10, ge=1, le=500)
     rebalance: Literal["daily", "weekly", "monthly"] = "weekly"
     strategy_parameters: dict[str, Any] = Field(default_factory=dict)
+    execution_overrides: ExecutionOverridesIn | None = None
+    filter_overrides: FilterOverridesIn | None = None
+
+
+def _execution_summary(section: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "commission_rate": float(section.get("commission_rate", 0.0003)),
+        "minimum_commission": float(section.get("minimum_commission", 5.0)),
+        "historical_fees": bool(section.get("historical_fees", True)),
+        "stamp_tax_rate": float(section.get("stamp_tax_rate", 0.0005)),
+        "transfer_fee_rate": float(section.get("transfer_fee_rate", 0.00001)),
+        "slippage_rate": float(section.get("slippage_rate", 0.0005)),
+        "impact_coefficient": float(section.get("impact_coefficient", 0.001)),
+        "max_participation": float(section.get("max_participation", 0.01)),
+    }
+
+
+def _filter_summary(section: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "exclude_st": bool(section.get("exclude_st", True)),
+        "exclude_suspended": bool(section.get("exclude_suspended", True)),
+        "minimum_listing_days": int(section.get("minimum_listing_days", 0)),
+        "minimum_history_days": int(section.get("minimum_history_days", 61)),
+        "minimum_average_amount": float(section.get("minimum_average_amount", 0.0)),
+        "reject_limit_moves": True,
+    }
+
+
+def apply_backtest_overrides(
+    service: Any,
+    execution_overrides: ExecutionOverridesIn | dict[str, Any] | None = None,
+    filter_overrides: FilterOverridesIn | dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Apply optional per-run fee and universe filter overrides and return effective snapshots."""
+    configs = getattr(service, "configs", None)
+    if not isinstance(configs, dict):
+        exec_section: dict[str, Any] = {}
+        filter_section: dict[str, Any] = {}
+    else:
+        exec_section = configs.setdefault("execution", {}).setdefault("execution", {})
+        filter_section = configs.setdefault("universe", {}).setdefault("universe", {}).setdefault("filters", {})
+
+    if execution_overrides is not None:
+        raw_exec = (
+            execution_overrides.model_dump(exclude_none=True)
+            if isinstance(execution_overrides, BaseModel)
+            else {k: v for k, v in execution_overrides.items() if v is not None}
+        )
+        exec_section.update(raw_exec)
+
+    if filter_overrides is not None:
+        raw_filters = (
+            filter_overrides.model_dump(exclude_none=True)
+            if isinstance(filter_overrides, BaseModel)
+            else {k: v for k, v in filter_overrides.items() if v is not None}
+        )
+        filter_section.update(raw_filters)
+
+    return _execution_summary(exec_section), _filter_summary(filter_section)
+
+
+def extract_snapshot_assumptions(directory: Path | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Read effective execution fee and universe filter settings from a persisted run snapshot."""
+    if directory is None:
+        return None, None
+    path = directory / "config.snapshot.yaml"
+    if not path.is_file():
+        return None, None
+    try:
+        snapshot = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return None, None
+    if not isinstance(snapshot, dict):
+        return None, None
+    exec_root = snapshot.get("execution") or {}
+    exec_section = exec_root.get("execution") if isinstance(exec_root, dict) and isinstance(exec_root.get("execution"), dict) else exec_root
+    uni_root = snapshot.get("universe") or {}
+    uni_section = uni_root.get("universe") if isinstance(uni_root, dict) and isinstance(uni_root.get("universe"), dict) else uni_root
+    filter_section = uni_section.get("filters") if isinstance(uni_section, dict) and isinstance(uni_section.get("filters"), dict) else {}
+    return (
+        _execution_summary(exec_section) if isinstance(exec_section, dict) and exec_section else None,
+        _filter_summary(filter_section) if isinstance(filter_section, dict) and filter_section else None,
+    )
 
 
 # 只给管理员的策略：LLM 多智能体会按用户填的地址调用模型（可能带上平台的模型密钥），
@@ -127,10 +230,15 @@ def submit_backtest(body: BacktestIn, user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=422, detail="规则策略请在创建页修改指标规则。")
         return backtest_package(body.strategy.removeprefix("package:"), PackageBacktestIn(
             from_date=start, to_date=end, initial_cash=body.initial_capital,
-            top_n=body.max_positions, rebalance=body.rebalance, market=body.market), user)
+            top_n=body.max_positions, rebalance=body.rebalance, market=body.market,
+            execution_overrides=body.execution_overrides,
+            filter_overrides=body.filter_overrides), user)
 
     service = build_backtest_service(user)
     use_market(service, body.market)
+    effective_execution, effective_filters = apply_backtest_overrides(
+        service, body.execution_overrides, body.filter_overrides
+    )
     reference = body.strategy.strip()
     plugin = _resolve_plugin(service, reference, user)
     defaults = service.default_request()
@@ -175,6 +283,8 @@ def submit_backtest(body: BacktestIn, user: dict = Depends(get_current_user)):
         "max_positions": request.top_n,
         "rebalance": request.rebalance,
         "from_date": start, "to_date": end,
+        "execution": effective_execution,
+        "filters": effective_filters,
     }
     result = with_run_evidence(result)
     payload = json.dumps(result, ensure_ascii=False)
@@ -204,11 +314,15 @@ def backtest_catalog(user: dict = Depends(get_current_user)):
     if symbol:
         bars = market_repository().read_table("benchmark_bars")
         span = next((item for item in benchmark_options(bars) if item["symbol"] == symbol), None)
+    exec_defaults = _execution_summary(getattr(service, "configs", {}).get("execution", {}).get("execution", {}))
+    filter_defaults = _filter_summary(getattr(service, "configs", {}).get("universe", {}).get("universe", {}).get("filters", {}))
     return {"items": items,
             "default": service.default_request().strategy_plugin,
             "market": CURRENT_POOL,
             "markets": market_options(),
             "pool_preset": saved_pool[2] if saved_pool else None,
+            "execution_defaults": exec_defaults,
+            "filter_defaults": filter_defaults,
             "benchmark_coverage": (span or {"symbol": symbol, "name": BENCHMARK_NAMES.get(symbol, symbol)}) if symbol else None}
 
 
@@ -247,6 +361,13 @@ def get_backtest(bid: int, user: dict = Depends(get_current_user)):
             result["annualized_turnover"] = annual_breakdown["annualized_turnover"]
         if result.get("portfolio_turnover") is None and annual_breakdown.get("portfolio_turnover") is not None:
             result["portfolio_turnover"] = annual_breakdown["portfolio_turnover"]
+    eff = result.get("effective_config")
+    if isinstance(eff, dict) and (eff.get("execution") is None or eff.get("filters") is None):
+        snap_exec, snap_filters = extract_snapshot_assumptions(directory)
+        if eff.get("execution") is None and snap_exec is not None:
+            eff["execution"] = snap_exec
+        if eff.get("filters") is None and snap_filters is not None:
+            eff["filters"] = snap_filters
     return {
         "id": row["id"],
         "strategy": row["strategy"],

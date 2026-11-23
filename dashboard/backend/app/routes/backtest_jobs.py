@@ -42,7 +42,9 @@ def prepare(body: JobIn, user: dict) -> dict:
             kind = "package"
             values = dict(from_date=request.from_date, to_date=request.to_date,
                           initial_cash=request.initial_capital, top_n=request.max_positions,
-                          rebalance=request.rebalance, market=request.market)
+                          rebalance=request.rebalance, market=request.market,
+                          execution_overrides=request.execution_overrides.model_dump(exclude_none=True) if request.execution_overrides else None,
+                          filter_overrides=request.filter_overrides.model_dump(exclude_none=True) if request.filter_overrides else None)
         else:
             values = request.model_dump()
     else:

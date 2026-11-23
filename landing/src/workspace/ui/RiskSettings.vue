@@ -20,6 +20,7 @@ const form = reactive({
   daily_position_limits: false,
   drawdown_action: 'stop_new',
   drawdown_target_weight: 0.4,
+  max_industry_weight: 1.0,
 })
 
 const actionOptions = [
@@ -58,6 +59,7 @@ async function loadRisk() {
       daily_position_limits: !!data.daily_position_limits,
       drawdown_action: data.drawdown_action,
       drawdown_target_weight: data.drawdown_target_weight,
+      max_industry_weight: data.max_industry_weight ?? 1.0,
     })
     savedSnapshot.value = JSON.stringify(form)
   } catch (e) {
@@ -82,6 +84,7 @@ async function onSubmit() {
       daily_position_limits: !!form.daily_position_limits,
       drawdown_action: form.drawdown_action,
       drawdown_target_weight: Number(form.drawdown_target_weight),
+      max_industry_weight: Number(form.max_industry_weight),
     })
     savedSnapshot.value = submittedSnapshot
     props.notify('已保存')
@@ -109,6 +112,10 @@ onActivated(() => {
           <div>
             <FormField label="单只股票最大权重" type="number" v-model="form.max_single_weight" :min="0" :max="1" :step="0.05" />
             <p class="mt-1 text-xs text-slate-500">持股太少时，平均分配会超过这个上限：每只按上限买，其余留作现金。</p>
+          </div>
+          <div>
+            <FormField label="单一行业最大权重" type="number" v-model="form.max_industry_weight" :min="0.05" :max="1" :step="0.05" />
+            <p class="mt-1 text-xs text-slate-500">填 1 表示不限制；例如填 0.25 表示单一证监会行业合计不超过 25%，选股时自动跳过已满额行业，按评分顺延递补其他行业股票。</p>
           </div>
           <div>
             <FormField label="" type="checkbox" v-model="form.daily_position_limits" hint="每日检查实际持仓并自动纠偏" />

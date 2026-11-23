@@ -316,6 +316,7 @@ def research_combination(
             "name": f.name, "display_name": f.display_name or f.name, "version": f.version,
             "weight": weights[f.name], "direction": directions[f.name],
             "clip": clip, "missing": missing, "standardization": standardization,
+            **({"neutralization": neutralization} if neutralization != "none" else {}),
             **({"custom_factor": custom_factor_to_dict(f)} if isinstance(f, CustomFactor) else {}),
         }
         for f in components

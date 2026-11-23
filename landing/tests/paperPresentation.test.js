@@ -69,7 +69,7 @@ test('规则策略与多因子合成策略的回测都能带着设置开模拟�
 
 test('因子组合解析、标准化序列化与中文摘要', () => {
   const rows = parseFactorRows(JSON.stringify([
-    { name: 'momentum_20', weight: 0.6, direction: 1, clip: true, missing: 'drop', standardization: 'rank' },
+    { name: 'momentum_20', weight: 0.6, direction: 1, clip: true, missing: 'drop', standardization: 'rank', neutralization: 'industry_rank' },
     { name: 'zero_factor', weight: 0, direction: 1 },
     { name: 'volatility_20', weight: 0.4, direction: -1 },
   ]))
@@ -79,6 +79,7 @@ test('因子组合解析、标准化序列化与中文摘要', () => {
   const serialized = JSON.parse(serializeFactorRows(rows))
   assert.equal(serialized.length, 2)
   assert.equal(serialized[1].standardization, 'rank')
+  assert.equal(serialized[1].neutralization, 'industry_rank')
   assert.equal(serialized[1].clip, true)
   assert.equal(serialized[1].missing, 'drop')
   assert.equal(serialized[1].direction, -1)
