@@ -142,14 +142,35 @@ const totalCost = computed(() => {
 // 累计收益、最大回撤已在概览顶部，总交易成本在“交易与成本”里，这里不重复。
 const metrics = computed(() => {
   const annual = num(result.value.annual_return)
+  const turnover = num(result.value.annualized_turnover)
   return [
     { label: '最终权益', value: fmtMoney(finalEquity.value), tone: '' },
     { label: '年化收益', value: fmtPct(annual), tone: annual === null || annual === 0 ? '' : annual > 0 ? 'text-rose-300' : 'text-emerald-300' }, // 涨红跌绿
+    { label: '年化换手', value: turnover === null ? '—' : `${turnover.toFixed(1)}%`, sub: '单边年化', tone: '' },
     { label: '夏普比率', value: fmtNum(result.value.sharpe), tone: '' },
     { label: '索提诺比率', value: fmtNum(result.value.sortino), tone: '' },
     { label: '卡玛比率', value: fmtNum(result.value.calmar), tone: '' },
   ]
 })
+
+const annualBreakdown = computed(() => current.value?.annual_breakdown || null)
+const hasAnnualBenchmark = computed(() => Boolean(annualBreakdown.value?.rows?.some((r) => r.benchmark_return_pct != null)))
+const annualCols = computed(() => [
+  { key: 'year', label: '年份' },
+  { key: 'return_pct', label: '策略收益', align: 'right' },
+  ...(hasAnnualBenchmark.value ? [
+    { key: 'benchmark_return_pct', label: `${annualBreakdown.value?.benchmark_name || '基准'}收益`, align: 'right' },
+    { key: 'excess_return_pct', label: '超额收益', align: 'right' },
+  ] : []),
+  { key: 'max_drawdown_pct', label: '最大回撤', align: 'right' },
+  { key: 'turnover_pct', label: '当年换手(单边)', align: 'right' },
+  { key: 'fills', label: '成交笔数', align: 'right' },
+  { key: 'trading_days', label: '交易日', align: 'right' },
+])
+const signedPct = (v) => {
+  const n = num(v)
+  return n === null ? '—' : `${n > 0 ? '+' : ''}${n.toFixed(2)}%`
+}
 
 // 和基准的对比。默认是回测时记录的基准（沪深 300），可以换成本地有行情的其他常用指数；
 // 换过一次后记住这个选择。回测没有记录基准时为空。
@@ -471,8 +492,8 @@ onActivated(async () => {
             <MetricCard label="最大回撤" :value="fmtPct(result.max_drawdown)" sub="资金曲线从峰值到谷底的最大跌幅" tone="text-emerald-300" />
             <MetricCard label="可信度评级" :value="gradeValue" :sub="gradeSub" :tone="gradeTone" />
           </section>
-          <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-5">
-            <MetricCard v-for="m in metrics" :key="m.label" :label="m.label" :value="m.value" :tone="m.tone" />
+          <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-6">
+            <MetricCard v-for="m in metrics" :key="m.label" :label="m.label" :value="m.value" :sub="m.sub" :tone="m.tone" />
           </section>
           <button
             @click="openAudit"
@@ -529,13 +550,46 @@ onActivated(async () => {
             </div>
             <p v-if="comparisonNote" class="text-xs text-slate-400">{{ comparisonNote }}</p>
           </template>
+
+          <!-- 分年收益与换手 -->
+          <div v-if="annualBreakdown?.rows?.length" class="rounded-xl border border-white/10 bg-white/5 p-4">
+            <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <h3 class="text-sm font-semibold text-white">分年收益与换手</h3>
+              <span class="text-xs text-slate-400">
+                全区间年化换手（单边）{{ result.annualized_turnover == null ? '—' : `${Number(result.annualized_turnover).toFixed(1)}%` }} · 后续年份以上年末收盘净值为基期，各年复利连乘等于总收益
+              </span>
+            </div>
+            <DataTable :columns="annualCols" :rows="annualBreakdown.rows" empty="暂无分年数据">
+              <template #cell-year="{ row }">
+                <span class="font-medium text-white">{{ row.year }}</span>
+                <span class="ml-1.5 text-[11px] text-slate-500">{{ row.start_date.slice(5) }}~{{ row.end_date.slice(5) }}</span>
+              </template>
+              <template #cell-return_pct="{ value }">
+                <span class="font-semibold" :class="returnTone(value)">{{ signedPct(value) }}</span>
+              </template>
+              <template #cell-benchmark_return_pct="{ value }">
+                <span :class="returnTone(value)">{{ signedPct(value) }}</span>
+              </template>
+              <template #cell-excess_return_pct="{ value }">
+                <span class="font-medium" :class="returnTone(value)">{{ signedPct(value) }}</span>
+              </template>
+              <template #cell-max_drawdown_pct="{ value }">
+                <span class="text-emerald-300">{{ value == null ? '—' : `${Number(value).toFixed(2)}%` }}</span>
+              </template>
+              <template #cell-turnover_pct="{ value }">
+                <span class="tabular-nums text-slate-200">{{ value == null ? '—' : `${Number(value).toFixed(1)}%` }}</span>
+              </template>
+              <template #cell-fills="{ value }">{{ countText(value) }}</template>
+            </DataTable>
+          </div>
         </div>
 
         <!-- 交易与成本 -->
         <div v-else-if="activeTab === '交易与成本'" class="space-y-5">
-          <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          <section class="grid gap-5 sm:grid-cols-2 xl:grid-cols-5">
             <MetricCard label="订单数" :value="countText(result.orders)" />
             <MetricCard label="成交笔数" :value="countText(result.fills)" />
+            <MetricCard label="年化换手" :value="result.annualized_turnover == null ? '—' : `${Number(result.annualized_turnover).toFixed(1)}%`" sub="单边年化" />
             <MetricCard label="胜率" :value="fmtPct(result.win_rate)" :tone="num(result.win_rate) === null ? '' : num(result.win_rate) >= 50 ? 'text-emerald-300' : 'text-rose-300'" />
             <MetricCard label="总交易成本" :value="fmtMoney(totalCost)" />
           </section>

@@ -36,6 +36,7 @@ def compare_persisted_runs(records):
             "start_date": str(dates.min().date()), "end_date": str(dates.max().date()),
             "cumulative_return": percent("cumulative_return"), "annual_return": percent("annual_return"),
             "max_drawdown": percent("max_drawdown", True),
+            "annualized_turnover": percent("annualized_turnover"),
             **{k: _round(summary.get(k)) for k in ("sharpe", "sortino", "calmar")},
             **{k: result[k] for k in ("validity_status", "metrics_reliable", "legacy_unverified", "validity_issues")},
         })

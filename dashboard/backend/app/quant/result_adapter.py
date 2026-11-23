@@ -66,6 +66,8 @@ def backtest_run_to_result(run: BacktestRun, names: dict[str, str] | None = None
         "commission": _round(summary.get("commission")),
         "stamp_tax": _round(summary.get("stamp_tax")),
         "slippage_cost": _round(summary.get("slippage_cost")),
+        "portfolio_turnover": _percent(summary.get("portfolio_turnover")),
+        "annualized_turnover": _percent(summary.get("annualized_turnover")),
         "fills": int(summary.get("fills") or 0),
         "orders": int(summary.get("orders") or 0),
         "closed_trades": int(summary.get("closed_trades") or 0),

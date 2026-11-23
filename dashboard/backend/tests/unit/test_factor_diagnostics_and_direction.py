@@ -482,3 +482,95 @@ def test_decay_and_research_combination_report_bh_fdr_q_values(api, monkeypatch)
     assert any("BH-FDR q 值" in row for row in body["comparison"])
 
 
+def test_factor_research_supports_neutralization_without_future_leak(api, monkeypatch):
+    bars, fundamentals, days = _make_multi_year_panel()
+    symbols = sorted(bars["symbol"].unique())
+    exposures = pd.DataFrame([
+        {"symbol": sym, "date": pd.Timestamp("2024-01-01"), "industry": "银行" if i < 5 else "电子"}
+        for i, sym in enumerate(symbols)
+    ])
+
+    class _ExposureRepo(_SyntheticFactorRepo):
+        def read_table(self, name: str) -> pd.DataFrame:
+            if name == "security_exposures":
+                return exposures.copy()
+            return pd.DataFrame()
+
+    repo = _ExposureRepo(bars, fundamentals)
+    f_good = _SmallCapProxyFactor(name="small_cap_proxy", display_name="小盘测试因子", direction=1)
+    f_inv = _InverseSignalFactor(name="inverse_alpha", display_name="需反转测试因子", direction=1)
+
+    res_size = research_combination(
+        repo,
+        (f_good, f_inv),
+        train_start=days[0],
+        train_end=days[40],
+        test_start=days[41],
+        test_end=days[-1],
+        mode="equal",
+        neutralization="size",
+        horizon=2,
+        n_groups=5,
+    )
+    assert res_size.neutralization == "size"
+    assert not res_size.comparison.empty
+
+    res_ind = research_combination(
+        repo,
+        (f_good, f_inv),
+        train_start=days[0],
+        train_end=days[40],
+        test_start=days[41],
+        test_end=days[-1],
+        mode="equal",
+        neutralization="industry_rank",
+        horizon=2,
+        n_groups=5,
+    )
+    assert res_ind.neutralization == "industry_rank"
+
+    # API 透传 neutralization 到组合研究与多因子合成
+    client, _, root = api
+    repo.root = root  # type: ignore[attr-defined]
+    monkeypatch.setattr(workspace, "market_repository", lambda: repo)
+    monkeypatch.setattr(workspace, "local_data_bounds", lambda: (days[0], days[-1]))
+    monkeypatch.setattr(
+        workspace,
+        "_factor_scope",
+        lambda user, universe, start, end, submitted_symbols=None: (repo, symbols),
+    )
+    resp_research = client.post(
+        "/api/v1/factors/research",
+        json={
+            "factor_names": ["momentum_20", "volatility_20"],
+            "weight_mode": "equal",
+            "neutralization": "industry_rank",
+            "horizon": 2,
+            "n_groups": 5,
+            "train_start": days[0].isoformat(),
+            "train_end": days[40].isoformat(),
+            "test_start": days[41].isoformat(),
+            "test_end": days[-1].isoformat(),
+        },
+    )
+    assert resp_research.status_code == 200, resp_research.text
+    assert resp_research.json()["neutralization"] == "industry_rank"
+
+    resp_comp = client.post(
+        "/api/v1/factors/composite",
+        json={
+            "factor_names": ["momentum_20", "volatility_20"],
+            "weight_mode": "equal",
+            "neutralization": "size",
+            "horizon": 2,
+            "n_groups": 5,
+            "start_date": days[0].isoformat(),
+            "end_date": days[-1].isoformat(),
+            "train_end": days[40].isoformat(),
+            "test_start": days[41].isoformat(),
+        },
+    )
+    assert resp_comp.status_code == 200, resp_comp.text
+    assert resp_comp.json()["neutralization"] == "size"
+
+

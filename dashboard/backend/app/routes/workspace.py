@@ -886,6 +886,7 @@ class FactorCompositeIn(BaseModel):
     winsorize: bool = True
     zscore: bool = False
     standardization: Literal["zscore", "rank"] = "zscore"
+    neutralization: Literal["none", "industry", "size", "both", "industry_rank"] = "none"
     fill_method: str = "drop"
     corr_threshold: float = 0.7
     start_date: str = ""
@@ -909,6 +910,7 @@ class FactorResearchIn(BaseModel):
     clip: bool = True
     missing: str = "drop"  # drop | median
     standardization: Literal["zscore", "rank"] = "zscore"
+    neutralization: Literal["none", "industry", "size", "both", "industry_rank"] = "none"
     horizon: int = Field(5, ge=1, le=20)
     n_groups: int = Field(5, ge=5, le=10)
     universe: str = Field(CURRENT_POOL, max_length=40)
@@ -1071,6 +1073,7 @@ def _factor_composite(body: FactorCompositeIn, components: tuple, repository: An
             custom_weights=body.weights, custom_directions=body.directions,
             clip=body.winsorize, missing=body.fill_method,
             standardization=body.standardization,
+            neutralization=body.neutralization,
             horizon=body.horizon, n_groups=body.n_groups,
             symbols=symbols, corr_threshold=body.corr_threshold,
         )
@@ -1081,6 +1084,7 @@ def _factor_composite(body: FactorCompositeIn, components: tuple, repository: An
         "correlation_matrix": corr, "dropped_factors": result.dropped,
         "weights": result.weights, "composite_spec": result.spec,
         "universe": body.universe,
+        "neutralization": body.neutralization,
         "report": factor_report_to_dict(result.reports["我的组合"]),
         "evaluation_mode": "out_of_sample", "train_start": start.isoformat(),
         "train_end": train_end.isoformat(), "test_start": test_start.isoformat(), "test_end": end.isoformat(),
@@ -1146,6 +1150,7 @@ def _factor_research(body: FactorResearchIn, components: list, repository: Any, 
             clip=body.clip,
             missing=body.missing,
             standardization=body.standardization,
+            neutralization=body.neutralization,
             horizon=body.horizon,
             n_groups=body.n_groups,
             symbols=symbols,
@@ -1179,6 +1184,7 @@ def _factor_research(body: FactorResearchIn, components: list, repository: Any, 
         "multiple_testing": result.multiple_testing,
         "composite_spec": result.spec,
         "universe": body.universe,
+        "neutralization": body.neutralization,
         "reports": {label: factor_report_to_dict(report) for label, report in result.reports.items()},
     }
 

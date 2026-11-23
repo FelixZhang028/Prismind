@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from ..database import _now, get_conn
 from ..quant.benchmark_view import benchmark_comparison, benchmark_options
+from ..quant.backtest_annual import backtest_annual_breakdown
 from ..quant.backtest_health import backtest_health_check
 from ..quant.backtest_jobs import backtest_slot, save_result
 from ..quant.compute import computing
@@ -234,6 +235,18 @@ def get_backtest(bid: int, user: dict = Depends(get_current_user)):
             fundamentals = repo.get_fundamentals()
         except Exception:  # noqa: BLE001
             fundamentals = None
+    benchmark = benchmark_comparison(directory, bars=bars)
+    annual_breakdown = backtest_annual_breakdown(
+        directory,
+        result,
+        benchmark_bars=bars,
+        benchmark_symbol=(benchmark or {}).get("symbol"),
+    )
+    if annual_breakdown:
+        if result.get("annualized_turnover") is None and annual_breakdown.get("annualized_turnover") is not None:
+            result["annualized_turnover"] = annual_breakdown["annualized_turnover"]
+        if result.get("portfolio_turnover") is None and annual_breakdown.get("portfolio_turnover") is not None:
+            result["portfolio_turnover"] = annual_breakdown["portfolio_turnover"]
     return {
         "id": row["id"],
         "strategy": row["strategy"],
@@ -246,9 +259,11 @@ def get_backtest(bid: int, user: dict = Depends(get_current_user)):
         "trades": result.get("trades") or [],
         "positions": result.get("positions") or [],
         # 和基准的对比在查看时从运行目录读出，所以以前的回测也有。
-        "benchmark": benchmark_comparison(directory, bars=bars),
+        "benchmark": benchmark,
         # 本地有行情的常用指数：结果页可以换一个指数来比较。
         "benchmark_options": benchmark_options(bars) if bars is not None else [],
+        # 分年收益与年换手：同样从运行目录实时算出，历史回测打开即有。
+        "annual_breakdown": annual_breakdown,
         # 白话体检卡：同样从运行目录实时算出，历史回测打开即有。
         "health_check": backtest_health_check(
             directory,

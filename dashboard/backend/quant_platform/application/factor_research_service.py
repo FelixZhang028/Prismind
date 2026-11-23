@@ -11,6 +11,7 @@ import pandas as pd
 from quant_platform.core import deadline
 from quant_platform.data.extras import extra_columns
 from quant_platform.data.index_constituents import UNIVERSE_COLUMN
+from quant_platform.data.industry import EXPOSURES_TABLE
 from quant_platform.factors.base import FactorDefinition
 from quant_platform.factors.combine import STANDARDIZATIONS, combine_factors, correlation_matrix, prepare_frames, drop_highly_correlated
 from quant_platform.factors.custom import CustomFactor, custom_factor_to_dict
@@ -28,7 +29,7 @@ class FrameFactor(FactorDefinition):
 
 
 class BoundedRepository:
-    """Cap both factor history and forward-return prices at the phase boundary."""
+    """Cap factor history, exposures, fundamentals, and forward-return prices at the phase boundary."""
 
     def __init__(self, repository, end: date, symbols=None):
         self.repository, self.end, self.symbols = repository, end, symbols
@@ -38,6 +39,31 @@ class BoundedRepository:
         return self.repository.get_daily_bars(
             symbols=symbols if symbols is not None else self.symbols, end_date=cutoff, **options
         )
+
+    def read_table(self, name: str) -> pd.DataFrame:
+        reader = getattr(self.repository, "read_table", None)
+        if reader is None:
+            return pd.DataFrame()
+        frame = reader(name)
+        if not isinstance(frame, pd.DataFrame) or frame.empty:
+            return frame
+        cutoff = pd.Timestamp(self.end)
+        for col in ("effective_date", "date", "trade_date"):
+            if col in frame.columns:
+                return frame[pd.to_datetime(frame[col], errors="coerce") <= cutoff].copy()
+        return frame
+
+    def get_fundamentals(self) -> pd.DataFrame:
+        getter = getattr(self.repository, "get_fundamentals", None)
+        if getter is None:
+            return pd.DataFrame()
+        frame = getter()
+        if not isinstance(frame, pd.DataFrame) or frame.empty:
+            return frame
+        if "pub_date" in frame.columns:
+            cutoff = pd.Timestamp(self.end)
+            return frame[pd.to_datetime(frame["pub_date"], errors="coerce") <= cutoff].copy()
+        return frame
 
 
 @dataclass
@@ -51,6 +77,7 @@ class CombinationResult:
     train_signal_end: date | None = None
     purged_sessions: int = 0
     multiple_testing: dict | None = None
+    neutralization: str = "none"
 
 
 def research_combination(
@@ -67,6 +94,7 @@ def research_combination(
     clip: bool = True,
     missing: str = "drop",
     standardization: str = "zscore",
+    neutralization: str = "none",
     horizon: int = 5,
     n_groups: int = 5,
     symbols: list[str] | None = None,
@@ -91,6 +119,8 @@ def research_combination(
         raise ValueError("研究组合请选择剔除缺失或中位数填充。")
     if standardization not in STANDARDIZATIONS:
         raise ValueError("未知标准化方式")
+    if neutralization not in {"none", "industry", "size", "both", "industry_rank"}:
+        raise ValueError("不支持的中性化方式")
 
     extra = extra_columns(field for factor in components for field in factor.required_fields)
 
@@ -102,6 +132,17 @@ def research_combination(
         members = bars[bars[UNIVERSE_COLUMN]] if UNIVERSE_COLUMN in bars.columns else bars
         universe = members[["trade_date", "symbol"]].rename(columns={"trade_date": "date"})
         universe["date"] = pd.to_datetime(universe["date"]).dt.normalize()
+        phase_universe = universe[universe["date"].between(pd.Timestamp(start), pd.Timestamp(end))]
+        phase_evaluator = (
+            FactorEvaluator(BoundedRepository(repository, end, symbols))
+            if neutralization != "none"
+            else None
+        )
+        phase_changes = (
+            phase_evaluator.repository.read_table(EXPOSURES_TABLE)
+            if phase_evaluator is not None and neutralization in {"industry", "both", "industry_rank"}
+            else None
+        )
         frames = {}
         for factor in components:
             deadline.check()
@@ -110,7 +151,21 @@ def research_combination(
             except ValueError as exc:
                 raise ValueError(f"{period}（{start} 至 {end}）计算失败。{exc}") from exc
             values["date"] = pd.to_datetime(values["date"]).dt.normalize()
-            frames[factor.name] = universe.merge(values, on=["date", "symbol"], how="left")
+            merged = phase_universe.merge(values, on=["date", "symbol"], how="left")
+            if phase_evaluator is not None:
+                try:
+                    neutralized, _, _ = phase_evaluator._neutralize_with_coverage(
+                        merged,
+                        bars,
+                        neutralization,
+                        changes=phase_changes,
+                        start_date=start,
+                        end_date=end,
+                    )
+                except ValueError as exc:
+                    raise ValueError(f"{period}（{start} 至 {end}）中性化失败。{exc}") from exc
+                merged = phase_universe.merge(neutralized, on=["date", "symbol"], how="left")
+            frames[factor.name] = merged
         sessions = pd.DatetimeIndex(pd.to_datetime(bars.trade_date).unique()).sort_values()
         return frames, sessions
 
@@ -266,5 +321,5 @@ def research_combination(
         for f in components
     ]
     return CombinationResult(
-        weights, correlation, pd.DataFrame(rows), reports, spec, dropped, signal_end, purge, multiple_testing
+        weights, correlation, pd.DataFrame(rows), reports, spec, dropped, signal_end, purge, multiple_testing, neutralization
     )
