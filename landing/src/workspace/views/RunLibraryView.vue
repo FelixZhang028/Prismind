@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onActivated, ref } from 'vue'
+import { computed, nextTick, onActivated, ref } from 'vue'
 import { openResearch } from '../researchNavigation.js'
 import { getBacktestCatalog, listRuns, compareRuns, archiveRuns } from '../../api.js'
 import { poolLabel } from '../runRecords.js'
@@ -124,6 +124,8 @@ function onReset() {
 // ---------- 结果对比 ----------
 const selectedIds = ref([])
 const comparing = ref(false)
+const compareError = ref('')
+const compareSection = ref(null)
 const comparison = ref(null)
 const comparisonNote = ref('')
 const comparisonScope = ref(null)
@@ -133,27 +135,47 @@ const palette = ['#818cf8', '#34d399', '#fbbf24', '#f472b6', '#22d3ee']
 
 const runMap = computed(() => Object.fromEntries(runs.value.map((r) => [r.run_id, r])))
 const selectedCount = computed(() => selectedIds.value.length)
+const navDates = computed(() => navPoints.value.map((p) => p.trade_date || ''))
+const compareDisabled = computed(() => comparing.value || selectedCount.value < 2 || selectedCount.value > MAX_COMPARED)
+const compareTitle = computed(() => {
+  if (selectedCount.value < 2) return `请先勾选至少 2 条回测记录（当前已选 ${selectedCount.value} 条）`
+  if (selectedCount.value > MAX_COMPARED) return `每次最多对比 ${MAX_COMPARED} 条回测记录（当前已选 ${selectedCount.value} 条）`
+  return '对比所选回测的净值与绩效指标'
+})
 
 function toggleSelect(runId) {
   if (!selectedIds.value.includes(runId) && selectedIds.value.length >= 500) return props.notify('每批最多选择 500 条记录')
   selectedIds.value = selectedIds.value.includes(runId) ? selectedIds.value.filter((id) => id !== runId) : [...selectedIds.value, runId]
 }
 
+function closeComparison() {
+  comparison.value = null
+  compareError.value = ''
+  navPoints.value = []
+  compareRunIds.value = []
+}
+
 async function onCompare() {
   const ids = [...selectedIds.value]
   if (ids.length < 2 || ids.length > MAX_COMPARED) return props.notify(`请选择 2~${MAX_COMPARED} 次回测进行对比`)
   comparing.value = true
+  compareError.value = ''
   comparison.value = null
   navPoints.value = []
   try {
     const data = await compareRuns(ids)
     comparison.value = data?.comparison || []
-    comparisonNote.value = data.note
-    comparisonScope.value = data.chart_scope
+    comparisonNote.value = data.note || ''
+    comparisonScope.value = data.chart_scope || null
     navPoints.value = data?.normalized_nav || []
     compareRunIds.value = ids
+    await nextTick()
+    compareSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   } catch (e) {
-    props.notify(e.message || '对比失败')
+    compareError.value = e.message || '对比失败'
+    props.notify(compareError.value)
+    await nextTick()
+    compareSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   } finally {
     comparing.value = false
   }
@@ -215,6 +237,7 @@ const compareColumns = [
   { key: 'pool', label: '股票池' },
   { key: 'cumulative_return', label: '累计收益', align: 'right' },
   { key: 'annual_return', label: '年化收益', align: 'right' },
+  { key: 'annualized_turnover', label: '年化换手', align: 'right' },
   { key: 'max_drawdown', label: '最大回撤', align: 'right' },
   { key: 'sharpe', label: '夏普', align: 'right' },
   { key: 'sortino', label: '索提诺', align: 'right' },
@@ -237,14 +260,91 @@ onActivated(() => {
       <p class="mt-1 text-sm text-slate-400">每一次回测都保存在这里：重新打开结果、带入配置继续研究，或勾选 2~5 次做对比。</p>
     </div>
 
+    <!-- 对比结果与错误提示（置顶显示，点完“对比所选”立刻可见） -->
+    <div ref="compareSection">
+      <div
+        v-if="compareError"
+        role="alert"
+        class="flex items-start justify-between gap-3 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200"
+      >
+        <div>
+          <p class="font-medium">无法对比所选回测</p>
+          <p class="mt-1 text-xs text-rose-200/90">{{ compareError }}</p>
+        </div>
+        <button type="button" class="shrink-0 text-xs text-rose-200 underline hover:text-white" @click="compareError = ''">关闭</button>
+      </div>
+
+      <SectionCard v-if="comparison && comparison.length" title="对比结果" hint="所选回测的净值与绩效指标。">
+        <template #actions>
+          <button type="button" class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300 transition hover:bg-white/10" @click="closeComparison">收起对比</button>
+        </template>
+        <div class="space-y-6">
+          <div>
+            <div class="flex items-center justify-between text-xs text-slate-400">
+              <span>净值对比 · {{ comparisonScope?.start_date }} 至 {{ comparisonScope?.end_date }}</span>
+              <span class="text-slate-500">{{ comparison.length }} 次回测</span>
+            </div>
+            <div class="mt-2">
+              <LineChart :series="chartSeries" :dates="navDates" :baseline="1" :height="220" :fill="false" />
+            </div>
+            <div class="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+              <div v-for="(s, i) in chartSeries" :key="i" class="flex items-center gap-1.5 text-xs text-slate-400">
+                <span class="h-2 w-2 rounded-full" :style="{ background: s.color }"></span>
+                <span class="text-slate-300">{{ s.label }}</span>
+                <span class="font-mono text-slate-500">{{ compareRunIds[i] }}</span>
+              </div>
+            </div>
+          </div>
+
+          <p class="text-xs text-slate-400">{{ comparisonNote }}</p>
+          <DataTable :columns="compareColumns" :rows="comparisonRows" empty="暂无对比结果">
+            <template #cell-run_id="{ row }">
+              <span class="font-mono text-xs text-indigo-300">{{ row.run_id }}</span>
+            </template>
+            <template #cell-strategy="{ row }">
+              <span class="font-medium text-white">{{ row.strategy }}</span>
+            </template>
+            <template #cell-cumulative_return="{ row }">
+              <span class="font-semibold" :class="pctClass(row.cumulative_return)">{{ fmtPct(row.cumulative_return) }}</span>
+            </template>
+            <template #cell-annualized_turnover="{ row }">
+              <span class="tabular-nums text-slate-300">{{ row.annualized_turnover == null ? '—' : `${Number(row.annualized_turnover).toFixed(1)}%` }}</span>
+            </template>
+            <template #cell-max_drawdown="{ row }">
+              <span class="font-medium text-rose-300">{{ fmtDd(row.max_drawdown) }}</span>
+            </template>
+            <template #cell-sharpe="{ row }">
+              <span class="text-slate-300">{{ fmtRatio(row.sharpe) }}</span>
+            </template>
+            <template #cell-sortino="{ row }">
+              <span class="text-slate-300">{{ fmtRatio(row.sortino) }}</span>
+            </template>
+            <template #cell-calmar="{ row }">
+              <span class="text-slate-300">{{ fmtRatio(row.calmar) }}</span>
+            </template>
+            <template #cell-pool="{ row }">
+              <span class="block min-w-28 max-w-48 whitespace-normal text-xs text-slate-300">{{ poolLabel(row.pool) }}</span>
+            </template>
+            <template #cell-annual_return="{ row }">
+              <span class="font-semibold" :class="pctClass(row.annual_return)">{{ fmtPct(row.annual_return) }}</span>
+            </template>
+            <template #cell-metrics_reliable="{ row }">
+              <span class="inline-flex rounded-full border px-2.5 py-0.5 text-xs" :class="trustInfo(row).cls">{{ trustInfo(row).text }}</span>
+            </template>
+          </DataTable>
+        </div>
+      </SectionCard>
+    </div>
+
     <!-- 回测记录：搜索、勾选对比、打开结果都在这一张表里 -->
     <SectionCard title="回测记录" :hint="summary">
       <template #actions>
-        <span class="text-xs text-slate-500">已选 {{ selectedCount }} 条；对比最多 {{ MAX_COMPARED }} 条</span>
+        <span class="text-xs text-slate-500">已选 {{ selectedCount }} 条；对比需选 2~{{ MAX_COMPARED }} 条</span>
         <button
           @click="onCompare"
-          :disabled="comparing || selectedCount < 2 || selectedCount > MAX_COMPARED"
-          class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70"
+          :disabled="compareDisabled"
+          :title="compareTitle"
+          class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0"
         >
           {{ comparing ? '对比中…' : '对比所选' }}
         </button>
@@ -337,62 +437,6 @@ onActivated(() => {
           <span class="whitespace-nowrap text-slate-400">{{ runTime(row.updated_at) }}</span>
         </template>
       </DataTable>
-    </SectionCard>
-
-    <!-- 对比结果 -->
-    <SectionCard v-if="comparison && comparison.length" title="对比结果" hint="所选回测的净值与绩效指标。">
-      <div class="space-y-6">
-        <div>
-          <div class="flex items-center justify-between text-xs text-slate-400">
-            <span>净值对比 · {{ comparisonScope?.start_date }} 至 {{ comparisonScope?.end_date }}</span>
-            <span class="text-slate-500">{{ comparison.length }} 次回测</span>
-          </div>
-          <div class="mt-2">
-            <LineChart :series="chartSeries" :height="180" />
-          </div>
-          <div class="mt-3 flex flex-wrap gap-x-4 gap-y-2">
-            <div v-for="(s, i) in chartSeries" :key="i" class="flex items-center gap-1.5 text-xs text-slate-400">
-              <span class="h-2 w-2 rounded-full" :style="{ background: s.color }"></span>
-              <span class="text-slate-300">{{ s.label }}</span>
-              <span class="font-mono text-slate-500">{{ compareRunIds[i] }}</span>
-            </div>
-          </div>
-        </div>
-
-        <p class="text-xs text-slate-400">{{ comparisonNote }}</p>
-        <DataTable :columns="compareColumns" :rows="comparisonRows" empty="暂无对比结果">
-          <template #cell-run_id="{ row }">
-            <span class="font-mono text-xs text-indigo-300">{{ row.run_id }}</span>
-          </template>
-          <template #cell-strategy="{ row }">
-            <span class="font-medium text-white">{{ row.strategy }}</span>
-          </template>
-          <template #cell-cumulative_return="{ row }">
-            <span class="font-semibold" :class="pctClass(row.cumulative_return)">{{ fmtPct(row.cumulative_return) }}</span>
-          </template>
-          <template #cell-max_drawdown="{ row }">
-            <span class="font-medium text-rose-300">{{ fmtDd(row.max_drawdown) }}</span>
-          </template>
-          <template #cell-sharpe="{ row }">
-            <span class="text-slate-300">{{ fmtRatio(row.sharpe) }}</span>
-          </template>
-          <template #cell-sortino="{ row }">
-            <span class="text-slate-300">{{ fmtRatio(row.sortino) }}</span>
-          </template>
-          <template #cell-calmar="{ row }">
-            <span class="text-slate-300">{{ fmtRatio(row.calmar) }}</span>
-          </template>
-          <template #cell-pool="{ row }">
-            <span class="block min-w-28 max-w-48 whitespace-normal text-xs text-slate-300">{{ poolLabel(row.pool) }}</span>
-          </template>
-          <template #cell-annual_return="{ row }">
-            <span class="font-semibold" :class="pctClass(row.annual_return)">{{ fmtPct(row.annual_return) }}</span>
-          </template>
-          <template #cell-metrics_reliable="{ row }">
-            <span class="inline-flex rounded-full border px-2.5 py-0.5 text-xs" :class="trustInfo(row).cls">{{ trustInfo(row).text }}</span>
-          </template>
-        </DataTable>
-      </div>
     </SectionCard>
   </div>
 </template>

@@ -19,6 +19,31 @@ export const CATEGORY_STYLE = {
 
 export const CHANGELOG_ENTRIES = [
   {
+    id: '2026-11-23-neutralization-annual-compare',
+    date: '2026-11-23',
+    title: '组合研究中性化、回测分年收益与换手、研究记录对比优化',
+    items: [
+      {
+        category: 'feat',
+        summary: '因子组合研究（训练/测试模式）与多因子合成新增中性化选项',
+        detail: '支持按行业、市值、行业+市值及行业内排名做点时中性化，训练期与测试期分别独立处理，避免未来数据泄露。',
+        action: { label: '去因子研究体验', view: 'factor-lab' },
+      },
+      {
+        category: 'feat',
+        summary: '策略回测新增年化换手率指标卡与分年收益/换手明细表',
+        detail: '回测概览与「交易与成本」页签展示单边年化换手率，并按自然年拆解策略收益、基准收益、超额收益、最大回撤、当年换手与成交笔数（历史回测打开即有）。',
+        action: { label: '去策略回测查看', view: 'backtest-review' },
+      },
+      {
+        category: 'fix',
+        summary: '修复研究记录「对比所选」结果被藏在底部与错误一闪而过的问题',
+        detail: '对比结果卡片与错误提示置顶并自动定位，对比折线图补齐横轴日期刻度与基线，对比表格同步展示年化换手率。',
+        action: { label: '去研究记录体验', view: 'run-library' },
+      },
+    ],
+  },
+  {
     id: '2026-11-22-fdr-changelog',
     date: '2026-11-22',
     title: '因子多重检验校正（BH-FDR）与站内更新日志',

@@ -357,6 +357,7 @@ const compForm = reactive({
   factor_names: [],
   weight_mode: 'equal',
   standardization: 'zscore',
+  neutralization: 'none',
   winsorize: true,
   corr_threshold: 0.7,
   horizon: 5,
@@ -411,6 +412,7 @@ async function runComposite() {
       directions,
       winsorize: compForm.winsorize,
       standardization: compForm.standardization,
+      neutralization: compForm.neutralization,
       fill_method: 'drop',
       corr_threshold: Number(compForm.corr_threshold),
       horizon: Number(compForm.horizon),
@@ -455,6 +457,7 @@ const researchForm = reactive({
   factor_names: [],
   weight_mode: 'equal',
   standardization: 'zscore',
+  neutralization: 'none',
   clip: true,
   missing: 'drop',
   horizon: 5,
@@ -528,6 +531,7 @@ async function runResearch() {
       weight_mode: researchForm.weight_mode,
       directions,
       standardization: researchForm.standardization,
+      neutralization: researchForm.neutralization,
       clip: researchForm.clip,
       missing: researchForm.missing,
       horizon: Number(researchForm.horizon),
@@ -1006,6 +1010,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="space-y-4">
             <FormField label="每日截面标准化" type="select" v-model="compForm.standardization" :options="FACTOR_STANDARDIZATIONS" />
+            <FormField label="中性化（训练/测试分别按当日数据独立处理）" type="select" v-model="compForm.neutralization" :options="NEUTRALIZATION_OPTIONS" />
             <label class="flex items-center gap-2.5">
               <input type="checkbox" v-model="compForm.winsorize" class="h-4 w-4 rounded border-white/20 bg-white/5 accent-indigo-500" />
               <span class="text-sm text-slate-300">去极值（Winsorize）</span>
@@ -1058,7 +1063,10 @@ onBeforeUnmount(() => {
       </SectionCard>
 
       <template v-if="compResult">
-        <p class="text-sm text-amber-300">样本外评估：训练 {{ compResult.train_start }} 至 {{ compResult.train_end }}；测试 {{ compResult.test_start }} 至 {{ compResult.test_end }}。训练信号截至 {{ compResult.train_signal_end }}，隔离末尾 {{ compResult.purged_sessions }} 个交易日。</p>
+        <p class="text-sm text-amber-300">
+          样本外评估：训练 {{ compResult.train_start }} 至 {{ compResult.train_end }}；测试 {{ compResult.test_start }} 至 {{ compResult.test_end }}。训练信号截至 {{ compResult.train_signal_end }}，隔离末尾 {{ compResult.purged_sessions }} 个交易日
+          <template v-if="compResult.neutralization"> · 中性化：{{ NEUTRALIZATION_OPTIONS.find((o) => o.value === compResult.neutralization)?.label || compResult.neutralization }}</template>。
+        </p>
         <p class="text-xs text-slate-400">{{ compResult.note }}</p>
         <SectionCard title="因子相关性矩阵" hint="仅使用训练期信号样本计算相关系数">
           <DataTable :columns="corrCols" :rows="corrRows" empty="暂无数据" />
@@ -1175,6 +1183,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="space-y-4">
             <FormField label="每日截面标准化" type="select" v-model="researchForm.standardization" :options="FACTOR_STANDARDIZATIONS" />
+            <FormField label="中性化（训练/测试分别按当日数据独立处理）" type="select" v-model="researchForm.neutralization" :options="NEUTRALIZATION_OPTIONS" />
             <label class="flex items-center gap-2.5">
               <input type="checkbox" v-model="researchForm.clip" class="h-4 w-4 rounded border-white/20 bg-white/5 accent-indigo-500" />
               <span class="text-sm text-slate-300">去极值（Winsorize）</span>
@@ -1241,6 +1250,7 @@ onBeforeUnmount(() => {
           <p class="mt-1 text-sm text-white">
             训练期 {{ researchResult.train_start }} ~ {{ researchResult.train_end }}（确定权重）；
             测试期 {{ researchResult.test_start }} ~ {{ researchResult.test_end }}（样本外比较）
+            <template v-if="researchResult.neutralization"> · 中性化：{{ NEUTRALIZATION_OPTIONS.find((o) => o.value === researchResult.neutralization)?.label || researchResult.neutralization }}</template>
           </p>
           <p class="mt-1 text-xs text-slate-500">
             反复查看测试结果并调参会让测试集失去独立性，正式使用前还应保留新的未见数据。
