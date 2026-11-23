@@ -2,6 +2,7 @@
 import { computed, onActivated, onMounted, ref } from 'vue'
 import { listFactors } from '../../api.js'
 import { openResearch } from '../researchNavigation.js'
+import { NEUTRALIZATION_OPTIONS } from '../dataPresentation.js'
 import { FACTOR_STANDARDIZATIONS } from '../factorBacktestDraft.js'
 import { parseFactorRows, serializeFactorRows } from '../paperPresentation.js'
 import FormField from './FormField.vue'
@@ -36,6 +37,10 @@ const standardizationValue = computed(() => rows.value[0]?.standardization || 'z
 const standardizationLabel = computed(() => FACTOR_STANDARDIZATIONS.find(
   (option) => option.value === standardizationValue.value,
 )?.label || 'Z-score')
+const neutralizationValue = computed(() => rows.value[0]?.neutralization || 'none')
+const neutralizationLabel = computed(() => NEUTRALIZATION_OPTIONS.find(
+  (option) => option.value === neutralizationValue.value,
+)?.label || '不中性化')
 
 const addableOptions = computed(() => {
   const chosen = new Set(rows.value.map((row) => row.name))
@@ -70,6 +75,11 @@ function setStandardization(value) {
   if (next.length) updateRows(next)
 }
 
+function setNeutralization(value) {
+  const next = rows.value.map((row) => ({ ...row, neutralization: value || 'none' }))
+  if (next.length) updateRows(next)
+}
+
 function addRow() {
   const name = factorToAdd.value
   if (!name) return
@@ -83,6 +93,7 @@ function addRow() {
     clip: Boolean(base[0]?.clip ?? true),
     missing: base[0]?.missing || 'drop',
     standardization: base[0]?.standardization || 'zscore',
+    neutralization: base[0]?.neutralization || 'none',
   })
   updateRows(base)
   factorToAdd.value = ''
@@ -97,21 +108,31 @@ function displayLabel(row) {
   <div class="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div>
-        <p class="text-sm font-semibold text-white">因子组合配置 · {{ standardizationLabel }}</p>
+        <p class="text-sm font-semibold text-white">因子组合配置 · {{ standardizationLabel }} · {{ neutralizationLabel }}</p>
         <p class="mt-0.5 text-xs text-slate-400">
-          可为每个因子直接设置方向（正向越大越好 / 反向越小越好）与正数权重<template v-if="showFactorLabLink">；也可从<a class="mx-1 cursor-pointer text-indigo-300 hover:text-indigo-200" href="?view=factor-lab" @click.prevent="openResearch('factor-lab')">因子研究</a>带入</template>。
+          可为每个因子直接设置方向（正向越大越好 / 反向越小越好）与正数权重，并可选择行业/市值中性化或行业内排名<template v-if="showFactorLabLink">；也可从<a class="mx-1 cursor-pointer text-indigo-300 hover:text-indigo-200" href="?view=factor-lab" @click.prevent="openResearch('factor-lab')">因子研究</a>一键带入</template>。
         </p>
       </div>
-      <select
-        v-if="rows.length"
-        :value="standardizationValue"
-        :disabled="disabled"
-        aria-label="截面标准化"
-        class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-400/40 disabled:opacity-60"
-        @change="setStandardization($event.target.value)"
-      >
-        <option v-for="o in FACTOR_STANDARDIZATIONS" :key="o.value" :value="o.value" class="bg-ink">{{ o.label }}</option>
-      </select>
+      <div v-if="rows.length" class="flex flex-wrap items-center gap-2">
+        <select
+          :value="standardizationValue"
+          :disabled="disabled"
+          aria-label="截面标准化"
+          class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-400/40 disabled:opacity-60"
+          @change="setStandardization($event.target.value)"
+        >
+          <option v-for="o in FACTOR_STANDARDIZATIONS" :key="o.value" :value="o.value" class="bg-ink">{{ o.label }}</option>
+        </select>
+        <select
+          :value="neutralizationValue"
+          :disabled="disabled"
+          aria-label="中性化方式"
+          class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-400/40 disabled:opacity-60"
+          @change="setNeutralization($event.target.value)"
+        >
+          <option v-for="o in NEUTRALIZATION_OPTIONS" :key="o.value" :value="o.value" class="bg-ink">{{ o.label }}</option>
+        </select>
+      </div>
     </div>
 
     <div v-if="rows.length" class="space-y-2">

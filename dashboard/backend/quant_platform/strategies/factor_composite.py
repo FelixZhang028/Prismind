@@ -23,10 +23,13 @@ from quant_platform.factors.base import FactorDefinition
 from quant_platform.factors.combine import STANDARDIZATIONS, combine_factors
 from quant_platform.factors.custom import CustomFactor, custom_factor_from_dict, custom_factor_to_dict
 from quant_platform.factors.registry import default_registry
+from quant_platform.factors.statistics import neutralize_exposures
 from quant_platform.signals.models import Signal
 from quant_platform.strategies.base import Strategy
 from quant_platform.strategies.context import StrategyContext
 from quant_platform.strategies.spec import ParameterKind, StrategyParameter
+
+NEUTRALIZATIONS = frozenset({"none", "industry", "size", "both", "industry_rank"})
 
 
 @dataclass(frozen=True)
@@ -45,6 +48,7 @@ class FactorCompositeParameters:
     clip: bool = False
     missing: str = "zero"
     standardization: str = "zscore"
+    neutralization: str = "none"
 
     @classmethod
     def from_json(cls, text: str) -> FactorCompositeParameters:
@@ -60,17 +64,26 @@ class FactorCompositeParameters:
         clip = raw[0].get("clip", False)
         missing = raw[0].get("missing", "zero")
         standardization = raw[0].get("standardization", "zscore")
-        if not isinstance(clip, bool) or missing not in ("zero", "drop", "median") or standardization not in STANDARDIZATIONS:
-            raise ConfigurationError("组合清洗或标准化设置无效")
+        neutralization = str(raw[0].get("neutralization") or "none")
+        if (
+            not isinstance(clip, bool)
+            or missing not in ("zero", "drop", "median")
+            or standardization not in STANDARDIZATIONS
+            or neutralization not in NEUTRALIZATIONS
+        ):
+            raise ConfigurationError("组合清洗、标准化或中性化设置无效")
         registry = default_registry()
         for item in raw:
             if not isinstance(item, dict) or "name" not in item:
                 raise ConfigurationError('因子组合元素必须形如 {"name": ..., "weight": ...}')
             name = str(item["name"]).strip()
-            if (item.get("clip", False), item.get("missing", "zero"), item.get("standardization", "zscore")) != (
-                clip, missing, standardization
-            ):
-                raise ConfigurationError("成分因子的清洗与标准化设置必须一致")
+            if (
+                item.get("clip", False),
+                item.get("missing", "zero"),
+                item.get("standardization", "zscore"),
+                str(item.get("neutralization") or "none"),
+            ) != (clip, missing, standardization, neutralization):
+                raise ConfigurationError("成分因子的清洗、标准化与中性化设置必须一致")
             snapshot = item.get("custom_factor")
             custom = None
             if snapshot is not None:
@@ -97,7 +110,13 @@ class FactorCompositeParameters:
             raise ConfigurationError("因子权重必须为有限数值")
         if not any(item.weight for item in components):
             raise ConfigurationError("因子权重不能全部为零")
-        return cls(tuple(components), clip=clip, missing=missing, standardization=standardization)
+        return cls(
+            tuple(components),
+            clip=clip,
+            missing=missing,
+            standardization=standardization,
+            neutralization=neutralization,
+        )
 
     def to_json(self) -> str:
         return json.dumps(
@@ -108,6 +127,7 @@ class FactorCompositeParameters:
                     "clip": self.clip,
                     "missing": self.missing,
                     "standardization": self.standardization,
+                    **({"neutralization": self.neutralization} if self.neutralization != "none" else {}),
                     **({"custom_factor": custom_factor_to_dict(item.custom_factor)} if item.custom_factor else {}),
                     **({"direction": item.direction} if item.direction is not None else {}),
                 }
@@ -166,7 +186,47 @@ class FactorCompositeStrategy(Strategy):
     def data_fields(self) -> frozenset[str]:
         """成分因子用到的行情字段；回测引擎据此决定要不要读取估值、换手率和财务数据。"""
 
-        return frozenset(field for factor, _ in self._weighted_factors for field in factor.required_fields)
+        fields = {field for factor, _ in self._weighted_factors for field in factor.required_fields}
+        if self.needs_market_cap:
+            fields.add("raw_close")
+        return frozenset(fields)
+
+    @property
+    def needs_market_cap(self) -> bool:
+        return self.config.neutralization in {"size", "both"}
+
+    def _neutralize_day(self, today: pd.DataFrame, context: StrategyContext) -> pd.DataFrame:
+        mode = self.config.neutralization
+        if mode == "none" or today.empty:
+            return today
+        sample = today[["date", "symbol", "value"]].copy()
+        sample["value"] = pd.to_numeric(sample["value"], errors="coerce").replace([float("inf"), -float("inf")], float("nan"))
+        sample = sample.dropna(subset=["value"])
+        if sample.empty:
+            return sample
+        needs_ind = mode in {"industry", "both", "industry_rank"}
+        needs_size = mode in {"size", "both"}
+        exposures = sample[["date", "symbol"]].copy()
+        usable = pd.Series(True, index=sample.index)
+        if needs_ind:
+            exposures["industry"] = exposures["symbol"].map(context.industry_map)
+            usable &= exposures["industry"].notna()
+        if needs_size:
+            exposures["market_cap"] = pd.to_numeric(exposures["symbol"].map(context.market_caps), errors="coerce")
+            usable &= exposures["market_cap"].gt(0).fillna(False)
+        if not usable.any():
+            return sample.iloc[0:0]
+        available = sample[usable].copy()
+        if mode == "industry_rank":
+            available["industry"] = exposures.loc[usable, "industry"].to_numpy()
+            peers = available.groupby(["date", "industry"], observed=True)["value"]
+            sizes = peers.transform("size")
+            ranks = (peers.rank(method="average") - 0.5) / sizes
+            return available.loc[sizes.ge(2), ["date", "symbol"]].assign(value=ranks)
+        try:
+            return neutralize_exposures(available, exposures.loc[usable], mode)
+        except ValueError:
+            return sample.iloc[0:0]
 
     def generate_signals(self, context: StrategyContext) -> list[Signal]:
         fields = set(self.data_fields)
@@ -190,6 +250,8 @@ class FactorCompositeStrategy(Strategy):
                 continue  # 缺字段时跳过该因子而不是中断整个回测
             values["date"] = pd.to_datetime(values["date"]).dt.normalize()
             today = values[values["date"] == cutoff]
+            if self.config.neutralization != "none" and not today.empty:
+                today = self._neutralize_day(today, context)
             if today.empty and self.config.missing != "median":
                 if self.config.missing != "zero":
                     return []

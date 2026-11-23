@@ -163,6 +163,7 @@ def init_db() -> None:
                 daily_position_limits    INTEGER NOT NULL DEFAULT 1,
                 drawdown_action          TEXT    NOT NULL DEFAULT 'reduce',
                 drawdown_target_weight   REAL    NOT NULL DEFAULT 0.50,
+                max_industry_weight      REAL    NOT NULL DEFAULT 1.0,
                 updated_at               TEXT    NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
@@ -438,6 +439,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE custom_factors ADD COLUMN expression TEXT")
         if "preset" not in {row[1] for row in conn.execute("PRAGMA table_info(universe)")}:
             conn.execute("ALTER TABLE universe ADD COLUMN preset TEXT")
+        if "max_industry_weight" not in {row[1] for row in conn.execute("PRAGMA table_info(risk_limits)")}:
+            conn.execute("ALTER TABLE risk_limits ADD COLUMN max_industry_weight REAL NOT NULL DEFAULT 1.0")
         _migrate_output_dirs(conn)
 
     # No public default credentials. Bootstrap only when explicitly configured.

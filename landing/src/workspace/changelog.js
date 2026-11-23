@@ -19,6 +19,31 @@ export const CATEGORY_STYLE = {
 
 export const CHANGELOG_ENTRIES = [
   {
+    id: '2026-11-23-industry-constraints-backtest-costs',
+    date: '2026-11-23',
+    title: '行业仓位上限与因子回测中性化、回测费率与过滤规则透明可配',
+    items: [
+      {
+        category: 'feat',
+        summary: '风控设置新增「单一行业最大权重」并支持选股顺延递补',
+        detail: '在「策略回测 → 风险设置」中可直接限制单一证监会行业仓位上限（如 25%）；选股时自动跳过已满额行业并按评分顺延递补其他行业股票，避免组合集中在银行等单一行业。',
+        action: { label: '去策略回测体验', view: 'backtest-review' },
+      },
+      {
+        category: 'feat',
+        summary: '因子合成策略回测支持行业/市值中性化与行业内排名，且从因子研究一键带入',
+        detail: '因子组合编辑器新增中性化下拉选项；在「因子研究 → 组合研究 / 多因子合成」中设置的中性化方式会随「用此组合回测」与「用此组合开模拟账户」自动带入。',
+        action: { label: '去因子研究体验', view: 'factor-lab' },
+      },
+      {
+        category: 'feat',
+        summary: '回测页新增「交易成本与股票过滤」设置，结果页拆解佣金/印花税/滑点与实际费率',
+        detail: '回测前可直接查看并调整佣金率、最低佣金、历史/固定印花税、滑点、排除 ST/停牌与最少上市天数（60/250天快捷切换）；回测结果与「交易与成本」页签完整列出三项成本明细、占资金比例与实际采用费率（含历史回测自动补全）。',
+        action: { label: '去策略回测查看', view: 'backtest-review' },
+      },
+    ],
+  },
+  {
     id: '2026-11-23-neutralization-annual-compare',
     date: '2026-11-23',
     title: '组合研究中性化、回测分年收益与换手、研究记录对比优化',

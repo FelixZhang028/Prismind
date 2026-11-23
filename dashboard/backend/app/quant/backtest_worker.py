@@ -72,6 +72,8 @@ def execute(jid):
                     initial_cash = request.initial_cash
                     reference = "package:" + payload["package_id"]
                     exclude_st = None
+                    execution_overrides = request.execution_overrides
+                    filter_overrides = request.filter_overrides
                 else:
                     request = workspace.ScreenHistoryIn.model_validate({k: v for k, v in body.items() if k not in {"from_date", "to_date"}})
                     package = StrategyPackage(package_id="screen", name=payload["label"],
@@ -79,10 +81,14 @@ def execute(jid):
                         rebalance=request.rebalance, source="stock_screen", created_at=datetime.now(timezone.utc))
                     initial_cash, reference = 1_000_000, ""
                     exclude_st = request.exclude_st
+                    execution_overrides = None
+                    filter_overrides = None
                 workspace._run_backtest(user, package, market=request.market,
                     start=date.fromisoformat(body["from_date"]), end=date.fromisoformat(body["to_date"]),
                     initial_cash=initial_cash, reference=reference, package_id=payload["package_id"],
-                    exclude_st=exclude_st)
+                    exclude_st=exclude_st,
+                    execution_overrides=execution_overrides,
+                    filter_overrides=filter_overrides)
     except deadline.ComputationTimeout:
         jobs.finish(jid, "TIMED_OUT", jobs.TIMEOUT_MESSAGE)
     except HTTPException as exc:

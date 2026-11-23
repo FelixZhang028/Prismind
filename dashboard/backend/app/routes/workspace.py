@@ -84,6 +84,7 @@ from ..quant.rules import (
 from ..quant.symbols import index_symbol, to_bare, to_canonical
 from ..routes.admin import require_admin
 from ..routes.auth import get_current_user
+from ..routes.backtests import ExecutionOverridesIn, FilterOverridesIn, apply_backtest_overrides
 from quant_platform.agents_bridge.data_credentials import DataCredentialStore
 from quant_platform.application.strategy_studio_service import (
     StrategyPackage,
@@ -93,6 +94,7 @@ from quant_platform.application.benchmarks import BENCHMARKS
 from quant_platform.application.data_jobs import exclusive
 from quant_platform.application.factor_research_service import research_combination
 from quant_platform.data.extras import extra_columns, require_extra_data
+from quant_platform.risk.config import RiskLimits
 from quant_platform.data.index_constituents import (
     CONSTITUENTS_TABLE,
     CSI_800,
@@ -217,6 +219,8 @@ class PackageBacktestIn(BaseModel):
     rebalance: Literal["daily", "weekly", "monthly"] | None = None
     style: Literal["conservative", "balanced", "aggressive"] = "balanced"
     market: str = Field(CURRENT_POOL, max_length=40)
+    execution_overrides: ExecutionOverridesIn | None = None
+    filter_overrides: FilterOverridesIn | None = None
 
 
 class CopyIn(BaseModel):
@@ -583,11 +587,15 @@ def backtest_package(package_id: str, body: PackageBacktestIn | None = None, use
     except (ValueError, ConfigurationError) as exc:
         raise HTTPException(status_code=422, detail=f"策略定义无效：{_sanitize_detail(exc)}")
     return _run_backtest(user, package, market=body.market, start=start, end=end, initial_cash=body.initial_cash,
-                         reference=f"package:{package_id}", package_id=package_id)
+                         reference=f"package:{package_id}", package_id=package_id,
+                         execution_overrides=body.execution_overrides,
+                         filter_overrides=body.filter_overrides)
 
 
 def _run_backtest(user: dict, package: StrategyPackage, *, market: str, start: date, end: date, initial_cash: float,
-                  reference: str, package_id: str | None, exclude_st: bool | None = None) -> dict[str, Any]:
+                  reference: str, package_id: str | None, exclude_st: bool | None = None,
+                  execution_overrides: ExecutionOverridesIn | dict[str, Any] | None = None,
+                  filter_overrides: FilterOverridesIn | dict[str, Any] | None = None) -> dict[str, Any]:
     """跑一次规则策略回测并保存到回测记录；策略包回测和条件选股的“过去表现如何”共用。"""
 
     service = build_backtest_service(user)
@@ -595,8 +603,12 @@ def _run_backtest(user: dict, package: StrategyPackage, *, market: str, start: d
         use_market(service, market)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    effective_execution, effective_filters = apply_backtest_overrides(
+        service, execution_overrides, filter_overrides
+    )
     if exclude_st is not None:
         service.configs["universe"]["universe"]["filters"]["exclude_st"] = exclude_st
+        effective_filters["exclude_st"] = bool(exclude_st)
     studio = StrategyStudioService(service)
     base = dc_replace(
         service.default_request(),
@@ -623,6 +635,8 @@ def _run_backtest(user: dict, package: StrategyPackage, *, market: str, start: d
         "strategy_parameters": {"definition_json": package.definition.to_json()},
         "initial_capital": base.initial_cash, "max_positions": package.top_n,
         "rebalance": package.rebalance, "from_date": start.isoformat(), "to_date": end.isoformat(),
+        "execution": effective_execution,
+        "filters": effective_filters,
     }
     result = with_run_evidence(result)
     with get_conn() as conn:
@@ -1581,7 +1595,10 @@ def run_audit(run_ref: str, user: dict = Depends(get_current_user)):
             execution = execution["execution"]
         if isinstance(execution, dict):
             assumptions = {
+                "commission_rate": execution.get("commission_rate"),
+                "minimum_commission": execution.get("minimum_commission"),
                 "historical_fees": execution.get("historical_fees"),
+                "stamp_tax_rate": execution.get("stamp_tax_rate"),
                 "max_participation": execution.get("max_participation"),
                 "slippage_rate": execution.get("slippage_rate"),
                 "unknown_status_policy": execution.get("unknown_status_policy"),
@@ -2494,7 +2511,7 @@ def xtick_request(body: dict[str, Any], user: dict = Depends(require_admin)):
 
 _DEFAULT_RISK = {"enabled": True, "max_total_weight": 0.95, "max_single_weight": 0.20, "max_positions": 20,
                  "minimum_cash_ratio": 0.05, "max_drawdown": 0.25, "daily_position_limits": True,
-                 "drawdown_action": "reduce", "drawdown_target_weight": 0.50}
+                 "drawdown_action": "reduce", "drawdown_target_weight": 0.50, "max_industry_weight": 1.0}
 
 
 @router.get("/risk", summary="风控配置")
@@ -2507,19 +2524,25 @@ def risk_get(user: dict = Depends(get_current_user)):
             "max_single_weight": row["max_single_weight"], "max_positions": row["max_positions"],
             "minimum_cash_ratio": row["minimum_cash_ratio"], "max_drawdown": row["max_drawdown"],
             "daily_position_limits": bool(row["daily_position_limits"]), "drawdown_action": row["drawdown_action"],
-            "drawdown_target_weight": row["drawdown_target_weight"]}
+            "drawdown_target_weight": row["drawdown_target_weight"],
+            "max_industry_weight": row["max_industry_weight"] if "max_industry_weight" in row.keys() and row["max_industry_weight"] is not None else 1.0}
 
 
 @router.put("/risk", summary="保存风控配置")
 def risk_save(body: dict[str, Any], user: dict = Depends(get_current_user)):
     merged = {**_DEFAULT_RISK, **body}
+    try:
+        RiskLimits.from_mapping(merged)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"风控参数无效：{exc}") from None
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO risk_limits (user_id, enabled, max_total_weight, max_single_weight, max_positions, minimum_cash_ratio, max_drawdown, daily_position_limits, drawdown_action, drawdown_target_weight, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled, max_total_weight=excluded.max_total_weight, max_single_weight=excluded.max_single_weight, max_positions=excluded.max_positions, minimum_cash_ratio=excluded.minimum_cash_ratio, max_drawdown=excluded.max_drawdown, daily_position_limits=excluded.daily_position_limits, drawdown_action=excluded.drawdown_action, drawdown_target_weight=excluded.drawdown_target_weight, updated_at=excluded.updated_at",
+            "INSERT INTO risk_limits (user_id, enabled, max_total_weight, max_single_weight, max_positions, minimum_cash_ratio, max_drawdown, daily_position_limits, drawdown_action, drawdown_target_weight, max_industry_weight, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled, max_total_weight=excluded.max_total_weight, max_single_weight=excluded.max_single_weight, max_positions=excluded.max_positions, minimum_cash_ratio=excluded.minimum_cash_ratio, max_drawdown=excluded.max_drawdown, daily_position_limits=excluded.daily_position_limits, drawdown_action=excluded.drawdown_action, drawdown_target_weight=excluded.drawdown_target_weight, max_industry_weight=excluded.max_industry_weight, updated_at=excluded.updated_at",
             (user["id"], 1 if merged["enabled"] else 0, merged["max_total_weight"], merged["max_single_weight"],
              merged["max_positions"], merged["minimum_cash_ratio"], merged["max_drawdown"],
-             1 if merged["daily_position_limits"] else 0, merged["drawdown_action"], merged["drawdown_target_weight"], _now()),
+             1 if merged["daily_position_limits"] else 0, merged["drawdown_action"], merged["drawdown_target_weight"],
+             float(merged["max_industry_weight"]), _now()),
         )
     return {"saved": True}
 

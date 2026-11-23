@@ -69,3 +69,36 @@ export function poolLabel(pool) {
     : '只数未记录'
   return [pool.name, pool.snapshot_date, count].filter(Boolean).join(' · ')
 }
+
+export function executionSummaryText(exec) {
+  if (!exec || typeof exec !== 'object') return ''
+  const parts = []
+  if (exec.commission_rate != null) {
+    const wan = (Number(exec.commission_rate) * 10000).toFixed(1).replace(/\.0$/, '')
+    const minFee = exec.minimum_commission != null ? `（最低 ¥${Number(exec.minimum_commission)}）` : ''
+    parts.push(`佣金万${wan}${minFee}`)
+  }
+  if (exec.historical_fees === true) {
+    parts.push('印花税按历史分期（2023-08-28前卖千1，之后卖万5）')
+  } else if (exec.stamp_tax_rate != null) {
+    parts.push(`固定印花税卖出 ${(Number(exec.stamp_tax_rate) * 100).toFixed(2)}%`)
+  }
+  if (exec.slippage_rate != null) {
+    parts.push(`滑点 ${(Number(exec.slippage_rate) * 10000).toFixed(1).replace(/\.0$/, '')}bps`)
+  }
+  return parts.join(' · ')
+}
+
+export function filterSummaryText(filters) {
+  if (!filters || typeof filters !== 'object') return ''
+  const parts = []
+  if (filters.exclude_st) parts.push('排除 ST')
+  if (filters.exclude_suspended) parts.push('排除停牌')
+  if (Number(filters.minimum_listing_days) > 0) parts.push(`上市满 ${Number(filters.minimum_listing_days)} 天`)
+  if (Number(filters.minimum_history_days) > 0) parts.push(`历史满 ${Number(filters.minimum_history_days)} 天`)
+  if (Number(filters.minimum_average_amount) > 0) {
+    parts.push(`日均成交 ≥ ¥${Math.round(Number(filters.minimum_average_amount)).toLocaleString('zh-CN')}`)
+  }
+  parts.push('开盘涨跌停自动拒单')
+  return parts.join(' · ')
+}

@@ -52,12 +52,13 @@ export function parseFactorRows(factorsJson) {
   }
 }
 
-// 序列化因子组合：保证 clip / missing / standardization 在所有成分因子上保持一致。
+// 序列化因子组合：保证 clip / missing / standardization / neutralization 在所有成分因子上保持一致。
 export function serializeFactorRows(rows) {
   if (!Array.isArray(rows) || !rows.length) return '[]'
   const std = rows[0]?.standardization || 'zscore'
   const clip = Boolean(rows[0]?.clip ?? false)
   const missing = rows[0]?.missing || 'zero'
+  const neutralization = rows[0]?.neutralization || 'none'
   const normalized = rows.map((row) => ({
     ...row,
     weight: Number(row.weight ?? 1),
@@ -65,6 +66,7 @@ export function serializeFactorRows(rows) {
     clip,
     missing,
     standardization: std,
+    ...(neutralization && neutralization !== 'none' ? { neutralization } : { neutralization: 'none' }),
   }))
   return JSON.stringify(normalized)
 }
