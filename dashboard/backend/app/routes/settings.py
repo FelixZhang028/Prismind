@@ -26,7 +26,7 @@ class Preferences(BaseModel):
     model_config = ConfigDict(extra="forbid")
     initial_capital: float = Field(1_000_000, ge=10_000, le=100_000_000, allow_inf_nan=False, description="回测初始资金")
     max_positions: int = Field(10, ge=1, le=50, description="最多持有几只")
-    rebalance: Literal["daily", "weekly", "monthly"] = Field("weekly", description="调仓频率")
+    rebalance: Literal["daily", "weekly", "monthly", "quarterly"] = Field("weekly", description="调仓频率")
     period_years: int = Field(1, ge=1, le=10, description="默认回测最近几年")
     use_experience: bool = Field(True, description="AI 个股分析时默认参考我的研究经验")
 

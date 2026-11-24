@@ -863,7 +863,9 @@ class BacktestEngine:
         frame = pd.DataFrame({"trade_date": pd.to_datetime(dates)})
         if self.rebalance == "daily":
             return set(dates)
-        if self.rebalance == "monthly":
+        if self.rebalance == "quarterly":
+            periods = frame["trade_date"].dt.to_period("Q")
+        elif self.rebalance == "monthly":
             periods = frame["trade_date"].dt.to_period("M")
         elif self.rebalance == "weekly":
             periods = frame["trade_date"].dt.to_period("W-FRI")

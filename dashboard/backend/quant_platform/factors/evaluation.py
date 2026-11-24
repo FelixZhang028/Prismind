@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from quant_platform.core import deadline, progress
+from quant_platform.core.volatility import ANNUALIZATION_SESSIONS
 from quant_platform.data.extras import extra_columns
 from quant_platform.data.fundamentals import MISSING_FUNDAMENTALS_MESSAGE, market_capitalization, point_in_time
 from quant_platform.data.index_constituents import UNIVERSE_COLUMN, only_members
@@ -422,6 +423,11 @@ class FactorEvaluator:
         decay_qs = benjamini_hochberg([row.get("hac_p") for row in decay_rows])
         for row, q_val in zip(decay_rows, decay_qs, strict=True):
             row["fdr_q"] = float("nan") if q_val is None else q_val
+        significance = ic_statistics(rank_ic, horizon)
+        matched_decay = next((row for row in decay_rows if row["horizon"] == horizon), None)
+        if matched_decay is not None:
+            significance["fdr_q"] = matched_decay["fdr_q"]
+            significance["fdr_horizons"] = len(decay_rows)
 
         annual = annual_ic(daily_ic, horizon)
         group_nav, rebalance_turnover = pd.DataFrame(), pd.DataFrame()
@@ -455,7 +461,7 @@ class FactorEvaluator:
                 daily_ic[f"{metric}_ir"] = rolling.mean() / std.where(std.gt(1e-12) & series.notna())
         deadline.check()
         return FactorReport(
-            significance=ic_statistics(rank_ic, horizon),
+            significance=significance,
             annual=annual,
             decay=pd.DataFrame(decay_rows),
             group_nav=group_nav,
@@ -703,6 +709,14 @@ class FactorEvaluator:
         if factor_name != "volatility_20" and not close_wide.empty:
             vol_wide = close_wide.pct_change(fill_method=None).rolling(20, min_periods=20).std()
             style_specs.append(("volatility_20", "波动率（20日历史波动率）", "偏高波", "偏低波", vol_wide))
+
+        # 2b. 长期波动率：250日年化波动率
+        if factor_name != "volatility_250" and not close_wide.empty:
+            vol250_wide = (
+                close_wide.pct_change(fill_method=None).rolling(250, min_periods=250).std()
+                * np.sqrt(ANNUALIZATION_SESSIONS)
+            )
+            style_specs.append(("volatility_250", "长期波动率（250日年化波动率）", "偏高波", "偏低波", vol250_wide))
 
         # 3. 动量：20日涨跌幅
         if factor_name != "momentum_20" and not close_wide.empty:

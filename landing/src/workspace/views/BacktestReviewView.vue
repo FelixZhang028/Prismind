@@ -116,8 +116,16 @@ function chooseStrategy() {
   Object.assign(strategyParameters, strategy?.defaults || {})
   if (strategy?.top_n) form.max_positions = strategy.top_n
   if (strategy?.rebalance) form.rebalance = strategy.rebalance
+  form.hold_buffer = Number(strategy?.hold_buffer ?? 0)
 }
 const rebalances = REBALANCE_OPTIONS
+const holdBufferHint = computed(() => {
+  const buf = Math.max(0, Math.round(Number(form.hold_buffer) || 0))
+  const topN = Math.max(1, Math.round(Number(form.max_positions) || 10))
+  return buf > 0
+    ? `已持股排名跌出前 ${topN + buf} 名才卖出（0 表示关闭）`
+    : '关闭（严格按前 N 名调仓；设为 20 则跌出前 N+20 才卖出）'
+})
 
 const form = reactive({
   strategy: '',
@@ -127,6 +135,7 @@ const form = reactive({
   initial_capital: 1000000,
   max_positions: 10,
   rebalance: 'weekly',
+  hold_buffer: 0,
 })
 
 const presetNote = computed(() => {
@@ -309,7 +318,7 @@ async function loadDetail() {
       if (reference && strategyOptions.value.some((s) => s.value === reference)) {
         form.strategy = reference
         chooseStrategy()
-        for (const key of ['from_date', 'to_date', 'initial_capital', 'max_positions', 'rebalance']) {
+        for (const key of ['from_date', 'to_date', 'initial_capital', 'max_positions', 'rebalance', 'hold_buffer']) {
           if (config[key] != null) form[key] = config[key]
         }
         form.market = usableMarket(config.market, markets.value)
@@ -348,6 +357,7 @@ async function onSubmit() {
       initial_capital: Number(form.initial_capital),
       max_positions: Number(form.max_positions),
       rebalance: form.rebalance,
+      hold_buffer: Math.max(0, Math.round(Number(form.hold_buffer) || 0)),
       strategy_parameters: { ...strategyParameters },
       execution_overrides: currentExecOverrides.value,
       filter_overrides: currentFilterOverrides.value,
@@ -379,7 +389,7 @@ async function loadCatalog() {
       execFilterInitialized = true
     }
     strategyOptions.value = [
-      ...(packages.items || []).map((p) => ({ value: `package:${p.package_id}`, label: `${p.name} · 规则策略`, top_n: p.top_n, rebalance: p.rebalance })),
+      ...(packages.items || []).map((p) => ({ value: `package:${p.package_id}`, label: `${p.name} · 规则策略`, top_n: p.top_n, rebalance: p.rebalance, hold_buffer: p.hold_buffer ?? 0 })),
       ...catalog.items,
     ]
     markets.value = catalog.markets || []
@@ -462,6 +472,21 @@ onActivated(async () => {
         <FormField label="初始资金" type="number" v-model="form.initial_capital" :min="0" :step="10000" />
         <FormField label="最大持仓" type="number" v-model="form.max_positions" :min="1" :max="form.strategy.startsWith('package:') ? 50 : 500" :step="1" />
         <FormField label="调仓频率" type="select" v-model="form.rebalance" :options="rebalances" />
+        <div>
+          <FormField label="换手缓冲（名次）" type="number" v-model="form.hold_buffer" :min="0" :max="200" :step="5" :hint="holdBufferHint" />
+          <div class="mt-1.5 flex flex-wrap gap-1.5 text-xs">
+            <button
+              v-for="preset in [0, 10, 20, 30]"
+              :key="preset"
+              type="button"
+              class="rounded-full border px-2 py-0.5 transition"
+              :class="Number(form.hold_buffer) === preset ? 'border-indigo-400/40 bg-indigo-500/20 text-indigo-200' : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'"
+              @click="form.hold_buffer = preset"
+            >
+              {{ preset === 0 ? '关闭' : `+${preset}` }}
+            </button>
+          </div>
+        </div>
       </div>
       <p v-if="marketHint" class="mt-3 text-xs text-slate-400">{{ marketHint }}</p>
       <p v-if="presetNote" class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" :class="form.from_date < poolPreset?.snapshot_date ? 'text-amber-300' : 'text-slate-400'">

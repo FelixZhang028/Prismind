@@ -185,7 +185,7 @@ def _stamp() -> str:
 
 _BUILTIN_INDICATORS = {name: INDICATOR_LABELS[quant] for name, (quant, _) in _FRONTEND_INDICATORS.items()}
 _OPERATORS = {name: OPERATOR_LABELS[quant] for name, quant in _FRONTEND_OPERATORS.items()}
-_FREQUENCIES = ["daily", "weekly", "monthly"]
+_FREQUENCIES = ["daily", "weekly", "monthly", "quarterly"]
 _DIRECTIONS = ["descending", "ascending"]
 _STYLES = ["conservative", "balanced", "aggressive"]
 
@@ -205,7 +205,7 @@ class DefinitionIn(BaseModel):
 class PackageIn(BaseModel):
     definition: DefinitionIn
     top_n: int = Field(5, ge=1, le=50)
-    rebalance: Literal["daily", "weekly", "monthly"] = "weekly"
+    rebalance: Literal["daily", "weekly", "monthly", "quarterly"] = "weekly"
     source: str = Field("visual_builder")
     style: Literal["conservative", "balanced", "aggressive"] = "balanced"
 
@@ -216,7 +216,8 @@ class PackageBacktestIn(BaseModel):
     to_date: str = Field("", validation_alias=AliasChoices("to_date", "end_date"))
     initial_cash: float = Field(1_000_000, gt=0, allow_inf_nan=False)
     top_n: int | None = Field(None, ge=1, le=50)
-    rebalance: Literal["daily", "weekly", "monthly"] | None = None
+    rebalance: Literal["daily", "weekly", "monthly", "quarterly"] | None = None
+    hold_buffer: int | None = Field(None, ge=0, le=200)
     style: Literal["conservative", "balanced", "aggressive"] = "balanced"
     market: str = Field(CURRENT_POOL, max_length=40)
     execution_overrides: ExecutionOverridesIn | None = None
@@ -228,7 +229,7 @@ class CopyIn(BaseModel):
 
 
 def _describe(definition: dict[str, Any], top_n: int, rebalance: str) -> str:
-    freq = {"daily": "每日", "weekly": "每周", "monthly": "每月"}.get(rebalance, rebalance)
+    freq = {"daily": "每日", "weekly": "每周", "monthly": "每月", "quarterly": "每季"}.get(rebalance, rebalance)
     logic = "同时满足" if definition.get("entry_logic") == "all" else "满足任一"
     rules = definition.get("entry_rules") or []
     parts = []
@@ -261,6 +262,7 @@ def _package_row_to_dict(r) -> dict[str, Any]:
         "definition": definition,
         "top_n": r["top_n"],
         "rebalance": r["rebalance"],
+        "hold_buffer": int(canonical.get("hold_buffer") or 0),
         "source": r["source"],
         "created_at": r["created_at"],
         "describe_text": describe_text,
@@ -392,7 +394,7 @@ class ScreenHistoryIn(BaseModel):
     market: str = Field(CURRENT_POOL, max_length=40)
     years: int = Field(1, ge=1, le=5)
     top_n: int = Field(5, ge=1, le=50)
-    rebalance: Literal["daily", "weekly", "monthly"] = "weekly"
+    rebalance: Literal["daily", "weekly", "monthly", "quarterly"] = "weekly"
     exclude_st: bool | None = None
 
 
@@ -588,12 +590,14 @@ def backtest_package(package_id: str, body: PackageBacktestIn | None = None, use
         raise HTTPException(status_code=422, detail=f"策略定义无效：{_sanitize_detail(exc)}")
     return _run_backtest(user, package, market=body.market, start=start, end=end, initial_cash=body.initial_cash,
                          reference=f"package:{package_id}", package_id=package_id,
+                         hold_buffer=body.hold_buffer,
                          execution_overrides=body.execution_overrides,
                          filter_overrides=body.filter_overrides)
 
 
 def _run_backtest(user: dict, package: StrategyPackage, *, market: str, start: date, end: date, initial_cash: float,
                   reference: str, package_id: str | None, exclude_st: bool | None = None,
+                  hold_buffer: int | None = None,
                   execution_overrides: ExecutionOverridesIn | dict[str, Any] | None = None,
                   filter_overrides: FilterOverridesIn | dict[str, Any] | None = None) -> dict[str, Any]:
     """跑一次规则策略回测并保存到回测记录；策略包回测和条件选股的“过去表现如何”共用。"""
@@ -615,6 +619,7 @@ def _run_backtest(user: dict, package: StrategyPackage, *, market: str, start: d
         start_date=start,
         end_date=end,
         initial_cash=initial_cash,
+        hold_buffer=hold_buffer,
         risk_limits=dc_replace(user_risk_limits(user["id"]), max_positions=package.top_n),
     )
     with backtest_slot(user):
@@ -629,12 +634,14 @@ def _run_backtest(user: dict, package: StrategyPackage, *, market: str, start: d
 
     result = backtest_run_to_result(run, names=security_names())
     result["pool"] = pool_from_snapshot(getattr(run, "config_snapshot", {}), market, run.result.summary.get("universe_count"))
+    effective_buffer = int(hold_buffer) if hold_buffer is not None else int(package.definition.hold_buffer or 0)
     result["effective_config"] = {
         "strategy_reference": reference, "package_id": package_id,
         "strategy_plugin": "rule_builder", "market": market,
         "strategy_parameters": {"definition_json": package.definition.to_json()},
         "initial_capital": base.initial_cash, "max_positions": package.top_n,
-        "rebalance": package.rebalance, "from_date": start.isoformat(), "to_date": end.isoformat(),
+        "rebalance": package.rebalance, "hold_buffer": effective_buffer,
+        "from_date": start.isoformat(), "to_date": end.isoformat(),
         "execution": effective_execution,
         "filters": effective_filters,
     }

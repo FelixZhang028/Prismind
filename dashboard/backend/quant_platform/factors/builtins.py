@@ -371,6 +371,17 @@ def builtin_factors() -> list[FactorDefinition]:
             func=_yield_of("pcf_ttm"),
         ),
         BuiltinFactor(
+            name="dividend_yield",
+            display_name="股息率（近一年）",
+            description="过去 365 天已除权除息的现金分红合计除以当日未复权收盘价（按送转拆股折算至当前股本），越高代表分红回报越高；需已同步分红送配数据。",
+            formula="trailing_365d_cash_dividend / raw_close",
+            required_fields=("dividend_yield",),
+            min_history=1,
+            direction=1,
+            category="估值",
+            func=_reported("dividend_yield"),
+        ),
+        BuiltinFactor(
             name="roe_ttm",
             display_name="净资产收益率（TTM）",
             description="过去十二个月净利润相对净资产的比例，由市净率除以市盈率得到，每天更新；越高说明用股东的钱赚得越多。",

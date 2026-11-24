@@ -4,6 +4,7 @@ export const REBALANCE_OPTIONS = [
   { value: 'daily', label: '每日' },
   { value: 'weekly', label: '每周' },
   { value: 'monthly', label: '每月' },
+  { value: 'quarterly', label: '每季' },
 ]
 export const PERIOD_OPTIONS = [1, 2, 3, 5, 10].map((years) => ({ value: years, label: `最近 ${years} 年` }))
 

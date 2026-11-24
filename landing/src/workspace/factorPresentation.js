@@ -160,6 +160,31 @@ export function fdrVerdictTone(verdict) {
   return 'text-slate-400'
 }
 
+// 单因子评估顶部卡片用的 BH-FDR q 值摘要：优先读 significance.fdr_q，兼容旧报告从 decay 表回填。
+export function singleFactorFdrSummary(report) {
+  const sig = report?.significance || {}
+  const decay = Array.isArray(report?.decay) ? report.decay : []
+  const matched = decay.find((row) => Number(row?.horizon) === Number(report?.horizon))
+  const rawQ = sig.fdr_q != null ? sig.fdr_q : matched?.fdr_q
+  const horizons = Number(sig.fdr_horizons || decay.length || 0)
+  if (rawQ == null || rawQ === '' || !Number.isFinite(Number(rawQ))) {
+    return {
+      value: '—',
+      badge: '待校正',
+      sub: horizons > 0 ? `跨 ${horizons} 个持有期样本不足` : '当前报告未包含多持有期校正数据',
+      tone: 'text-slate-400',
+    }
+  }
+  const badge = fdrBadge(rawQ)
+  const scope = horizons > 0 ? `跨 ${horizons} 个持有期 BH-FDR · ` : 'BH-FDR · '
+  return {
+    value: formatPValue(rawQ),
+    badge: badge.label,
+    sub: `${scope}${badge.label}`,
+    tone: badge.tone,
+  }
+}
+
 // 组合研究页的多重检验白话结论摘要。
 export function multipleTestingSummary(summary) {
   if (!summary || typeof summary !== 'object') return null

@@ -76,7 +76,8 @@ class BacktestIn(BaseModel):
     to_date: str = Field(..., description="结束日期 YYYY-MM-DD")
     initial_capital: float = Field(1_000_000, gt=0, allow_inf_nan=False)
     max_positions: int = Field(10, ge=1, le=500)
-    rebalance: Literal["daily", "weekly", "monthly"] = "weekly"
+    rebalance: Literal["daily", "weekly", "monthly", "quarterly"] = "weekly"
+    hold_buffer: int | None = Field(None, ge=0, le=200)
     strategy_parameters: dict[str, Any] = Field(default_factory=dict)
     execution_overrides: ExecutionOverridesIn | None = None
     filter_overrides: FilterOverridesIn | None = None
@@ -230,7 +231,8 @@ def submit_backtest(body: BacktestIn, user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=422, detail="规则策略请在创建页修改指标规则。")
         return backtest_package(body.strategy.removeprefix("package:"), PackageBacktestIn(
             from_date=start, to_date=end, initial_cash=body.initial_capital,
-            top_n=body.max_positions, rebalance=body.rebalance, market=body.market,
+            top_n=body.max_positions, rebalance=body.rebalance, hold_buffer=body.hold_buffer,
+            market=body.market,
             execution_overrides=body.execution_overrides,
             filter_overrides=body.filter_overrides), user)
 
@@ -261,6 +263,7 @@ def submit_backtest(body: BacktestIn, user: dict = Depends(get_current_user)):
         initial_cash=body.initial_capital,
         top_n=body.max_positions,
         rebalance=body.rebalance,
+        hold_buffer=body.hold_buffer,
         strategy_parameters=parameters,
         risk_limits=effective_risk,
     )
@@ -282,6 +285,7 @@ def submit_backtest(body: BacktestIn, user: dict = Depends(get_current_user)):
         "initial_capital": request.initial_cash,
         "max_positions": request.top_n,
         "rebalance": request.rebalance,
+        "hold_buffer": int(run.result.summary.get("hold_buffer") or body.hold_buffer or 0),
         "from_date": start, "to_date": end,
         "execution": effective_execution,
         "filters": effective_filters,

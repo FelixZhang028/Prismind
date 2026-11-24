@@ -28,7 +28,7 @@ const marketOptions = computed(() => {
   return list.map((item) => ({ value: item.value, label: item.available ? item.label : `${item.label}（还没下载成分股）`, disabled: !item.available }))
 })
 const yearOptions = [{ value: 1, label: '最近 1 年' }, { value: 3, label: '最近 3 年' }, { value: 5, label: '最近 5 年' }]
-const freqOptions = [{ value: 'daily', label: '每日' }, { value: 'weekly', label: '每周' }, { value: 'monthly', label: '每月' }]
+const freqOptions = [{ value: 'daily', label: '每日' }, { value: 'weekly', label: '每周' }, { value: 'monthly', label: '每月' }, { value: 'quarterly', label: '每季' }]
 const metrics = computed(() => historyMetrics(result.value?.summary))
 
 watch(() => props.form, () => { if (result.value) stale.value = true }, { deep: true })

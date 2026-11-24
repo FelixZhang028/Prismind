@@ -18,7 +18,7 @@ const methods = [
 ]
 const visibleAssets = computed(() => assets.value.filter((asset) =>
   `${asset.name} ${asset.description || ''}`.toLowerCase().includes(keyword.value.trim().toLowerCase())))
-const freqLabel = (value) => ({ daily: '每日', weekly: '每周', monthly: '每月' }[value] || '—')
+const freqLabel = (value) => ({ daily: '每日', weekly: '每周', monthly: '每月', quarterly: '每季' }[value] || '—')
 
 async function loadAssets() {
   loading.value = true

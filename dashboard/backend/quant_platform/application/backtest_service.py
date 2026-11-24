@@ -59,6 +59,7 @@ class BacktestRequest:
     baseline_run_id: str | None = None
     portfolio_method: str | None = None
     universe_mode: str | None = None
+    hold_buffer: int | None = None
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,11 @@ class BacktestService:
             initial_cash=float(backtest.get("initial_cash", default.initial_cash)),
             top_n=int(portfolio.get("top_n", default.top_n)),
             portfolio_method=str(portfolio.get("plugin", "equal_weight")),
+            hold_buffer=(
+                int(portfolio["hold_buffer"])
+                if portfolio.get("hold_buffer") is not None
+                else None
+            ),
             universe_mode=str(
                 require_mapping(snapshot["universe"], "universe").get("mode", "fixed")
             ),
@@ -253,6 +259,7 @@ class BacktestService:
             benchmark_symbol=benchmark_symbol or None,
             warmup_days=warmup_days,
             annualization=int(backtest_section.get("annualization", 252)),
+            hold_buffer=effective.hold_buffer,
         )
         return engine, self._config_snapshot(effective)
 
@@ -308,8 +315,10 @@ class BacktestService:
             raise ValueError("initial_cash must be positive")
         if request.top_n <= 0:
             raise ValueError("top_n must be positive")
-        if request.rebalance not in {"daily", "weekly", "monthly"}:
+        if request.rebalance not in {"daily", "weekly", "monthly", "quarterly"}:
             raise ValueError(f"Unsupported rebalance frequency: {request.rebalance}")
+        if request.hold_buffer is not None and not 0 <= request.hold_buffer <= 200:
+            raise ValueError("hold_buffer must be between 0 and 200")
         if request.evaluation_mode not in {"in_sample", "training", "out_of_sample"}:
             raise ValueError(f"Unsupported evaluation mode: {request.evaluation_mode}")
         request.risk_limits.validate()
@@ -338,6 +347,8 @@ class BacktestService:
             }
         )
         require_mapping(snapshot["app"], "portfolio")["top_n"] = request.top_n
+        if request.hold_buffer is not None:
+            require_mapping(snapshot["app"], "portfolio")["hold_buffer"] = request.hold_buffer
         if request.portfolio_method:
             require_mapping(snapshot["app"], "portfolio")["plugin"] = request.portfolio_method
         if request.universe_mode:

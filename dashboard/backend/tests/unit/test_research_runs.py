@@ -50,8 +50,8 @@ def test_strategy_parameters_come_first_then_the_two_settings_every_strategy_sha
     assert offered[0]["current"] == 30 and offered[0]["minimum"] == 2 and offered[1]["current"] == 0.0
     holding, frequency = offered[3], offered[4]
     assert (holding["label"], holding["current"], holding["minimum"], holding["maximum"]) == ("持股数量", 5, 1, 500)
-    assert frequency["current"] == "monthly" and frequency["choices"] == ["daily", "weekly", "monthly"]
-    assert frequency["choice_labels"] == {"daily": "每日", "weekly": "每周", "monthly": "每月"}
+    assert frequency["current"] == "monthly" and frequency["choices"] == ["daily", "weekly", "monthly", "quarterly"]
+    assert frequency["choice_labels"] == {"daily": "每日", "weekly": "每周", "monthly": "每月", "quarterly": "每季"}
     # A rule strategy has no numeric parameters of its own, but can still vary these two.
     rules = replace(METADATA, plugin_name="rule_builder", parameters=METADATA.parameters[2:3])
     assert [(p["name"], p["maximum"]) for p in tunable_parameters(rules, {})] == [("top_n", 50), ("rebalance", None)]
@@ -69,7 +69,7 @@ def test_grid_is_validated_against_the_strategy_before_anything_runs():
     rules = replace(METADATA, plugin_name="rule_builder", parameters=METADATA.parameters[2:3])
     assert parameter_grid(rules, {"top_n": ["3", 5], "rebalance": ["weekly", "monthly"]}) == {
         "top_n": (3, 5), "rebalance": ("weekly", "monthly")}
-    with pytest.raises(ResearchInputError, match="可选 daily / weekly / monthly"):
+    with pytest.raises(ResearchInputError, match="可选 daily / weekly / monthly / quarterly"):
         parameter_grid(rules, {"rebalance": ["yearly"]})
     with pytest.raises(ResearchInputError, match="允许范围 1 ~ 50"):
         parameter_grid(rules, {"top_n": [51]})
