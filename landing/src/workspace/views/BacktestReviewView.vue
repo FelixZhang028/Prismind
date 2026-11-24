@@ -24,6 +24,7 @@ import { CURRENT_POOL, marketChoices, marketLabel, marketNote, suggestedHistoric
 import { paperPrefill, parseFactorRows, returnTone } from '../paperPresentation.js'
 import { strategyProtectionSummary, tradeReasonClass } from '../ruleForm.js'
 import { takeFactorBacktestDraft } from '../factorBacktestDraft.js'
+import { loadBacktestSettings, saveBacktestSettings } from '../backtestSettings.js'
 
 const props = defineProps({
   routeContext: { type: Object, default: () => ({}) },
@@ -53,6 +54,9 @@ const execFilterOpen = ref(false)
 const executionDefaults = ref(null)
 const filterDefaults = ref(null)
 let execFilterInitialized = false
+let settingsReady = false
+let hasSavedSettings = false
+const factorDraftPeriod = ref(null)
 const execForm = reactive({
   commission_wan: 3, // 万分之几，3 = 0.0003（万三）
   minimum_commission: 5,
@@ -114,9 +118,23 @@ function chooseStrategy() {
   const strategy = selectedStrategy.value
   for (const key of Object.keys(strategyParameters)) delete strategyParameters[key]
   Object.assign(strategyParameters, strategy?.defaults || {})
-  if (strategy?.top_n) form.max_positions = strategy.top_n
+  if (strategy?.top_n != null) form.max_positions = strategy.top_n
   if (strategy?.rebalance) form.rebalance = strategy.rebalance
-  form.hold_buffer = Number(strategy?.hold_buffer ?? 0)
+  if (strategy?.hold_buffer != null) form.hold_buffer = Number(strategy.hold_buffer)
+}
+function applySavedBacktestSettings(saved) {
+  if (!saved) return
+  hasSavedSettings = true
+  for (const key of ['from_date', 'to_date', 'initial_capital', 'max_positions', 'rebalance', 'hold_buffer']) {
+    if (saved[key] != null) form[key] = saved[key]
+  }
+  if (saved.exec) Object.assign(execForm, saved.exec)
+  if (saved.filter) Object.assign(filterForm, saved.filter)
+}
+function applyFactorDraftPeriod() {
+  if (!factorDraftPeriod.value) return
+  form.from_date = factorDraftPeriod.value.from_date
+  form.to_date = factorDraftPeriod.value.to_date
 }
 const rebalances = REBALANCE_OPTIONS
 const holdBufferHint = computed(() => {
@@ -341,14 +359,23 @@ async function loadDetail() {
 }
 
 async function onSubmit() {
+  if (running.value) return
   if (!selectedStrategy.value) return props.notify('请选择可执行策略')
   if (!riskEditor.value?.ready) return props.notify('风控配置尚未加载，请稍后或重试')
-  if (riskEditor.value?.dirty) { riskOpen.value = true; return props.notify('请先保存修改的风控配置') }
   if (form.from_date >= form.to_date) return props.notify('开始日期需早于结束日期')
   running.value = true
   runError.value = ''
 
   try {
+    if (riskEditor.value?.dirty) {
+      const saved = await riskEditor.value.save({ silent: true })
+      if (!saved) {
+        riskOpen.value = true
+        runError.value = '风控配置保存失败，请检查风控设置后重试'
+        return
+      }
+      props.notify('已自动保存风控配置并开始提交回测')
+    }
     const data = await submitBacktest({
       strategy: form.strategy.trim(),
       market: form.market,
@@ -362,7 +389,11 @@ async function onSubmit() {
       execution_overrides: currentExecOverrides.value,
       filter_overrides: currentFilterOverrides.value,
     })
-    props.notify('回测已提交。可在「回测任务」中查看进度或取消任务。')
+    props.notify(
+      data?.deduplicated
+        ? '相同配置的回测正在排队/运行中，已定位到该任务，未重复提交'
+        : '回测已提交。可在「回测任务」中查看进度或取消任务。'
+    )
     tasksRefresh.value += 1
     activeTab.value = '概览'
     // 保存任务编号：刷新后重新订阅后台状态，成功后再打开结果。
@@ -386,6 +417,9 @@ async function loadCatalog() {
     if (catalog.filter_defaults) filterDefaults.value = catalog.filter_defaults
     if (!execFilterInitialized && (catalog.execution_defaults || catalog.filter_defaults)) {
       syncExecFilterFromDefaults(catalog.execution_defaults, catalog.filter_defaults)
+      const saved = loadBacktestSettings()
+      if (saved?.exec) Object.assign(execForm, saved.exec)
+      if (saved?.filter) Object.assign(filterForm, saved.filter)
       execFilterInitialized = true
     }
     strategyOptions.value = [
@@ -403,11 +437,18 @@ async function loadCatalog() {
       if (form.strategy === 'factor_composite' && props.routeContext.mode === 'factor-combination') {
         const draft = takeFactorBacktestDraft()
         if (draft) {
-          form.market = draft.market
-          form.from_date = draft.from_date
-          form.to_date = draft.to_date
+          form.market = usableMarket(draft.market, markets.value)
           strategyParameters.factors_json = JSON.stringify(draft.factors)
+          if (draft.from_date && draft.to_date) {
+            factorDraftPeriod.value = { from_date: draft.from_date, to_date: draft.to_date }
+            if (!hasSavedSettings) {
+              form.from_date = draft.from_date
+              form.to_date = draft.to_date
+            }
+          }
         }
+      } else {
+        factorDraftPeriod.value = null
       }
     } else if (!strategyOptions.value.some((s) => s.value === form.strategy)) {
       form.strategy = catalog.default
@@ -444,10 +485,46 @@ async function applyPreferences() {
   try {
     Object.assign(form, backtestDefaults((await getPreferences()).preferences))
   } catch { /* 读不到就用页面自带的默认值 */ }
+  applySavedBacktestSettings(loadBacktestSettings())
 }
+watch(
+  () => [
+    form.from_date,
+    form.to_date,
+    form.initial_capital,
+    form.max_positions,
+    form.rebalance,
+    form.hold_buffer,
+    execForm.commission_wan,
+    execForm.minimum_commission,
+    execForm.historical_fees,
+    execForm.stamp_tax_wan,
+    execForm.slippage_bps,
+    filterForm.exclude_st,
+    filterForm.exclude_suspended,
+    filterForm.minimum_listing_days,
+    filterForm.minimum_history_days,
+    filterForm.minimum_average_amount,
+  ],
+  () => {
+    if (!settingsReady) return
+    hasSavedSettings = true
+    saveBacktestSettings({
+      from_date: form.from_date,
+      to_date: form.to_date,
+      initial_capital: form.initial_capital,
+      max_positions: form.max_positions,
+      rebalance: form.rebalance,
+      hold_buffer: form.hold_buffer,
+      exec: { ...execForm },
+      filter: { ...filterForm },
+    })
+  }
+)
 onActivated(async () => {
   await applyPreferences()
   await loadCatalog()
+  settingsReady = true
   await loadRouteRun()
 })
 </script>
@@ -464,6 +541,20 @@ onActivated(async () => {
     <!-- 新建回测 -->
     <SectionCard title="新建回测" hint="配置策略与市场区间，运行一次确定性回测">
       <p v-if="routeContext.mode === 'reuse'" class="mb-4 text-sm text-slate-400">已带入历史区间、资金、股票范围与策略参数；风控使用当前设置。</p>
+      <div
+        v-else-if="factorDraftPeriod && form.strategy === 'factor_composite'"
+        class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-400/20 bg-indigo-500/10 px-3.5 py-2.5 text-xs text-indigo-100"
+      >
+        <span>已带入因子组合，并保留你当前的持仓数、调仓频率、换手缓冲、交易成本与股票过滤设置。</span>
+        <button
+          v-if="form.from_date !== factorDraftPeriod.from_date || form.to_date !== factorDraftPeriod.to_date"
+          type="button"
+          class="font-medium text-indigo-300 underline hover:text-white"
+          @click="applyFactorDraftPeriod"
+        >
+          改用组合测试区间（{{ factorDraftPeriod.from_date }} ~ {{ factorDraftPeriod.to_date }}）
+        </button>
+      </div>
       <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <FormField label="策略" type="select" v-model="form.strategy" :options="[{ value: '', label: catalogLoading ? '加载中…' : '请选择策略' }, ...strategyOptions]" :disabled="catalogLoading" @update:model-value="chooseStrategy" />
         <FormField label="股票范围" type="select" v-model="form.market" :options="marketOptions" />
@@ -553,7 +644,7 @@ onActivated(async () => {
         </div>
       </details>
       <details :open="riskOpen" class="mt-3 rounded-xl border border-white/10 bg-white/5" @toggle="riskOpen = $event.target.open">
-        <summary class="cursor-pointer px-4 py-3 text-sm text-slate-300">风险设置（含单一行业仓位上限） <span v-if="riskEditor?.dirty" class="text-amber-300">· 有未保存修改</span></summary>
+        <summary class="cursor-pointer px-4 py-3 text-sm text-slate-300">风险设置（含单一行业仓位上限） <span v-if="riskEditor?.dirty" class="text-amber-300">· 有未保存修改（运行回测时自动保存）</span></summary>
         <div class="p-3 pt-0"><RiskSettings ref="riskEditor" :notify="notify" /></div>
       </details>
       <p v-if="runError" class="mt-4 text-sm text-rose-300">{{ runError }}</p>
