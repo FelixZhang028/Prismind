@@ -405,3 +405,34 @@ def test_real_worker_saves_a_backtest_and_uses_submitted_pool(db, monkeypatch, k
             assert recorded["pool"]["snapshot_date"] == day.date().isoformat()
             snapshot = BacktestRunStore(runtime.RUNTIME_ROOT / "runs").load_config(recorded["run_id"])
             assert snapshot["universe"]["universe"]["filters"]["exclude_st"] is True
+
+
+def test_enqueue_deduplicates_identical_active_jobs_and_allows_distinct_or_after_cancel(db):
+    payload_a = {
+        "kind": "backtest",
+        "package_id": None,
+        "label": "因子组合",
+        "request": {"strategy": "factor_composite", "from_date": "2024-01-01", "to_date": "2025-12-31", "max_positions": 20},
+        "snapshot": {"symbols": ["000001.SZ"], "risk": {"max_industry_weight": 0.25}},
+    }
+    first = jobs.enqueue(1, payload_a, deduplicate=True)
+    assert first.get("deduplicated") is None
+
+    # Identical active submission reuses existing job instead of queuing a duplicate.
+    second = jobs.enqueue(1, payload_a, deduplicate=True)
+    assert second["id"] == first["id"]
+    assert second["deduplicated"] is True
+    assert len(jobs.list_jobs(1)["items"]) == 1
+
+    # Different risk/request parameters still enqueue a distinct job.
+    payload_b = {**payload_a, "request": {**payload_a["request"], "max_positions": 10}}
+    third = jobs.enqueue(1, payload_b, deduplicate=True)
+    assert third["id"] != first["id"]
+    assert third.get("deduplicated") is None
+    assert len(jobs.list_jobs(1)["items"]) == 2
+
+    # Once cancelled, submitting payload_a again creates a fresh job.
+    jobs.cancel(first["id"], 1)
+    fourth = jobs.enqueue(1, payload_a, deduplicate=True)
+    assert fourth["id"] != first["id"]
+    assert fourth.get("deduplicated") is None

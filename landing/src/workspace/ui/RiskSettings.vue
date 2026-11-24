@@ -42,7 +42,7 @@ const savedSnapshot = ref('')
 const loadError = ref('')
 const dirty = computed(() => !!savedSnapshot.value && savedSnapshot.value !== JSON.stringify(form))
 const ready = computed(() => !!savedSnapshot.value && !loadingRisk.value && !loadError.value && !saving.value)
-defineExpose({ dirty, ready })
+defineExpose({ dirty, ready, save: onSubmit })
 
 async function loadRisk() {
   loadingRisk.value = true
@@ -70,7 +70,7 @@ async function loadRisk() {
   }
 }
 
-async function onSubmit() {
+async function onSubmit({ silent = false } = {}) {
   const submittedSnapshot = JSON.stringify(form)
   saving.value = true
   try {
@@ -87,9 +87,11 @@ async function onSubmit() {
       max_industry_weight: Number(form.max_industry_weight),
     })
     savedSnapshot.value = submittedSnapshot
-    props.notify('已保存')
+    if (!silent) props.notify('已保存')
+    return true
   } catch (e) {
     props.notify(e.message || '保存失败')
+    return false
   } finally {
     saving.value = false
   }

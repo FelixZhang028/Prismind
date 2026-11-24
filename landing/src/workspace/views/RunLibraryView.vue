@@ -130,6 +130,7 @@ const comparison = ref(null)
 const comparisonNote = ref('')
 const comparisonScope = ref(null)
 const navPoints = ref([])
+const annualReturns = ref([])
 const compareRunIds = ref([])
 const palette = ['#818cf8', '#34d399', '#fbbf24', '#f472b6', '#22d3ee']
 
@@ -152,6 +153,7 @@ function closeComparison() {
   comparison.value = null
   compareError.value = ''
   navPoints.value = []
+  annualReturns.value = []
   compareRunIds.value = []
 }
 
@@ -162,12 +164,14 @@ async function onCompare() {
   compareError.value = ''
   comparison.value = null
   navPoints.value = []
+  annualReturns.value = []
   try {
     const data = await compareRuns(ids)
     comparison.value = data?.comparison || []
     comparisonNote.value = data.note || ''
     comparisonScope.value = data.chart_scope || null
     navPoints.value = data?.normalized_nav || []
+    annualReturns.value = data?.annual_returns || []
     compareRunIds.value = ids
     await nextTick()
     compareSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -197,6 +201,14 @@ const comparisonRows = computed(() => {
     strategy: nameOf(runMap.value[c.run_id], c.strategy),
   }))
 })
+
+const annualCompareColumns = computed(() => [
+  { key: 'year', label: '年份' },
+  ...compareRunIds.value.map((rid) => {
+    const label = runMap.value[rid] ? nameOf(runMap.value[rid]) : rid
+    return { key: rid, label: `${label} (${rid})`, align: 'right' }
+  }),
+])
 
 // ---------- 表格列 ----------
 const showDetailedColumns = ref(false)
@@ -332,6 +344,21 @@ onActivated(() => {
               <span class="inline-flex rounded-full border px-2.5 py-0.5 text-xs" :class="trustInfo(row).cls">{{ trustInfo(row).text }}</span>
             </template>
           </DataTable>
+
+          <div v-if="annualReturns.length" class="space-y-2 border-t border-white/10 pt-5">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 class="text-sm font-semibold text-white">分年收益对比</h3>
+              <span class="text-xs text-slate-400">按各自原始净值逐年复利拆解（首年从起点起算，后续年份以上年末净值为基期）</span>
+            </div>
+            <DataTable :columns="annualCompareColumns" :rows="annualReturns" empty="暂无分年收益数据">
+              <template #cell-year="{ value }">
+                <span class="font-medium text-white">{{ value }}</span>
+              </template>
+              <template v-for="rid in compareRunIds" :key="rid" #[`cell-${rid}`]="{ value }">
+                <span class="font-semibold tabular-nums" :class="pctClass(value)">{{ fmtPct(value) }}</span>
+              </template>
+            </DataTable>
+          </div>
         </div>
       </SectionCard>
     </div>

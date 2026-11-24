@@ -45,9 +45,35 @@ def initialize() -> None:
             conn.execute("ALTER TABLE backtests ADD COLUMN archived_at TEXT")
 
 
-def enqueue(user_id: int, payload: dict) -> dict:
+def _dedupe_key(payload: dict) -> str:
+    return json.dumps(
+        {
+            "kind": payload.get("kind"),
+            "package_id": payload.get("package_id"),
+            "request": payload.get("request"),
+            "snapshot": payload.get("snapshot"),
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def enqueue(user_id: int, payload: dict, *, deduplicate: bool = False) -> dict:
     with get_conn() as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if deduplicate:
+            target_key = _dedupe_key(payload)
+            active_rows = conn.execute(
+                "SELECT * FROM backtest_jobs WHERE user_id=? AND state IN ('QUEUED','RUNNING') ORDER BY created_at DESC, id DESC",
+                (user_id,),
+            ).fetchall()
+            for existing in active_rows:
+                try:
+                    existing_payload = json.loads(existing["payload"])
+                except (TypeError, ValueError):
+                    continue
+                if _dedupe_key(existing_payload) == target_key:
+                    return {**public_job(existing, conn), "deduplicated": True}
         count = conn.execute("SELECT COUNT(*) FROM backtest_jobs WHERE user_id=? AND state IN ('QUEUED','RUNNING','CANCELLING')", (user_id,)).fetchone()[0]
         total = conn.execute("SELECT COUNT(*) FROM backtest_jobs WHERE state IN ('QUEUED','RUNNING','CANCELLING')").fetchone()[0]
         if count >= 5 or total >= 100:

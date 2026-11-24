@@ -94,3 +94,19 @@ def test_get_backtest_backfills_annualized_turnover_and_annual_breakdown(api):  
     assert [r["year"] for r in body["annual_breakdown"]["rows"]] == [2024, 2025]
     assert body["result"]["annualized_turnover"] is not None
     assert body["result"]["annualized_turnover"] > 0
+
+
+def test_compare_runs_includes_per_year_returns_matrix(api):  # noqa: F811
+    client, _, _ = api
+    save_run(api, 1, dates=["2024-12-30", "2024-12-31", "2025-01-02"], equity=[100.0, 110.0, 121.0])
+    save_run(api, 2, dates=["2024-12-30", "2024-12-31", "2025-01-02"], equity=[100.0, 95.0, 114.0])
+
+    resp = client.post("/api/v1/runs/compare", json={"run_ids": ["run-1", "run-2"]})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    annual = body["annual_returns"]
+    assert [row["year"] for row in annual] == [2024, 2025]
+    assert annual[0]["run-1"] == pytest.approx(10.0)
+    assert annual[0]["run-2"] == pytest.approx(-5.0)
+    assert annual[1]["run-1"] == pytest.approx(10.0)
+    assert annual[1]["run-2"] == pytest.approx(20.0)

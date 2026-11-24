@@ -110,7 +110,7 @@ def submit(body: JobIn, user: dict = Depends(get_current_user)):
     except (ValidationError, ConfigurationError) as exc:
         message = "因子评估参数无效，请检查后重试" if body.kind == "factor" else "回测参数或策略定义无效，请检查后重试"
         raise HTTPException(422, message) from exc
-    return jobs.enqueue(user["id"], payload)
+    return jobs.enqueue(user["id"], payload, deduplicate=True)
 
 
 @router.get("")

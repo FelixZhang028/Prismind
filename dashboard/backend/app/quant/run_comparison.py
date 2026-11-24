@@ -4,13 +4,14 @@ import math
 import pandas as pd
 from fastapi import HTTPException
 
+from .backtest_annual import backtest_annual_breakdown
 from .result_adapter import _round
 from .run_evidence import run_directory
 from .run_pool import persisted_pool
 
 
 def compare_persisted_runs(records):
-    comparison, curves = [], {}
+    comparison, curves, annual_by_run = [], {}, {}
     for rid, row, result in records:
         directory = run_directory(result)
         if row["status"] != "完成" or directory is None:
@@ -27,6 +28,11 @@ def compare_persisted_runs(records):
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise HTTPException(422, f"{rid} 运行明细缺失或损坏，无法对比") from exc
         curves[rid] = pd.Series(equity.to_numpy(), index=dates).sort_index()
+        breakdown = backtest_annual_breakdown(directory, result)
+        if breakdown and breakdown.get("rows"):
+            annual_by_run[rid] = {int(item["year"]): item.get("return_pct") for item in breakdown["rows"]}
+        else:
+            annual_by_run[rid] = {}
         def percent(key, absolute=False):
             value = summary.get(key)
             return _round((abs(value) if absolute else value) * 100) if isinstance(value, (int, float)) else None
@@ -47,7 +53,16 @@ def compare_persisted_runs(records):
     aligned.index.name = "trade_date"
     points = aligned.reset_index()
     points["trade_date"] = points["trade_date"].dt.strftime("%Y-%m-%d")
+    all_years = sorted({yr for mapping in annual_by_run.values() for yr in mapping})
+    annual_returns = [
+        {
+            "year": year,
+            **{rid: annual_by_run.get(rid, {}).get(year) for rid, _, _ in records},
+        }
+        for year in all_years
+    ]
     return {"comparison": comparison, "normalized_nav": points.to_dict(orient="records"),
+            "annual_returns": annual_returns,
             "source": "persisted_backtest", "metric_scope": "original_run",
             "chart_scope": {"start_date": points.trade_date.iloc[0], "end_date": points.trade_date.iloc[-1], "observations": len(points)},
             "note": "表格为各次回测原区间指标；曲线仅显示共同交易日，起点归一为 1，不填补缺失净值。"}

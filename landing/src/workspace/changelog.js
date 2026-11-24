@@ -19,6 +19,37 @@ export const CATEGORY_STYLE = {
 
 export const CHANGELOG_ENTRIES = [
   {
+    id: '2026-11-24-backtest-ux-dedupe-and-compare-annual',
+    date: '2026-11-24',
+    title: '回测自动保存风控与防重提交、参数持久化记忆、研究对比新增分年收益',
+    items: [
+      {
+        category: 'improve',
+        summary: '风控有未保存修改时，点击「运行回测」自动先保存风控再提交',
+        detail: '无需再手动先点「保存风控配置」，若风控校验失败则自动展开面板并给出明确提示。',
+        action: { label: '去策略回测体验', view: 'backtest-review' },
+      },
+      {
+        category: 'improve',
+        summary: '回测常用配置自动记忆，「用此组合回测」不再重置持仓/频率/成本与过滤',
+        detail: '回测页的日期区间、持仓数、调仓频率、换手缓冲、交易成本与股票过滤会自动保存在本地；从因子研究点「用此组合回测」时保留当前参数，并提供一键切换至组合测试区间的按钮。',
+        action: { label: '去因子研究体验', view: 'factor-lab' },
+      },
+      {
+        category: 'feat',
+        summary: '研究记录「对比所选」新增分年收益对比表',
+        detail: '勾选 2~5 次回测对比时，除归一化净值曲线与总指标外，新增按自然年并排展示各次回测年度收益率的表格。',
+        action: { label: '去研究记录查看', view: 'run-library' },
+      },
+      {
+        category: 'fix',
+        summary: '前后端双层防止相同配置回测重复提交',
+        detail: '后端任务队列在排队/运行中对同用户完全相同配置的提交自动去重并返回已有任务，前端同步加锁防连点。',
+        action: { label: '去策略回测查看', view: 'backtest-review' },
+      },
+    ],
+  },
+  {
     id: '2026-11-24-quarterly-rebalance-hold-buffer-dividend-fdr',
     date: '2026-11-24',
     title: '回测新增季度调仓与换手缓冲、内置股息率因子与单因子报告增强',
