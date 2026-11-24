@@ -432,7 +432,7 @@ class RuleStrategyDefinition:
     def describe(self, *, top_n: int, rebalance: str) -> str:
         logic = "并且" if self.entry_logic == "all" else "或者"
         conditions = f"，{logic}".join(rule.describe() for rule in self.entry_rules)
-        frequencies = {"daily": "每日", "weekly": "每周", "monthly": "每月"}
+        frequencies = {"daily": "每日", "weekly": "每周", "monthly": "每月", "quarterly": "每季"}
         parts = [
             f"{frequencies.get(rebalance, rebalance)}调仓；只保留满足“{conditions}”的股票；"
             f"{self.ranking.describe()}，等权持有前{top_n}只。条件失效时在下一次调仓退出。"

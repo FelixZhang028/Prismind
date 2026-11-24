@@ -36,8 +36,8 @@ class StrategyPackage:
         self.definition.validate()
         if not 1 <= self.top_n <= 50:
             raise ConfigurationError("持股数量必须在1至50之间")
-        if self.rebalance not in {"daily", "weekly", "monthly"}:
-            raise ConfigurationError("调仓频率只能是每日、每周或每月")
+        if self.rebalance not in {"daily", "weekly", "monthly", "quarterly"}:
+            raise ConfigurationError("调仓频率只能是每日、每周、每月或每季")
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -61,7 +61,7 @@ STALE_DATA_DAYS = 5          # 本地行情比今天落后这么多天时提醒
 DATA_JOB_ACTIVE = ("STARTING", "RUNNING", "RETRYING")
 STATUS_LABELS = {"WAITING": "等待第一个交易日", "ACTIVE": "运行中", "FAILED": "推进失败"}
 STANDARDIZATION_LABELS = {"zscore": "Z-score", "rank": "百分位排名"}
-REBALANCE_LABELS = {"daily": "每日", "weekly": "每周", "monthly": "每月"}
+REBALANCE_LABELS = {"daily": "每日", "weekly": "每周", "monthly": "每月", "quarterly": "每季"}
 FACTOR_COMPOSITE_PLUGIN = FactorCompositeStrategy.plugin_name
 
 
@@ -89,7 +89,7 @@ class PaperAccountIn(BaseModel):
     market: str = Field(CURRENT_POOL, max_length=40)
     initial_cash: float = Field(1_000_000, ge=10_000, le=1e10, allow_inf_nan=False)
     top_n: int | None = Field(None, ge=1, le=50)
-    rebalance: Literal["daily", "weekly", "monthly"] | None = None
+    rebalance: Literal["daily", "weekly", "monthly", "quarterly"] | None = None
 
 
 def _is_factor_composite(stored: dict[str, Any]) -> bool:

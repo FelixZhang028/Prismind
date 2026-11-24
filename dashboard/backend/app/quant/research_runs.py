@@ -35,7 +35,7 @@ def _tunable(parameter: StrategyParameter) -> bool:
     return parameter.kind != ParameterKind.STRING or bool(parameter.choices)
 
 
-REBALANCE_LABELS = {"daily": "每日", "weekly": "每周", "monthly": "每月"}
+REBALANCE_LABELS = {"daily": "每日", "weekly": "每周", "monthly": "每月", "quarterly": "每季"}
 
 
 def research_parameters(metadata: StrategyMetadata) -> tuple[StrategyParameter, ...]:

@@ -97,7 +97,7 @@ export function paperPrefill(config) {
   if (config.market) prefill.market = config.market
   if (Number(config.initial_capital) > 0) prefill.initial_cash = Number(config.initial_capital)
   if (Number(config.max_positions) > 0) prefill.top_n = Number(config.max_positions)
-  if (['daily', 'weekly', 'monthly'].includes(config.rebalance)) prefill.rebalance = config.rebalance
+  if (['daily', 'weekly', 'monthly', 'quarterly'].includes(config.rebalance)) prefill.rebalance = config.rebalance
   return prefill
 }
 

@@ -32,7 +32,7 @@ const STARTS = [
   { key: 'describe', label: '用一句话描述', hint: '写下想法，由大模型转成规则' },
   { key: 'blank', label: '自己填', hint: '从一条空白条件开始' },
 ]
-const freqOptions = [{ value: 'daily', label: '每日' }, { value: 'weekly', label: '每周' }, { value: 'monthly', label: '每月' }]
+const freqOptions = [{ value: 'daily', label: '每日' }, { value: 'weekly', label: '每周' }, { value: 'monthly', label: '每月' }, { value: 'quarterly', label: '每季' }]
 const styleOptions = [{ value: 'conservative', label: '保守' }, { value: 'balanced', label: '均衡' }, { value: 'aggressive', label: '激进' }]
 const timingBenchmarkOptions = computed(() => (
   options.value?.market_timing_benchmarks?.length ? options.value.market_timing_benchmarks : DEFAULT_TIMING_BENCHMARKS

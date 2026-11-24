@@ -19,6 +19,31 @@ export const CATEGORY_STYLE = {
 
 export const CHANGELOG_ENTRIES = [
   {
+    id: '2026-11-24-quarterly-rebalance-hold-buffer-dividend-fdr',
+    date: '2026-11-24',
+    title: '回测新增季度调仓与换手缓冲、内置股息率因子与单因子报告增强',
+    items: [
+      {
+        category: 'feat',
+        summary: '回测与策略全链路新增「每季」调仓频率，回测页开放「换手缓冲」配置',
+        detail: '策略回测、策略工坊、条件选股、模拟账户与研究默认值均已支持每季调仓（按每季度最后一个交易日触发）；回测页可直接设置换手缓冲（如 +10 / +20 / +30 或自定义名次），已持股排名未跌出前 N+K 名时继续保留，显著降低低换手基本面策略的摩擦成本。',
+        action: { label: '去策略回测体验', view: 'backtest-review' },
+      },
+      {
+        category: 'feat',
+        summary: '内置因子库正式加入「股息率（近一年）」因子',
+        detail: '基于本地分红送配记录计算过去 365 天已除权现金分红合计除以当日未复权收盘价（已按送转拆股折算），无未来函数，可直接用于单因子评估、多因子合成与策略回测。',
+        action: { label: '去因子库查看', view: 'factor-lab' },
+      },
+      {
+        category: 'improve',
+        summary: '单因子评估顶部卡片直接展示 BH-FDR q 值，风格相关性补充 250 日年化波动率',
+        detail: '单因子报告「稳定性与显著性」卡片新增跨持有期 BH-FDR 多重检验 q 值与结论（兼容历史缓存报告）；「常见风格相关性速查」新增长期波动率（250 日年化波动率）一行，便于排查长周期低波暴露。',
+        action: { label: '去因子评估查看', view: 'factor-lab' },
+      },
+    ],
+  },
+  {
     id: '2026-11-23-industry-constraints-backtest-costs',
     date: '2026-11-23',
     title: '行业仓位上限与因子回测中性化、回测费率与过滤规则透明可配',

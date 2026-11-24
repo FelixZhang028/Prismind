@@ -22,7 +22,7 @@ import FactorDiagnostics from '../ui/FactorDiagnostics.vue'
 import FactorFilter from '../ui/FactorFilter.vue'
 import FactorLibraryTable from '../ui/FactorLibraryTable.vue'
 import { factorsBySource, filterFactors } from '../factorFilters.js'
-import { directionText, directionTone, factorNote, fdrVerdictTone, formatPValue, longShortSignMismatchNote, multipleTestingSummary, significanceSummary } from '../factorPresentation.js'
+import { directionText, directionTone, factorNote, fdrVerdictTone, formatPValue, longShortSignMismatchNote, multipleTestingSummary, significanceSummary, singleFactorFdrSummary } from '../factorPresentation.js'
 import { neutralizationCoverageSummary } from '../neutralizationPresentation.js'
 import { NEUTRALIZATION_OPTIONS } from '../dataPresentation.js'
 import { FACTOR_STANDARDIZATIONS, openFactorBacktest, openFactorPaper } from '../factorBacktestDraft.js'
@@ -197,6 +197,11 @@ const FACTOR_NOTES = {
     meaning: '近 5 日平均成交量与近 20 日平均成交量之比：大于 1 说明近期成交活跃度提升。',
     usage:
       '成交量异动因子：量比放大代表资金关注或消息驱动，常作为突破确认信号；也需警惕高位放量出货，建议与价格趋势结合判断。',
+  },
+  dividend_yield: {
+    meaning: '过去 365 天已除权除息的每股现金分红合计除以当日未复权收盘价（已按送转拆股折算至当前股本）。',
+    usage:
+      '经典红利/高股息估值因子：股息率越高，说明分红回报越厚、现金流越扎实，常与低波动、高 ROE 等质量因子搭配构建稳健红利组合。需本地已同步分红送配数据。',
   },
 }
 
@@ -670,9 +675,10 @@ async function onDeleteCustom(f) {
 }
 
 // ---------- 评估报告（评估与组合复用） ----------
-function buildReportView(report) {
+function buildReportView(report, { includeFdr = false } = {}) {
   if (!report) return null
   const sig = significanceSummary(report.significance)
+  const fdr = includeFdr ? singleFactorFdrSummary(report) : null
   const n = report.n_groups || 5
   const metrics = [
     { label: 'IC 均值', value: fmtNum(report.ic_mean, 3), sub: 'Pearson IC', ...signTone(report.ic_mean) },
@@ -684,6 +690,7 @@ function buildReportView(report) {
     { label: '前半段 Rank IC', value: fmtNum(report.first_half_ic, 3), sub: '样本前半段', ...signTone(report.first_half_ic) },
     { label: '后半段 Rank IC', value: fmtNum(report.second_half_ic, 3), sub: '样本后半段', ...signTone(report.second_half_ic) },
     { label: 'HAC t 值（显著性）', value: sig.value, sub: sig.sub, up: null, tone: sig.tone },
+    ...(fdr ? [{ label: 'BH-FDR q 值', value: fdr.value, sub: fdr.sub, up: null, tone: fdr.tone }] : []),
     { label: '最高组日均成员更替率', value: fmtPct(report.turnover_mean, 2), sub: '相邻交易日最高组新增成员比例的平均值', up: null, tone: '' },
   ]
   const daily = report.daily_ic || []
@@ -710,7 +717,7 @@ function buildReportView(report) {
   }
 }
 
-const evalView = computed(() => buildReportView(evalResult.value))
+const evalView = computed(() => buildReportView(evalResult.value, { includeFdr: true }))
 const evalCoverage = computed(() => neutralizationCoverageSummary(evalResult.value?.neutralization_coverage))
 const compView = computed(() => buildReportView(compResult.value?.report))
 
@@ -910,14 +917,14 @@ onBeforeUnmount(() => {
         </section>
         <p v-if="evalView.notes" class="rounded-xl border border-amber-400/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-200" role="note">{{ evalView.notes }}</p>
 
-        <SectionCard title="稳定性与显著性" hint="样本分段 Rank IC、Newey-West HAC 统计显著性与最高组日度成员更替率">
-          <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        <SectionCard title="稳定性与显著性" hint="样本分段 Rank IC、Newey-West HAC 统计显著性、跨持有期 BH-FDR q 值与最高组日度成员更替率">
+          <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-5">
             <MetricCard v-for="s in evalView.stability" :key="s.label" :label="s.label" :value="s.value" :sub="s.sub" :up="s.up" :tone="s.tone" />
           </div>
           <p class="mt-3 text-xs text-slate-400">
-            提示：此处的 HAC p 值仅针对单次检验。若同一批筛选多个因子，请在
+            提示：上方 BH-FDR q 值为当前因子在多个持有期（1 / 5 / 10 / 20 日）之间的多重检验校正结果（详见下方「因子衰减」表）。若同时筛选多个因子，请在
             <button type="button" class="text-indigo-300 underline hover:text-indigo-200" @click="activeTab = 'research'">组合研究</button>
-            中一并查看 Benjamini-Hochberg（BH-FDR）多重检验校正后的 q 值；下方「因子衰减」表已对多个持有期自动做 BH-FDR 校正。
+            中查看跨因子的 BH-FDR 多重检验结论。
           </p>
         </SectionCard>
 

@@ -270,6 +270,8 @@ def factor_report_to_dict(report: FactorReport) -> dict[str, Any]:
             "positive_ratio": _round((report.significance or {}).get("positive_ratio"), 4),
             "hac_t": _round((report.significance or {}).get("hac_t"), 3),
             "hac_p": _round((report.significance or {}).get("hac_p"), 4),
+            "fdr_q": _round((report.significance or {}).get("fdr_q"), 4),
+            "fdr_horizons": int((report.significance or {}).get("fdr_horizons") or 0),
         },
         "annual": [
             {

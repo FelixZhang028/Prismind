@@ -39,7 +39,7 @@ REVIEW_QUESTIONS = {
         "不太可能：交易次数多、回测时间足够长、和基准相比表现合理、没有严重的有效性警告",
     ),
 }
-REBALANCE_NAMES = {"daily": "每日", "weekly": "每周", "monthly": "每月"}
+REBALANCE_NAMES = {"daily": "每日", "weekly": "每周", "monthly": "每月", "quarterly": "每季"}
 VALIDITY_NAMES = {"OK": "通过", "PASS": "通过", "WARNING": "有警告", "ERROR": "有错误"}
 
 

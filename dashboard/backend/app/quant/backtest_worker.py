@@ -72,6 +72,7 @@ def execute(jid):
                     initial_cash = request.initial_cash
                     reference = "package:" + payload["package_id"]
                     exclude_st = None
+                    hold_buffer = request.hold_buffer
                     execution_overrides = request.execution_overrides
                     filter_overrides = request.filter_overrides
                 else:
@@ -81,12 +82,14 @@ def execute(jid):
                         rebalance=request.rebalance, source="stock_screen", created_at=datetime.now(timezone.utc))
                     initial_cash, reference = 1_000_000, ""
                     exclude_st = request.exclude_st
+                    hold_buffer = None
                     execution_overrides = None
                     filter_overrides = None
                 workspace._run_backtest(user, package, market=request.market,
                     start=date.fromisoformat(body["from_date"]), end=date.fromisoformat(body["to_date"]),
                     initial_cash=initial_cash, reference=reference, package_id=payload["package_id"],
                     exclude_st=exclude_st,
+                    hold_buffer=hold_buffer,
                     execution_overrides=execution_overrides,
                     filter_overrides=filter_overrides)
     except deadline.ComputationTimeout:

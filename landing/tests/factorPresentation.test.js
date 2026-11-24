@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   ALPHA101_NOTE, annualIcRows, directionText, directionTone, factorNote, factorSummary,
   fdrBadge, fdrVerdictTone, formatPValue, historyText, longShortSignMismatchNote,
-  multipleTestingSummary, significanceSummary, styleCorrelationSummary,
+  multipleTestingSummary, significanceSummary, singleFactorFdrSummary, styleCorrelationSummary,
 } from '../src/workspace/factorPresentation.js'
 
 const alpha = {
@@ -94,4 +94,27 @@ test('BH-FDR 格式化、徽章结论与组合研究多重检验白话摘要', (
   })
   assert.doesNotMatch(clean.text, /过滤掉/)
   assert.match(clean.tone, /emerald/)
+
+  const topFdr = singleFactorFdrSummary({
+    horizon: 5,
+    significance: { fdr_q: 0.018, fdr_horizons: 4 },
+  })
+  assert.equal(topFdr.value, '0.018')
+  assert.equal(topFdr.badge, '通过 (FDR<5%)')
+  assert.match(topFdr.sub, /跨 4 个持有期 BH-FDR/)
+
+  const legacyFdr = singleFactorFdrSummary({
+    horizon: 10,
+    significance: {},
+    decay: [
+      { horizon: 5, fdr_q: 0.2 },
+      { horizon: 10, fdr_q: 0.0002 },
+    ],
+  })
+  assert.equal(legacyFdr.value, '< 0.001')
+  assert.equal(legacyFdr.badge, '通过 (FDR<5%)')
+  assert.match(legacyFdr.sub, /跨 2 个持有期 BH-FDR/)
+
+  const missingFdr = singleFactorFdrSummary({ horizon: 5, significance: {}, decay: [] })
+  assert.equal(missingFdr.value, '—')
 })
