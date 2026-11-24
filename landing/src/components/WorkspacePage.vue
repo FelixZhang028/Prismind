@@ -320,20 +320,6 @@ function doLogout() {
               </a>
             </div>
           </section>
-          <button
-            type="button"
-            @click="navigate('changelog')"
-            :aria-current="activeKey === 'changelog' ? 'page' : undefined"
-            class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition"
-            :class="activeKey === 'changelog' ? 'bg-white/5 text-fq-strong' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'"
-          >
-            <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" :d="navIcons.changelog" /></svg>
-            <span>更新日志</span>
-            <span class="ml-auto flex items-center gap-1.5 text-[11px] text-slate-500">
-              <span>{{ latestUpdateDate }}</span>
-              <span v-if="changelogUnread" class="h-2 w-2 rounded-full bg-indigo-400" aria-label="有新的更新" />
-            </span>
-          </button>
           <button @click="navigate('account')" class="flex w-full items-center gap-3 rounded-xl p-2 text-left hover:bg-white/5" aria-label="打开个人中心">
             <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 font-semibold text-indigo-300">{{ (user?.name || 'U').slice(0, 1) }}</span>
             <span class="min-w-0"><span class="block truncate text-sm font-medium text-white">{{ user?.name }}</span><span class="mt-1 block text-xs text-emerald-400">● 已登录</span></span>
@@ -354,8 +340,23 @@ function doLogout() {
           <h1 class="min-w-0 truncate whitespace-nowrap text-lg font-semibold text-white"><template v-if="activeSection?.ai && activeSection.key === activeKey"><span class="flex items-center gap-2">{{ itemLabel(activeKey).replace(/^AI\s*/, '') }}<span class="rounded bg-gradient-to-r from-indigo-500 to-violet-500 px-1 text-[11px] font-bold leading-5 text-white">AI</span></span></template><template v-else>{{ itemLabel(activeKey) }}</template></h1>
           <a href="/" class="hidden rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs text-slate-300 transition hover:border-white/25 hover:text-white sm:inline-flex">返回官网</a>
 
-          <!-- 右上角：主题切换 + 新手引导 + 用户头像 + 名字 + 退出 -->
+          <!-- 右上角：更新日志 + 积分 + 主题切换 + 新手引导 + 账户菜单 -->
           <div class="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              class="relative hidden h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition sm:flex"
+              :class="activeKey === 'changelog'
+                ? 'border-indigo-400/50 bg-indigo-500/15 text-fq-strong'
+                : 'border-white/10 bg-white/5 text-slate-300 hover:border-indigo-400/40 hover:text-white'"
+              :title="`更新日志 · 最近更新 ${latestUpdateDate}${changelogUnread ? '（有新更新）' : ''}`"
+              :aria-label="`更新日志，最近更新 ${latestUpdateDate}${changelogUnread ? '，有新的更新' : ''}`"
+              :aria-current="activeKey === 'changelog' ? 'page' : undefined"
+              @click="navigate('changelog')"
+            >
+              <span v-if="changelogUnread" class="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-indigo-400 ring-2 ring-ink" aria-hidden="true" />
+              <svg class="h-3.5 w-3.5 text-indigo-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" :d="navIcons.changelog" /></svg>
+              <span>更新日志</span>
+            </button>
             <button v-if="pointsBalance != null" type="button"
               class="relative flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-slate-300 transition hover:border-indigo-400/40 hover:text-white"
               :title="checkinDue ? '我的积分 · 今天还没打卡' : '我的积分'" :aria-label="`我的积分 ${pointsBalance}${checkinDue ? '，今天还没打卡' : ''}`" @click="navigate('points')">
