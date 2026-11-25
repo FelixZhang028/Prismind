@@ -181,3 +181,46 @@ def test_rule_descriptions_drop_decimals_that_carry_no_information():
 
     shown = {0: "0", 5: "5", 70: "70", 0.05: "5%", 0.125: "12.5%", -0.05: "-5%", 12.345: "12.35", 1_000_000: "1,000,000"}
     assert {value: _format_number(value) for value in shown} == shown
+
+
+def test_saved_package_and_copy_can_be_updated_in_place(workflow):
+    client, connect, captured, *_ = workflow
+    saved, _ = create_template(client)
+    copied = client.post(f"/api/v1/packages/{saved['package_id']}/copy", json={}).json()
+
+    updated_def = {
+        **saved["definition"],
+        "name": "稳健低波 250日",
+        "entry_rules": [{"left": {"name": "close"}, "operator": "gt", "right": {"name": "sma", "window": 120}}],
+        "ranking": {"indicator": {"name": "volatility", "window": 250}, "direction": "ascending"},
+    }
+    resp = client.put(
+        f"/api/v1/packages/{saved['package_id']}",
+        json={"definition": updated_def, "top_n": 15, "rebalance": "quarterly"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["package_id"] == saved["package_id"]
+    assert body["name"] == "稳健低波 250日"
+    assert body["top_n"] == 15
+    assert body["rebalance"] == "quarterly"
+    assert body["source"].startswith("template_modified:")
+    assert "按250日历史波动率从低到高排序" in body["describe_text"]
+
+    # 副本同样支持原地编辑，不会误改来源策略
+    copy_resp = client.put(
+        f"/api/v1/packages/{copied['package_id']}",
+        json={"definition": {**updated_def, "name": "副本已修改"}, "top_n": 10, "rebalance": "monthly"},
+    )
+    assert copy_resp.status_code == 200, copy_resp.text
+    assert copy_resp.json()["name"] == "副本已修改"
+    assert copy_resp.json()["source"] == copied["source"]
+
+    # 越权更新他人策略返回 404
+    with connect() as conn:
+        conn.execute("UPDATE strategy_packages SET user_id = 2 WHERE package_id = ?", (saved["package_id"],))
+    assert client.put(
+        f"/api/v1/packages/{saved['package_id']}",
+        json={"definition": updated_def, "top_n": 15, "rebalance": "quarterly"},
+    ).status_code == 404
+    assert not captured

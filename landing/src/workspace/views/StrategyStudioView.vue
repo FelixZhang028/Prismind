@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
-import { createPackage, nlGenerate, nlStatus, preflightPackage, studioOptions } from '../../api.js'
+import { createPackage, getPackage, nlGenerate, nlStatus, preflightPackage, studioOptions, updatePackage } from '../../api.js'
 import { remainingText } from '../aiPresentation.js'
 import { openResearch } from '../researchNavigation.js'
 import {
@@ -44,7 +44,68 @@ const form = ref(null)
 // 表单是从哪里开始的：{ kind: 'template', template_id, style } | { kind: 'describe' } | null
 const origin = ref(null)
 const savedAsset = ref(null)
+const savedIsUpdate = ref(false)
 const saving = ref(false)
+const editingPackageId = ref('')
+const editingLoading = ref(false)
+let editLoadRequest = 0
+
+function normalizedEditPackageId() {
+  if (props.routeContext.mode !== 'edit') return ''
+  const raw = String(props.routeContext.strategy || '').trim()
+  if (!raw) return ''
+  return raw.startsWith('package:') ? raw.slice('package:'.length) : raw
+}
+
+async function syncEditContext() {
+  if (!options.value) return false
+  const pkgId = normalizedEditPackageId()
+  if (!pkgId) {
+    if (editingPackageId.value) {
+      editingPackageId.value = ''
+      savedAsset.value = null
+      savedIsUpdate.value = false
+      const nextStart = startFor(props.routeContext.mode)
+      chooseStart(nextStart)
+    }
+    return false
+  }
+  const reqId = ++editLoadRequest
+  editingLoading.value = true
+  loadError.value = ''
+  try {
+    const pkg = await getPackage(pkgId)
+    if (reqId !== editLoadRequest) return true
+    editingPackageId.value = pkg.package_id
+    start.value = 'blank'
+    handed.value = false
+    handedSource.value = ''
+    handedNote.value = ''
+    origin.value = null
+    savedAsset.value = null
+    savedIsUpdate.value = false
+    form.value = formFromDefinition(pkg.definition, { top_n: pkg.top_n, rebalance: pkg.rebalance }, options.value)
+    clearTimeout(checkTimer)
+    checkTimer = null
+    runCheck()
+  } catch (e) {
+    if (reqId === editLoadRequest) {
+      props.notify(e.message || '加载待编辑策略失败')
+      editingPackageId.value = ''
+    }
+  } finally {
+    if (reqId === editLoadRequest) editingLoading.value = false
+  }
+  return true
+}
+
+function exitEditMode() {
+  editingPackageId.value = ''
+  savedAsset.value = null
+  savedIsUpdate.value = false
+  openResearch('strategy-studio', { mode: 'template' })
+  if (options.value) chooseStart('template')
+}
 
 
 // ---------- 三种开始方式 ----------
@@ -156,6 +217,9 @@ const check = reactive({ loading: false, description: '', warnings: [], minimumD
 let checkRequest = 0
 let checkTimer = null
 async function runCheck() {
+  clearTimeout(checkTimer)
+  checkTimer = null
+  if (!form.value) return
   const request = ++checkRequest
   check.loading = true
   try {
@@ -171,19 +235,38 @@ async function runCheck() {
     if (request === checkRequest) check.loading = false
   }
 }
+async function ensureCheckUpToDate() {
+  if (checkTimer || check.loading) {
+    await runCheck()
+  }
+}
 watch(form, () => {
   savedAsset.value = null
+  savedIsUpdate.value = false
   clearTimeout(checkTimer)
-  if (form.value) checkTimer = setTimeout(runCheck, 400)
+  if (form.value) {
+    // 表单一改动立刻进入更新中状态，缩短防抖并在保存前强制同步，避免预览停留在旧周期。
+    check.loading = true
+    checkTimer = setTimeout(runCheck, 180)
+  }
 }, { deep: true })
 
 async function save() {
   if (!form.value.name.trim()) return props.notify('请先给策略起个名字')
+  await ensureCheckUpToDate()
   if (check.error) return props.notify('规则还有问题，请先按提示修改')
   saving.value = true
   try {
-    savedAsset.value = await createPackage(packagePayload(form.value, origin.value))
-    props.notify('策略已保存')
+    const payload = packagePayload(form.value, origin.value)
+    if (editingPackageId.value) {
+      savedAsset.value = await updatePackage(editingPackageId.value, payload)
+      savedIsUpdate.value = true
+      props.notify('策略修改已保存')
+    } else {
+      savedAsset.value = await createPackage(payload)
+      savedIsUpdate.value = false
+      props.notify('策略已保存')
+    }
   } catch (e) {
     props.notify(e.message || '保存失败')
   } finally {
@@ -191,40 +274,71 @@ async function save() {
   }
 }
 
-watch(() => [tpl.template_id, tpl.style], () => { if (start.value === 'template' && options.value) applyTemplate() })
-watch(() => props.routeContext.mode, (mode) => {
+async function saveAsNew() {
+  if (!form.value.name.trim()) return props.notify('请先给策略起个名字')
+  await ensureCheckUpToDate()
+  if (check.error) return props.notify('规则还有问题，请先按提示修改')
+  saving.value = true
+  try {
+    savedAsset.value = await createPackage(packagePayload(form.value, origin.value))
+    savedIsUpdate.value = false
+    editingPackageId.value = ''
+    props.notify('已另存为新策略')
+  } catch (e) {
+    props.notify(e.message || '另存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+watch(() => [tpl.template_id, tpl.style], () => { if (!editingPackageId.value && start.value === 'template' && options.value) applyTemplate() })
+watch(() => [props.routeContext.mode, props.routeContext.strategy], async ([mode]) => {
+  if (!options.value) return
+  if (await syncEditContext()) return
   const next = mode && startFor(mode)
-  if (next && options.value && start.value !== next) chooseStart(next)
+  if (next && start.value !== next) chooseStart(next)
 })
 onMounted(async () => {
   try {
     options.value = await studioOptions()
     tpl.template_id = options.value.templates?.[0]?.template_id || ''
     form.value = blankForm(options.value)
-    chooseStart(start.value)
-    applyHandOff()
+    if (!(await syncEditContext())) {
+      chooseStart(start.value)
+      applyHandOff()
+    }
   } catch (e) {
     loadError.value = e.message || '加载选项失败'
   }
   loadNlModel()
 })
-onActivated(applyHandOff)
+onActivated(async () => {
+  if (!(await syncEditContext())) applyHandOff()
+})
 </script>
 
 <template>
   <div class="space-y-6">
     <div class="glass relative overflow-hidden rounded-2xl p-6">
       <div class="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-indigo-500/20 blur-3xl" />
-      <h1 class="text-2xl font-bold text-white">新建规则策略</h1>
-      <p class="mt-2 max-w-2xl text-sm text-slate-400">三种开始方式填的是同一张表单。保存的就是表单里看到的规则；保存后再到回测页配置日期、资金与风控。</p>
+      <h1 class="text-2xl font-bold text-white">{{ editingPackageId ? '编辑规则策略' : '新建规则策略' }}</h1>
+      <p class="mt-2 max-w-2xl text-sm text-slate-400">
+        {{ editingPackageId
+          ? '修改后点击「保存修改」会直接更新当前策略，也可点「另存为新策略」保留原策略；后续回测与模拟账户都会按最新规则执行。'
+          : '三种开始方式填的是同一张表单。保存的就是表单里看到的规则；保存后再到回测页配置日期、资金与风控。' }}
+      </p>
       <button class="mt-3 text-sm text-indigo-300 hover:text-indigo-200" @click="openResearch('strategy-hub')">← 返回我的策略</button>
     </div>
 
     <p v-if="loadError" class="text-sm text-rose-300" role="alert">{{ loadError }}</p>
-    <div v-else-if="!form" class="text-sm text-slate-400" role="status">加载中…</div>
+    <div v-else-if="!form || editingLoading" class="text-sm text-slate-400" role="status">加载中…</div>
     <template v-else>
+      <div v-if="editingPackageId" class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-400/25 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
+        <span>正在编辑已保存策略「{{ form.name || '未命名策略' }}」，可直接修改条件、排序、周期与交易纪律。</span>
+        <button type="button" class="text-xs font-medium text-indigo-200 underline hover:text-white" @click="exitEditMode">改为新建策略</button>
+      </div>
       <!-- 怎么开始 -->
-      <SectionCard title="怎么开始？" hint="随时可以换一种方式，表单会跟着更新">
+      <SectionCard v-else title="怎么开始？" hint="随时可以换一种方式，表单会跟着更新">
         <div data-guide="strategy-starts" class="grid gap-3 sm:grid-cols-3" role="group" aria-label="开始方式">
           <button v-for="item in STARTS" :key="item.key" type="button" :aria-pressed="start === item.key"
             class="rounded-xl border p-4 text-left transition"
@@ -323,23 +437,29 @@ onActivated(applyHandOff)
 
       <!-- 这个策略的意思 -->
       <SectionCard title="这个策略的意思" hint="按将要执行的规则读出来，随表单更新">
-        <p v-if="check.error" class="text-sm text-rose-300" role="alert">{{ check.error }}</p>
-        <p v-else-if="check.description" class="text-sm leading-relaxed text-slate-200" aria-live="polite">{{ check.description }}</p>
+        <p v-if="check.error && !check.loading" class="text-sm text-rose-300" role="alert">{{ check.error }}</p>
+        <div v-else-if="check.description" class="space-y-1.5">
+          <p class="text-sm leading-relaxed transition" :class="check.loading ? 'text-slate-400' : 'text-slate-200'" aria-live="polite">{{ check.description }}</p>
+          <p v-if="check.loading" class="text-xs text-indigo-300" role="status">正在同步最新规则预览…</p>
+        </div>
         <p v-else class="text-sm text-slate-400" role="status">正在读取…</p>
         <ul v-if="check.warnings.length" class="mt-3 space-y-1 rounded-xl border border-amber-400/20 bg-amber-400/5 p-4">
           <li v-for="(warning, index) in check.warnings" :key="index" class="text-xs text-amber-200">• {{ warning }}</li>
         </ul>
         <p v-if="check.minimumDays" class="mt-3 text-xs text-slate-500">至少需要 {{ check.minimumDays }} 个交易日的历史行情。</p>
         <div class="mt-5 flex flex-wrap items-center gap-3">
-          <button type="button" :disabled="saving || check.loading || !!check.error" class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70" @click="save">
-            {{ saving ? '保存中…' : '保存策略' }}
+          <button type="button" :disabled="saving || (!!check.error && !check.loading)" class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70" @click="save">
+            {{ saving ? '保存中…' : (editingPackageId ? '保存修改' : '保存策略') }}
+          </button>
+          <button v-if="editingPackageId" type="button" :disabled="saving || (!!check.error && !check.loading)" class="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:bg-white/10 disabled:opacity-70" @click="saveAsNew">
+            另存为新策略
           </button>
           <span class="text-xs text-slate-400">保存不会运行回测。</span>
-          <button type="button" :disabled="!!check.error" class="ml-auto text-sm text-indigo-300 hover:text-indigo-200 disabled:opacity-40" @click="screenToday">用这些条件筛选今天的股票 →</button>
+          <button type="button" :disabled="!!check.error && !check.loading" class="ml-auto text-sm text-indigo-300 hover:text-indigo-200 disabled:opacity-40" @click="screenToday">用这些条件筛选今天的股票 →</button>
         </div>
       </SectionCard>
 
-      <StrategySaved v-if="savedAsset" :asset="savedAsset" />
+      <StrategySaved v-if="savedAsset" :asset="savedAsset" :updated="savedIsUpdate" />
     </template>
   </div>
 </template>

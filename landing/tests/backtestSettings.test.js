@@ -16,9 +16,10 @@ function memoryStorage() {
   }
 }
 
-test('保存并读取回测常用参数（日期、持仓、频率、换手缓冲、成本与过滤）', () => {
+test('保存并读取回测常用参数（股票范围、日期、持仓、频率、换手缓冲、成本与过滤）', () => {
   const storage = memoryStorage()
   const ok = saveBacktestSettings({
+    market: '000906.SH',
     from_date: '2020-01-01',
     to_date: '2025-12-31',
     initial_capital: 2000000,
@@ -30,6 +31,7 @@ test('保存并读取回测常用参数（日期、持仓、频率、换手缓�
   }, storage)
   assert.equal(ok, true)
   const loaded = loadBacktestSettings(storage)
+  assert.equal(loaded.market, '000906.SH')
   assert.equal(loaded.from_date, '2020-01-01')
   assert.equal(loaded.max_positions, 20)
   assert.equal(loaded.rebalance, 'quarterly')
@@ -59,6 +61,7 @@ test('非法或损坏的本地缓存会被过滤掉而不影响页面加载', ()
 
 test('从后端 effective_config 还原最近一次回测的表单口径设置', () => {
   const converted = settingsFromEffectiveConfig({
+    market: '000906.SH',
     from_date: '2020-01-01',
     to_date: '2025-12-31',
     initial_capital: 2000000,
@@ -80,6 +83,7 @@ test('从后端 effective_config 还原最近一次回测的表单口径设置',
       minimum_average_amount: 0,
     },
   })
+  assert.equal(converted.market, '000906.SH')
   assert.equal(converted.from_date, '2020-01-01')
   assert.equal(converted.max_positions, 20)
   assert.equal(converted.rebalance, 'quarterly')

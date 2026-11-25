@@ -42,6 +42,16 @@ export function defaultFactorUniverse(markets, remembered) {
   return usable('000300.SH') ? '000300.SH' : CURRENT_POOL
 }
 
+// 回测默认的股票范围：优先用用户已选且可用的范围；未选择时优先用中证 800 历史成分股（避免静态股票池前视偏差），
+// 再依次回退沪深 300 历史成分股、当前股票池。
+export function defaultBacktestMarket(markets, preferred = '') {
+  const usable = (value) => (markets || []).some((item) => item.value === value && item.available)
+  if (preferred && usable(preferred)) return preferred
+  if (usable('000906.SH')) return '000906.SH'
+  if (usable('000300.SH')) return '000300.SH'
+  return CURRENT_POOL
+}
+
 // 带入以前的回测配置时用：那次的范围现在还能选才带入。
 export function usableMarket(value, markets) {
   return (markets || []).some((item) => item.value === value && item.available) ? value : CURRENT_POOL
