@@ -46,6 +46,7 @@ const selectedLabel = computed(() => props.options.find((option) => String(optio
       :disabled="disabled"
       class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/40 disabled:opacity-50"
       @input="emit('update:modelValue', $event.target.value)"
+      @change="emit('update:modelValue', $event.target.value)"
     />
     <div v-else-if="type === 'checkbox'" class="flex items-center gap-2.5 pt-1">
       <input
@@ -68,6 +69,7 @@ const selectedLabel = computed(() => props.options.find((option) => String(optio
       :disabled="disabled"
       class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/40 disabled:opacity-50"
       @input="emit('update:modelValue', $event.target.value)"
+      @change="emit('update:modelValue', $event.target.value)"
     />
     <p v-if="type !== 'checkbox' && hint" class="mt-1 text-xs text-slate-500">{{ hint }}</p>
   </label>

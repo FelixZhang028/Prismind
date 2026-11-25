@@ -334,6 +334,55 @@ def get_package(package_id: str, user: dict = Depends(get_current_user)):
     return _package_row_to_dict(row)
 
 
+@router.put("/packages/{package_id}", summary="更新策略包")
+def update_package(package_id: str, body: PackageIn, user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM strategy_packages WHERE package_id = ? AND user_id = ?", (package_id, user["id"])
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="策略包不存在")
+    existing = _stored_package(row).definition.to_dict()
+    definition = body.definition.model_dump()
+    if not definition.get("name"):
+        definition["name"] = row["name"] or "我的策略"
+    if not definition.get("strategy_id"):
+        definition["strategy_id"] = existing.get("strategy_id") or f"strategy_{random.Random().randint(0, 0xFFFFFFFF):08x}"
+    canonical = definition_to_quant(definition, user_registry=build_factor_registry(user))
+    try:
+        rule_def = RuleStrategyDefinition.from_mapping(canonical)
+    except ConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=_sanitize_detail(exc))
+
+    source = str(row["source"] or "visual_builder")
+    if source.startswith("template:"):
+        parts = source.split(":")
+        template_id = parts[1] if len(parts) >= 2 else ""
+        style = parts[2] if len(parts) >= 3 else body.style
+        try:
+            preset = get_beginner_template(template_id).presets[style]
+            saved, published = rule_def.to_dict(), preset.definition.to_dict()
+            unchanged = all(
+                saved.get(key) == published.get(key)
+                for key in ("entry_logic", "entry_rules", "ranking", "hold_buffer", "market_timing", "exit_rules")
+            )
+            source = f"{'template' if unchanged else 'template_modified'}:{template_id}:{style}"
+        except (ValueError, KeyError):
+            pass
+
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE strategy_packages SET name = ?, definition = ?, top_n = ?, rebalance = ?, source = ? "
+            "WHERE package_id = ? AND user_id = ?",
+            (rule_def.name, json.dumps(rule_def.to_dict(), ensure_ascii=False),
+             body.top_n, body.rebalance, source, package_id, user["id"]),
+        )
+        updated = conn.execute(
+            "SELECT * FROM strategy_packages WHERE package_id = ? AND user_id = ?", (package_id, user["id"])
+        ).fetchone()
+    return _package_row_to_dict(updated)
+
+
 @router.post("/packages/{package_id}/copy", status_code=status.HTTP_201_CREATED, summary="复制策略包")
 def copy_package(package_id: str, body: CopyIn | None = None, user: dict = Depends(get_current_user)):
     with get_conn() as conn:

@@ -325,7 +325,7 @@ def _latest_user_backtest_settings(user_id: int) -> dict[str, Any] | None:
         if not filters and snap_filters:
             filters = snap_filters
     out: dict[str, Any] = {}
-    for key in ("from_date", "to_date", "initial_capital", "max_positions", "rebalance", "hold_buffer"):
+    for key in ("market", "from_date", "to_date", "initial_capital", "max_positions", "rebalance", "hold_buffer"):
         if ec.get(key) is not None:
             out[key] = ec[key]
     if isinstance(execution, dict) and execution:

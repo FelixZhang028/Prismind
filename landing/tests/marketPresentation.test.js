@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { CURRENT_POOL, marketChoices, marketLabel, marketNote, suggestedHistoricalMarket, usableMarket } from '../src/workspace/marketPresentation.js'
+import { CURRENT_POOL, defaultBacktestMarket, marketChoices, marketLabel, marketNote, suggestedHistoricalMarket, usableMarket } from '../src/workspace/marketPresentation.js'
 
 const markets = [
   { value: '当前股票池', label: '当前股票池', available: true },
@@ -64,4 +64,17 @@ test('静态成分股快照可匹配对应的历史成分股一键切换项', ()
   assert.equal(suggestedHistoricalMarket({ name: '沪深 300 成分股' }, with800)?.value, '000300.SH')
   assert.equal(suggestedHistoricalMarket({ name: '中证500成分股' }, with800), null) // 未下载不推荐
   assert.equal(suggestedHistoricalMarket({ name: '自选成长股' }, with800), null)
+})
+
+test('回测默认股票范围优先中证800历史成分股，再回退沪深300与当前股票池', () => {
+  const with800 = [
+    ...markets,
+    { value: '000906.SH', label: '中证800历史成分股', available: true, start_date: '2015-01-05', end_date: '2026-10-12' },
+  ]
+  assert.equal(defaultBacktestMarket(with800, ''), '000906.SH')
+  assert.equal(defaultBacktestMarket(with800, '000300.SH'), '000300.SH')
+  assert.equal(defaultBacktestMarket(with800, CURRENT_POOL), CURRENT_POOL)
+  assert.equal(defaultBacktestMarket(with800, '000905.SH'), '000906.SH') // 不可用时回退中证800
+  assert.equal(defaultBacktestMarket(markets, ''), '000300.SH')          // 无中证800时回退沪深300
+  assert.equal(defaultBacktestMarket([], ''), CURRENT_POOL)
 })

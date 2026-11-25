@@ -187,6 +187,9 @@ export function listPackages() {
 export function createPackage(payload) {
   return request('/api/v1/packages', { method: 'POST', body: payload, auth: true })
 }
+export function updatePackage(id, payload) {
+  return request(`/api/v1/packages/${encodeURIComponent(id)}`, { method: 'PUT', body: payload, auth: true })
+}
 export function getPackage(id) {
   return request(`/api/v1/packages/${id}`, { auth: true })
 }

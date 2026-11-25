@@ -114,6 +114,7 @@ def test_latest_user_backtest_settings_reads_most_recent_unarchived_run(tmp_path
         )
         payload = {
             "effective_config": {
+                "market": "000906.SH",
                 "from_date": "2020-01-01",
                 "to_date": "2025-12-31",
                 "initial_capital": 2_000_000,
@@ -126,11 +127,12 @@ def test_latest_user_backtest_settings_reads_most_recent_unarchived_run(tmp_path
         }
         conn.execute(
             "INSERT INTO backtests(user_id,strategy,market,from_date,to_date,status,result,created_at) VALUES(?,?,?,?,?,?,?,?)",
-            (1, "factor_composite", "000300.SH", "2020-01-01", "2025-12-31", "完成", json.dumps(payload), database._now()),
+            (1, "factor_composite", "000906.SH", "2020-01-01", "2025-12-31", "完成", json.dumps(payload), database._now()),
         )
 
     latest = _latest_user_backtest_settings(1)
     assert latest is not None
+    assert latest["market"] == "000906.SH"
     assert latest["max_positions"] == 20
     assert latest["rebalance"] == "quarterly"
     assert latest["hold_buffer"] == 20

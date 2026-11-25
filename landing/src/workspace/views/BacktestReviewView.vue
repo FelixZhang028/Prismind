@@ -20,7 +20,7 @@ import DataTable from '../ui/DataTable.vue'
 import StatusPill from '../ui/StatusPill.vue'
 import { pendingAuditRun } from '../auditLink.js'
 import { benchmarkCards, benchmarkChoices, benchmarkCoverageNote, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
-import { CURRENT_POOL, marketChoices, marketLabel, marketNote, suggestedHistoricalMarket, usableMarket } from '../marketPresentation.js'
+import { CURRENT_POOL, defaultBacktestMarket, marketChoices, marketLabel, marketNote, suggestedHistoricalMarket, usableMarket } from '../marketPresentation.js'
 import { paperPrefill, parseFactorRows, returnTone } from '../paperPresentation.js'
 import { strategyProtectionSummary, tradeReasonClass } from '../ruleForm.js'
 import { takeFactorBacktestDraft } from '../factorBacktestDraft.js'
@@ -125,6 +125,7 @@ function chooseStrategy() {
 function persistCurrentSettings() {
   hasSavedSettings = true
   saveBacktestSettings({
+    market: form.market,
     from_date: form.from_date,
     to_date: form.to_date,
     initial_capital: form.initial_capital,
@@ -138,8 +139,8 @@ function persistCurrentSettings() {
 function applySavedBacktestSettings(saved) {
   if (!saved) return
   hasSavedSettings = true
-  for (const key of ['from_date', 'to_date', 'initial_capital', 'max_positions', 'rebalance', 'hold_buffer']) {
-    if (saved[key] != null) form[key] = saved[key]
+  for (const key of ['market', 'from_date', 'to_date', 'initial_capital', 'max_positions', 'rebalance', 'hold_buffer']) {
+    if (saved[key] != null && saved[key] !== '') form[key] = saved[key]
   }
   if (saved.exec) Object.assign(execForm, saved.exec)
   if (saved.filter) Object.assign(filterForm, saved.filter)
@@ -160,7 +161,7 @@ const holdBufferHint = computed(() => {
 
 const form = reactive({
   strategy: '',
-  market: CURRENT_POOL,
+  market: '',
   from_date: '2025-01-01',
   to_date: '2025-12-31',
   initial_capital: 1000000,
@@ -429,13 +430,17 @@ async function loadCatalog() {
     benchmarkCoverage.value = catalog.benchmark_coverage || null
     if (catalog.execution_defaults) executionDefaults.value = catalog.execution_defaults
     if (catalog.filter_defaults) filterDefaults.value = catalog.filter_defaults
+    markets.value = catalog.markets || []
     if (!execFilterInitialized && (catalog.execution_defaults || catalog.filter_defaults)) {
       syncExecFilterFromDefaults(catalog.execution_defaults, catalog.filter_defaults)
       const localSaved = loadBacktestSettings()
       const serverLast = settingsFromEffectiveConfig(catalog.last_settings)
       if (!localSaved && serverLast) {
         // 新浏览器或首次访问：用用户最近一次历史回测的有效配置补齐，避免“用此组合回测”退回默认值。
-        applySavedBacktestSettings(serverLast)
+        // 若历史记录停留在静态“当前股票池”，升级为默认历史成分股（中证 800）以避免前视偏差。
+        const initialServer = serverLast.market === CURRENT_POOL ? { ...serverLast, market: undefined } : serverLast
+        applySavedBacktestSettings(initialServer)
+        form.market = defaultBacktestMarket(markets.value, form.market)
         persistCurrentSettings()
       } else if (localSaved) {
         if (localSaved.exec) Object.assign(execForm, localSaved.exec)
@@ -447,8 +452,7 @@ async function loadCatalog() {
       ...(packages.items || []).map((p) => ({ value: `package:${p.package_id}`, label: `${p.name} · 规则策略`, top_n: p.top_n, rebalance: p.rebalance, hold_buffer: p.hold_buffer ?? 0 })),
       ...catalog.items,
     ]
-    markets.value = catalog.markets || []
-    form.market = usableMarket(form.market, markets.value)
+    form.market = defaultBacktestMarket(markets.value, form.market)
     const requested = props.routeContext.strategy
     if (requested) {
       const keepCombination = requested === 'factor_composite' && form.strategy === requested && factorComposition.value.length
@@ -458,7 +462,7 @@ async function loadCatalog() {
       if (form.strategy === 'factor_composite' && props.routeContext.mode === 'factor-combination') {
         const draft = takeFactorBacktestDraft()
         if (draft) {
-          form.market = usableMarket(draft.market, markets.value)
+          form.market = defaultBacktestMarket(markets.value, draft.market)
           strategyParameters.factors_json = JSON.stringify(draft.factors)
           if (draft.from_date && draft.to_date) {
             factorDraftPeriod.value = { from_date: draft.from_date, to_date: draft.to_date }
@@ -510,6 +514,7 @@ async function applyPreferences() {
 }
 watch(
   () => [
+    form.market,
     form.from_date,
     form.to_date,
     form.initial_capital,

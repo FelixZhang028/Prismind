@@ -19,6 +19,31 @@ export const CATEGORY_STYLE = {
 
 export const CHANGELOG_ENTRIES = [
   {
+    id: '2026-11-25-default-csi800-edit-strategy-and-preview-sync',
+    date: '2026-11-25',
+    title: '回测默认使用中证800历史成分股、支持直接编辑已保存策略、修复规则周期预览同步',
+    items: [
+      {
+        category: 'improve',
+        summary: '新建回测默认选择「中证 800 历史成分股」并记住用户主动选择的股票范围',
+        detail: '从新保存的规则策略点击「去回测」不再默认落到静态「当前股票池」，默认优先使用中证 800 历史成分股（未下载时回退沪深 300 历史成分股），从源头避免静态成分股前视偏差。',
+        action: { label: '去策略回测查看', view: 'backtest-review' },
+      },
+      {
+        category: 'feat',
+        summary: '「我的策略」卡片新增「编辑」按钮，已保存策略与副本均可直接修改',
+        detail: '无需反复复制重做，点击「编辑」即可在策略工坊修改原策略的名称、选股条件、排序指标、周期与交易纪律，支持直接「保存修改」或「另存为新策略」。',
+        action: { label: '去我的策略体验', view: 'strategy-hub' },
+      },
+      {
+        category: 'fix',
+        summary: '修复规则策略排序/条件周期修改后预览偶尔不更新的问题',
+        detail: '补全数字输入框 change 与 input 双事件同步，缩短预览防抖并显示同步提示，保存前自动等待最新校验完成，确保所见即所存。',
+        action: { label: '去策略工坊查看', view: 'strategy-studio' },
+      },
+    ],
+  },
+  {
     id: '2026-11-25-rule-factors-and-quantile-filters',
     date: '2026-11-25',
     title: '规则策略支持引用因子库与 Alpha101，新增按分位剔除/保留过滤',

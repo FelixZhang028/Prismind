@@ -22,6 +22,7 @@ function defaultStorage() {
 export function sanitizeBacktestSettings(raw) {
   if (!raw || typeof raw !== 'object') return null
   const out = {}
+  if (typeof raw.market === 'string' && raw.market.trim()) out.market = raw.market.trim()
   if (typeof raw.from_date === 'string' && ISO_DATE.test(raw.from_date)) out.from_date = raw.from_date
   if (typeof raw.to_date === 'string' && ISO_DATE.test(raw.to_date)) out.to_date = raw.to_date
   const capital = finiteNum(raw.initial_capital)
@@ -89,6 +90,7 @@ export function saveBacktestSettings(snapshot, storage = defaultStorage()) {
 export function settingsFromEffectiveConfig(config) {
   if (!config || typeof config !== 'object') return null
   const candidate = {
+    market: config.market,
     from_date: config.from_date,
     to_date: config.to_date,
     initial_capital: config.initial_capital,
