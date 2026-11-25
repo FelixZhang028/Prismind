@@ -9,8 +9,12 @@ from math import isfinite
 from typing import Any
 
 from quant_platform.core.exceptions import ConfigurationError
+from quant_platform.factors.base import FactorDefinition
+from quant_platform.factors.custom import custom_factor_from_dict
+from quant_platform.factors.registry import default_registry
 
 SCHEMA_VERSION = 1
+FACTOR_INDICATOR_PREFIX = "factor:"
 
 MARKET_TIMING_BENCHMARKS: dict[str, str] = {
     "000300.SH": "沪深 300",
@@ -43,11 +47,30 @@ INDICATOR_LABELS: dict[str, str] = {
     **FUNDAMENTAL_INDICATORS,
 }
 
+INDICATOR_DIRECTIONS: dict[str, int] = {
+    "volatility": -1,
+    "pe_ttm": -1,
+    "pb_mrq": -1,
+}
+
+QUANTILE_OPERATORS: frozenset[str] = frozenset({
+    "exclude_worst_pct",
+    "exclude_bottom_pct",
+    "exclude_top_pct",
+    "top_pct",
+    "bottom_pct",
+})
+
 OPERATOR_LABELS: dict[str, str] = {
     "greater_than": "大于",
     "greater_or_equal": "大于等于",
     "less_than": "小于",
     "less_or_equal": "小于等于",
+    "exclude_worst_pct": "剔除最差 %（按因子方向）",
+    "exclude_bottom_pct": "剔除最低 %",
+    "exclude_top_pct": "剔除最高 %",
+    "top_pct": "保留最高前 %",
+    "bottom_pct": "保留最低后 %",
 }
 
 _WINDOW_RULES: dict[str, tuple[int, int]] = {
@@ -62,12 +85,36 @@ _WINDOW_RULES: dict[str, tuple[int, int]] = {
 }
 
 
+def is_factor_indicator(name: str) -> bool:
+    return str(name).startswith(FACTOR_INDICATOR_PREFIX)
+
+
+def factor_name_of(name: str) -> str:
+    return str(name).removeprefix(FACTOR_INDICATOR_PREFIX)
+
+
+def resolve_factor(indicator: IndicatorSpec) -> FactorDefinition | None:
+    if not is_factor_indicator(indicator.name):
+        return None
+    if indicator.custom_factor_json:
+        return custom_factor_from_dict(json.loads(indicator.custom_factor_json))
+    return default_registry().get(factor_name_of(indicator.name))
+
+
+def indicator_direction(indicator: IndicatorSpec) -> int:
+    if is_factor_indicator(indicator.name):
+        factor = resolve_factor(indicator)
+        return int(factor.direction) if factor is not None and factor.direction in (-1, 1) else 1
+    return INDICATOR_DIRECTIONS.get(indicator.name, 1)
+
+
 @dataclass(frozen=True)
 class IndicatorSpec:
-    """One approved point-in-time indicator."""
+    """One approved point-in-time indicator or factor-library reference."""
 
     name: str
     window: int | None = None
+    custom_factor_json: str | None = None
 
     @property
     def window_limits(self) -> tuple[int, int]:
@@ -81,11 +128,32 @@ class IndicatorSpec:
         name = str(value.get("name", "")).strip()
         raw_window = value.get("window")
         window = int(raw_window) if raw_window is not None else None
-        result = cls(name=name, window=window)
+        raw_custom = value.get("custom_factor")
+        custom_json: str | None = None
+        if raw_custom is not None:
+            if not isinstance(raw_custom, dict):
+                raise ConfigurationError("自定义因子快照必须是对象")
+            custom_json = json.dumps(raw_custom, ensure_ascii=False, sort_keys=True)
+        result = cls(name=name, window=window, custom_factor_json=custom_json)
         result.validate()
         return result
 
     def validate(self) -> None:
+        if is_factor_indicator(self.name):
+            fname = factor_name_of(self.name)
+            if not fname:
+                raise ConfigurationError("因子标识不能为空")
+            if self.window is not None:
+                raise ConfigurationError("因子库指标不需要周期")
+            try:
+                factor = resolve_factor(self)
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise ConfigurationError(f"不支持或未注册的因子：{fname}") from exc
+            if factor is None or factor.name != fname:
+                raise ConfigurationError(f"自定义因子快照与因子标识不一致：{fname}")
+            return
+        if self.custom_factor_json is not None:
+            raise ConfigurationError("内置指标不能附加自定义因子快照")
         if self.name not in INDICATOR_LABELS:
             raise ConfigurationError(f"不支持的指标：{self.name}")
         if self.name not in _WINDOW_RULES:
@@ -104,9 +172,14 @@ class IndicatorSpec:
         result: dict[str, Any] = {"name": self.name}
         if self.window is not None:
             result["window"] = self.window
+        if self.custom_factor_json is not None:
+            result["custom_factor"] = json.loads(self.custom_factor_json)
         return result
 
     def describe(self) -> str:
+        if is_factor_indicator(self.name):
+            factor = resolve_factor(self)
+            return (factor.display_name or factor.name) if factor is not None else factor_name_of(self.name)
         label = INDICATOR_LABELS[self.name]
         return label if self.window is None else f"{self.window}日{label}"
 
@@ -142,6 +215,12 @@ class RuleSpec:
         self.left.validate()
         if self.operator not in OPERATOR_LABELS:
             raise ConfigurationError(f"不支持的判断方式：{self.operator}")
+        if self.operator in QUANTILE_OPERATORS:
+            if self.right is not None or self.value is None:
+                raise ConfigurationError("分位过滤条件只能填写百分比数值，不能与另一个指标比较")
+            if not isfinite(self.value) or not 0.0 < self.value < 100.0:
+                raise ConfigurationError("分位过滤百分比必须在 0 至 100 之间（例如 20 表示 20%）")
+            return
         if (self.value is None) == (self.right is None):
             raise ConfigurationError("条件右侧必须且只能选择固定值或另一个指标")
         if self.value is not None and not isfinite(self.value):
@@ -161,6 +240,16 @@ class RuleSpec:
         return result
 
     def describe(self) -> str:
+        if self.operator in QUANTILE_OPERATORS:
+            pct = f"{_trim(f'{self.value:.2f}')}%"
+            templates = {
+                "exclude_worst_pct": f"{self.left.describe()}剔除最差{pct}（按因子方向）",
+                "exclude_bottom_pct": f"{self.left.describe()}剔除最低{pct}",
+                "exclude_top_pct": f"{self.left.describe()}剔除最高{pct}",
+                "top_pct": f"{self.left.describe()}保留最高前{pct}",
+                "bottom_pct": f"{self.left.describe()}保留最低后{pct}",
+            }
+            return templates[self.operator]
         right = self.right.describe() if self.right is not None else _format_number(self.value, self.left.name)
         return f"{self.left.describe()}{OPERATOR_LABELS[self.operator]}{right}"
 
@@ -401,8 +490,32 @@ class RuleStrategyDefinition:
         return indicators
 
     @property
+    def has_factor_indicators(self) -> bool:
+        return any(is_factor_indicator(item.name) for item in self._indicators())
+
+    @property
+    def has_cross_sectional_rules(self) -> bool:
+        return any(rule.operator in QUANTILE_OPERATORS for rule in self.entry_rules)
+
+    @property
     def data_fields(self) -> frozenset[str]:
-        return frozenset(item.name for item in self._indicators() if item.name in FUNDAMENTAL_INDICATORS)
+        fields = {item.name for item in self._indicators() if item.name in FUNDAMENTAL_INDICATORS}
+        for item in self._indicators():
+            if is_factor_indicator(item.name):
+                factor = resolve_factor(item)
+                if factor is not None:
+                    fields.update(factor.required_fields)
+        return frozenset(fields)
+
+    @property
+    def optional_fields(self) -> frozenset[str]:
+        fields: set[str] = set()
+        for item in self._indicators():
+            if is_factor_indicator(item.name):
+                factor = resolve_factor(item)
+                if factor is not None:
+                    fields.update(factor.optional_fields)
+        return frozenset(fields)
 
     @property
     def minimum_history_days(self) -> int:
@@ -447,6 +560,9 @@ class RuleStrategyDefinition:
 
 
 def _indicator_history(indicator: IndicatorSpec) -> int:
+    if is_factor_indicator(indicator.name):
+        factor = resolve_factor(indicator)
+        return max(1, int(factor.min_history)) if factor is not None else 1
     if indicator.window is None:
         return 1
     needs_previous = {

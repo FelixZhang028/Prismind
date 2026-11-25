@@ -13,10 +13,11 @@ from typing import Any
 
 import pandas as pd
 
-from quant_platform.strategies.rule_based import indicator_value, rank_score
-from quant_platform.strategies.rule_schema import RuleStrategyDefinition
+from quant_platform.strategies.rule_based import evaluate_universe
+from quant_platform.strategies.rule_schema import QUANTILE_OPERATORS, RuleStrategyDefinition
 
-_NUMERIC = ("adjusted_close", "amount", "raw_close", "pre_close")
+_NUMERIC = ("adjusted_close", "amount", "raw_close", "pre_close", "raw_open", "raw_high", "raw_low", "volume")
+_NON_NUMERIC = frozenset({"symbol", "trade_date", "industry", "sector", "quality_status", "is_st", "is_suspended"})
 
 
 def _number(value: Any) -> float | None:
@@ -40,7 +41,7 @@ def screen(definition: RuleStrategyDefinition, bars: pd.DataFrame, day: date, *,
         return {"checked": 0, "matched": 0, "items": []}
     frame = bars.copy()
     for column in (*_NUMERIC, *definition.data_fields):
-        if column in frame.columns:
+        if column in frame.columns and column not in _NON_NUMERIC:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     cutoff = pd.Timestamp(day)
     frame["trade_date"] = pd.to_datetime(frame["trade_date"])
@@ -60,22 +61,27 @@ def screen(definition: RuleStrategyDefinition, bars: pd.DataFrame, day: date, *,
     wanted = set(last_rows.index[keep])
     frame = frame[frame["symbol"].isin(wanted)]
     checked = len(wanted)
+    evaluation = evaluate_universe(frame, cutoff, definition)
     items: list[dict[str, Any]] = []
-    for symbol, group in frame.groupby("symbol", observed=True, sort=False):
-        score = rank_score(group, definition)
-        if score is None:
-            continue
-        last = group.iloc[-1]
+    for symbol, score in evaluation.scores.items():
+        last = last_rows.loc[symbol]
         close, previous = _number(last.get("raw_close")), _number(last.get("pre_close"))
         items.append({
             "symbol": str(symbol),
             "close": close,
             "change": close / previous - 1.0 if close is not None and previous else None,
             "score": score,
-            "ranking": indicator_value(group, definition.ranking.indicator),
+            "ranking": evaluation.indicator_values.get(definition.ranking.indicator, {}).get(symbol),
             "conditions": [
-                {"left": indicator_value(group, rule.left),
-                 "right": indicator_value(group, rule.right) if rule.right is not None else rule.value}
+                {
+                    "left": evaluation.indicator_values.get(rule.left, {}).get(symbol),
+                    "right": (
+                        evaluation.indicator_values.get(rule.right, {}).get(symbol)
+                        if rule.right is not None
+                        else rule.value
+                    ),
+                    **({"quantile": True} if rule.operator in QUANTILE_OPERATORS else {}),
+                }
                 for rule in definition.entry_rules
             ],
         })

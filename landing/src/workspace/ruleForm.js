@@ -4,6 +4,33 @@
 // definition（接口）：{ name, entry_logic, entry_rules: [{ left, operator, value | right }], ranking: { indicator, direction }, hold_buffer?, market_timing? }
 // 其中 left / right / indicator 是 { name, window? }；收盘价没有周期。
 
+export const QUANTILE_OPERATORS = new Set([
+  'exclude_worst_pct',
+  'exclude_bottom_pct',
+  'exclude_top_pct',
+  'top_pct',
+  'bottom_pct',
+])
+
+export function isQuantileOperator(operator, options = null) {
+  if (Array.isArray(options?.quantile_operators) && options.quantile_operators.length) {
+    return options.quantile_operators.includes(operator)
+  }
+  return QUANTILE_OPERATORS.has(operator)
+}
+
+export function quantileHint(operator, value) {
+  const pct = Number(value)
+  if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) return '请填写 1 ~ 99 之间的百分比（如 20 表示 20%）'
+  const keep = Number((100 - pct).toFixed(1))
+  if (operator === 'exclude_worst_pct') return `按因子方向剔除全样本最差 ${pct}%，保留较优的 ${keep}%`
+  if (operator === 'exclude_bottom_pct') return `剔除数值最低的 ${pct}%，保留较高 ${keep}%`
+  if (operator === 'exclude_top_pct') return `剔除数值最高的 ${pct}%，保留较低 ${keep}%`
+  if (operator === 'top_pct') return `仅保留数值最高的前 ${pct}%`
+  if (operator === 'bottom_pct') return `仅保留数值最低的后 ${pct}%`
+  return ''
+}
+
 export const HOLD_BUFFER_OPTIONS = [
   { value: 0, label: '关闭（严格按前 N 名换股）' },
   { value: 5, label: '轻度缓冲（已持股跌出前 N+5 再卖）' },
@@ -57,7 +84,7 @@ function defaultExitRules() {
 
 // windows: { 指标名: { default, minimum, maximum } | null }
 function side(name, windows, window) {
-  const limits = windows[name]
+  const limits = windows?.[name]
   return { name, window: limits ? Number(window ?? limits.default) : null }
 }
 
@@ -104,14 +131,17 @@ export function formFromDefinition(definition, settings, options) {
   return {
     name: definition.name || '',
     entry_logic: definition.entry_logic === 'any' ? 'any' : 'all',
-    rules: (definition.entry_rules || []).map((rule) => ({
-      left: side(rule.left.name, windows, rule.left.window),
-      operator: rule.operator,
-      compare: rule.right ? 'indicator' : 'value',
-      value: rule.right ? 0 : Number(rule.value),
-      // 每条规则各有一份，改一条不会影响另一条。
-      right: rule.right ? side(rule.right.name, windows, rule.right.window) : { ...fallback.right },
-    })),
+    rules: (definition.entry_rules || []).map((rule) => {
+      const quantile = isQuantileOperator(rule.operator, options)
+      return {
+        left: side(rule.left.name, windows, rule.left.window),
+        operator: rule.operator,
+        compare: quantile ? 'value' : (rule.right ? 'indicator' : 'value'),
+        value: quantile ? Number(rule.value ?? 20) : (rule.right ? 0 : Number(rule.value)),
+        // 每条规则各有一份，改一条不会影响另一条。
+        right: !quantile && rule.right ? side(rule.right.name, windows, rule.right.window) : { ...fallback.right },
+      }
+    }),
     ranking: {
       ...side(definition.ranking.indicator.name, windows, definition.ranking.indicator.window),
       direction: definition.ranking.direction === 'ascending' ? 'ascending' : 'descending',
@@ -144,11 +174,16 @@ export function definitionFromForm(form) {
   const result = {
     name: form.name.trim(),
     entry_logic: form.entry_logic,
-    entry_rules: form.rules.map((rule) => ({
-      left: indicator(rule.left),
-      operator: rule.operator,
-      ...(rule.compare === 'indicator' ? { right: indicator(rule.right) } : { value: Number(rule.value) }),
-    })),
+    entry_rules: form.rules.map((rule) => {
+      const quantile = isQuantileOperator(rule.operator)
+      return {
+        left: indicator(rule.left),
+        operator: rule.operator,
+        ...(quantile || rule.compare !== 'indicator'
+          ? { value: Number(rule.value) }
+          : { right: indicator(rule.right) }),
+      }
+    }),
     ranking: { indicator: indicator(form.ranking), direction: form.ranking.direction },
   }
   const buffer = Number(form.hold_buffer ?? 0)

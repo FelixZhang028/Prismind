@@ -83,7 +83,7 @@ def execute(jid):
                 else:
                     request = workspace.ScreenHistoryIn.model_validate({k: v for k, v in body.items() if k not in {"from_date", "to_date"}})
                     package = StrategyPackage(package_id="screen", name=payload["label"],
-                        definition=workspace._screen_rule(request.definition), top_n=request.top_n,
+                        definition=workspace._screen_rule(request.definition, user=user), top_n=request.top_n,
                         rebalance=request.rebalance, source="stock_screen", created_at=datetime.now(timezone.utc))
                     initial_cash, reference = 1_000_000, ""
                     exclude_st = request.exclude_st

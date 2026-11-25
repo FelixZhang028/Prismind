@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   blankForm, blankRule, chooseIndicator, definitionFromForm, formFromDefinition,
-  packagePayload, sourceLabel, strategyProtectionSummary, tradeReasonClass,
+  isQuantileOperator, packagePayload, quantileHint, sourceLabel, strategyProtectionSummary, tradeReasonClass,
 } from '../src/workspace/ruleForm.js'
 
 const options = {
@@ -150,4 +150,42 @@ test('个股止损与移动止盈在表单和接口定义之间无损往返，�
   assert.match(tradeReasonClass('TRAILING_STOP'), /sky/)
   assert.match(tradeReasonClass('MARKET_TIMING_SELL'), /indigo/)
   assert.equal(tradeReasonClass('REBALANCE_SELL'), 'text-xs text-slate-400')
+})
+
+test('规则策略支持引用因子库指标和分位过滤条件无损往返', () => {
+  const factorOpts = {
+    ...options,
+    indicators: {
+      ...options.indicators,
+      'factor:roe_ttm': '净资产收益率（TTM） (roe_ttm · 正向)',
+      'factor:alpha101_006': '开盘价与成交量相关性 (alpha101_006 · 正向)',
+    },
+    indicator_windows: {
+      ...options.indicator_windows,
+      'factor:roe_ttm': null,
+      'factor:alpha101_006': null,
+    },
+    operators: { ...options.operators, exclude_worst_pct: '剔除最差 %（按因子方向）', top_pct: '保留最高前 %' },
+    quantile_operators: ['exclude_worst_pct', 'exclude_bottom_pct', 'exclude_top_pct', 'top_pct', 'bottom_pct'],
+  }
+  assert.equal(isQuantileOperator('exclude_worst_pct', factorOpts), true)
+  assert.equal(isQuantileOperator('gt', factorOpts), false)
+  assert.match(quantileHint('exclude_worst_pct', 20), /剔除全样本最差 20%/)
+
+  const def = {
+    name: '因子分位剔除策略',
+    entry_logic: 'all',
+    entry_rules: [
+      { left: { name: 'factor:alpha101_006' }, operator: 'exclude_worst_pct', value: 20 },
+      { left: { name: 'factor:roe_ttm' }, operator: 'top_pct', value: 50 },
+    ],
+    ranking: { indicator: { name: 'factor:roe_ttm' }, direction: 'descending' },
+  }
+  const form = formFromDefinition(def, { top_n: 20, rebalance: 'quarterly' }, factorOpts)
+  assert.deepEqual(form.rules[0].left, { name: 'factor:alpha101_006', window: null })
+  assert.equal(form.rules[0].compare, 'value')
+  assert.equal(form.rules[0].value, 20)
+  // 即使表单残留 compare='indicator'，分位条件提交时也绝不带 right
+  form.rules[0].compare = 'indicator'
+  assert.deepEqual(definitionFromForm(form), def)
 })
