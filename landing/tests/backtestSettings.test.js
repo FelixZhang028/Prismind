@@ -5,6 +5,7 @@ import {
   loadBacktestSettings,
   sanitizeBacktestSettings,
   saveBacktestSettings,
+  settingsFromEffectiveConfig,
 } from '../src/workspace/backtestSettings.js'
 
 function memoryStorage() {
@@ -54,4 +55,36 @@ test('非法或损坏的本地缓存会被过滤掉而不影响页面加载', ()
     exec: { slippage_bps: 15 },
     filter: { minimum_listing_days: 250 },
   })
+})
+
+test('从后端 effective_config 还原最近一次回测的表单口径设置', () => {
+  const converted = settingsFromEffectiveConfig({
+    from_date: '2020-01-01',
+    to_date: '2025-12-31',
+    initial_capital: 2000000,
+    max_positions: 20,
+    rebalance: 'quarterly',
+    hold_buffer: 20,
+    execution: {
+      commission_rate: 0.00025,
+      minimum_commission: 5,
+      historical_fees: true,
+      stamp_tax_rate: 0.0005,
+      slippage_rate: 0.001,
+    },
+    filters: {
+      exclude_st: true,
+      exclude_suspended: true,
+      minimum_listing_days: 250,
+      minimum_history_days: 120,
+      minimum_average_amount: 0,
+    },
+  })
+  assert.equal(converted.from_date, '2020-01-01')
+  assert.equal(converted.max_positions, 20)
+  assert.equal(converted.rebalance, 'quarterly')
+  assert.equal(converted.hold_buffer, 20)
+  assert.equal(converted.exec.commission_wan, 2.5)
+  assert.equal(converted.exec.slippage_bps, 10)
+  assert.equal(converted.filter.minimum_listing_days, 250)
 })

@@ -107,14 +107,21 @@ def get_job(jid: str, user_id: int) -> dict:
 
 
 def list_jobs(user_id: int, *, category: str = "backtest") -> dict:
-    factor_jobs = int(category == "factor")
     with get_conn() as conn:
-        rows = conn.execute(
-            """SELECT * FROM backtest_jobs WHERE user_id=?
-               AND (COALESCE(json_extract(payload, '$.kind'), 'backtest') = 'factor') = ?
-               ORDER BY CASE WHEN state IN ('QUEUED','RUNNING','CANCELLING') THEN 0 ELSE 1 END,
-                        created_at DESC, id DESC LIMIT 30""", (user_id, factor_jobs),
-        ).fetchall()
+        if category in {"factor", "factor_research"}:
+            rows = conn.execute(
+                """SELECT * FROM backtest_jobs WHERE user_id=?
+                   AND COALESCE(json_extract(payload, '$.kind'), 'backtest') = ?
+                   ORDER BY CASE WHEN state IN ('QUEUED','RUNNING','CANCELLING') THEN 0 ELSE 1 END,
+                            created_at DESC, id DESC LIMIT 30""", (user_id, category),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT * FROM backtest_jobs WHERE user_id=?
+                   AND COALESCE(json_extract(payload, '$.kind'), 'backtest') NOT IN ('factor', 'factor_research')
+                   ORDER BY CASE WHEN state IN ('QUEUED','RUNNING','CANCELLING') THEN 0 ELSE 1 END,
+                            created_at DESC, id DESC LIMIT 30""", (user_id,),
+            ).fetchall()
         return {"items": [public_job(row, conn) for row in rows]}
 
 

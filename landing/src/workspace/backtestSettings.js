@@ -84,3 +84,37 @@ export function saveBacktestSettings(snapshot, storage = defaultStorage()) {
     return false
   }
 }
+
+// 把后端 effective_config / catalog.last_settings（费率为小数口径）转为前端表单口径。
+export function settingsFromEffectiveConfig(config) {
+  if (!config || typeof config !== 'object') return null
+  const candidate = {
+    from_date: config.from_date,
+    to_date: config.to_date,
+    initial_capital: config.initial_capital,
+    max_positions: config.max_positions,
+    rebalance: config.rebalance,
+    hold_buffer: config.hold_buffer,
+  }
+  if (config.execution && typeof config.execution === 'object') {
+    const e = config.execution
+    const exec = {}
+    if (e.commission_rate != null) exec.commission_wan = Number((Number(e.commission_rate) * 10000).toFixed(2))
+    if (e.minimum_commission != null) exec.minimum_commission = Number(e.minimum_commission)
+    if (typeof e.historical_fees === 'boolean') exec.historical_fees = e.historical_fees
+    if (e.stamp_tax_rate != null) exec.stamp_tax_wan = Number((Number(e.stamp_tax_rate) * 10000).toFixed(2))
+    if (e.slippage_rate != null) exec.slippage_bps = Number((Number(e.slippage_rate) * 10000).toFixed(2))
+    candidate.exec = exec
+  }
+  if (config.filters && typeof config.filters === 'object') {
+    const f = config.filters
+    const filter = {}
+    if (typeof f.exclude_st === 'boolean') filter.exclude_st = f.exclude_st
+    if (typeof f.exclude_suspended === 'boolean') filter.exclude_suspended = f.exclude_suspended
+    if (f.minimum_listing_days != null) filter.minimum_listing_days = Number(f.minimum_listing_days)
+    if (f.minimum_history_days != null) filter.minimum_history_days = Number(f.minimum_history_days)
+    if (f.minimum_average_amount != null) filter.minimum_average_amount = Number(f.minimum_average_amount)
+    candidate.filter = filter
+  }
+  return sanitizeBacktestSettings(candidate)
+}

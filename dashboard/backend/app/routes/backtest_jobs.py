@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/v1/backtest-jobs", tags=["backtests"])
 
 
 class JobIn(BaseModel):
-    kind: Literal["backtest", "package", "screen", "factor"] = "backtest"
+    kind: Literal["backtest", "package", "screen", "factor", "factor_research"] = "backtest"
     request: dict[str, Any]
     package_id: str | None = Field(None, max_length=160)
 
@@ -33,6 +33,8 @@ def prepare(body: JobIn, user: dict) -> dict:
     kind = body.kind
     if kind == "factor":
         return workspace.prepare_factor_job(workspace.FactorEvalIn.model_validate(body.request), user)
+    if kind == "factor_research":
+        return workspace.prepare_factor_research_job(workspace.FactorResearchIn.model_validate(body.request), user)
     if kind == "backtest":
         request = BacktestIn.model_validate(body.request)
         if request.strategy.startswith("package:"):
@@ -108,13 +110,17 @@ def submit(body: JobIn, user: dict = Depends(get_current_user)):
     try:
         payload = prepare(body, user)
     except (ValidationError, ConfigurationError) as exc:
-        message = "因子评估参数无效，请检查后重试" if body.kind == "factor" else "回测参数或策略定义无效，请检查后重试"
+        message = (
+            "因子评估参数无效，请检查后重试" if body.kind == "factor"
+            else "组合研究参数无效，请检查后重试" if body.kind == "factor_research"
+            else "回测参数或策略定义无效，请检查后重试"
+        )
         raise HTTPException(422, message) from exc
     return jobs.enqueue(user["id"], payload, deduplicate=True)
 
 
 @router.get("")
-def list_tasks(user: dict = Depends(get_current_user), category: Literal["backtest", "factor"] = "backtest"):
+def list_tasks(user: dict = Depends(get_current_user), category: Literal["backtest", "factor", "factor_research"] = "backtest"):
     return jobs.list_jobs(user["id"], category=category)
 
 

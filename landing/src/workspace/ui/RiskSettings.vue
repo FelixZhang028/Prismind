@@ -9,7 +9,7 @@ const props = defineProps({
   notify: { type: Function, default: () => {} },
 })
 
-const form = reactive({
+const DEFAULT_RISK = {
   enabled: false,
   max_total_weight: 0.8,
   max_single_weight: 0.2,
@@ -21,7 +21,9 @@ const form = reactive({
   drawdown_action: 'stop_new',
   drawdown_target_weight: 0.4,
   max_industry_weight: 1.0,
-})
+}
+
+const form = reactive({ ...DEFAULT_RISK })
 
 const actionOptions = [
   { value: 'stop_new', label: '停止新开仓' },
@@ -42,6 +44,17 @@ const savedSnapshot = ref('')
 const loadError = ref('')
 const dirty = computed(() => !!savedSnapshot.value && savedSnapshot.value !== JSON.stringify(form))
 const ready = computed(() => !!savedSnapshot.value && !loadingRisk.value && !loadError.value && !saving.value)
+const isDefault = computed(() => (
+  !form.enabled
+  && Number(form.max_total_weight) === DEFAULT_RISK.max_total_weight
+  && Number(form.max_single_weight) === DEFAULT_RISK.max_single_weight
+  && Number(form.minimum_cash_ratio) === DEFAULT_RISK.minimum_cash_ratio
+  && Number(form.max_drawdown) === DEFAULT_RISK.max_drawdown
+  && !form.daily_position_limits
+  && form.drawdown_action === DEFAULT_RISK.drawdown_action
+  && Number(form.drawdown_target_weight) === DEFAULT_RISK.drawdown_target_weight
+  && Number(form.max_industry_weight) === DEFAULT_RISK.max_industry_weight
+))
 defineExpose({ dirty, ready, save: onSubmit })
 
 async function loadRisk() {
@@ -70,7 +83,7 @@ async function loadRisk() {
   }
 }
 
-async function onSubmit({ silent = false } = {}) {
+async function onSubmit({ silent = false, message = '已保存' } = {}) {
   const submittedSnapshot = JSON.stringify(form)
   saving.value = true
   try {
@@ -87,7 +100,7 @@ async function onSubmit({ silent = false } = {}) {
       max_industry_weight: Number(form.max_industry_weight),
     })
     savedSnapshot.value = submittedSnapshot
-    if (!silent) props.notify('已保存')
+    if (!silent) props.notify(message)
     return true
   } catch (e) {
     props.notify(e.message || '保存失败')
@@ -95,6 +108,11 @@ async function onSubmit({ silent = false } = {}) {
   } finally {
     saving.value = false
   }
+}
+
+async function resetToDefaults() {
+  Object.assign(form, { ...DEFAULT_RISK, max_positions: form.max_positions })
+  await onSubmit({ message: '已恢复默认风控配置并保存' })
 }
 
 onActivated(() => {
@@ -134,13 +152,22 @@ onActivated(() => {
         </div>
       </div>
 
-      <div class="mt-6">
+      <div class="mt-6 flex flex-wrap items-center gap-3">
         <button
-          @click="onSubmit"
+          type="button"
+          @click="onSubmit()"
           :disabled="saving || !ready"
           class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70"
         >
           {{ saving ? '保存中…' : '保存风控配置' }}
+        </button>
+        <button
+          type="button"
+          @click="resetToDefaults"
+          :disabled="saving || !ready || (isDefault && !dirty)"
+          class="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 transition hover:border-indigo-400/40 hover:text-white disabled:opacity-50"
+        >
+          恢复默认
         </button>
       </div>
     </div>

@@ -19,6 +19,31 @@ export const CATEGORY_STYLE = {
 
 export const CHANGELOG_ENTRIES = [
   {
+    id: '2026-11-25-research-progress-risk-reset-and-last-settings',
+    date: '2026-11-25',
+    title: '组合研究新增后台进度条与取消、风控一键恢复默认、回测跨会话沿用上次配置',
+    items: [
+      {
+        category: 'feat',
+        summary: '因子「组合研究」改为后台任务执行，支持实时阶段提示、步骤进度条与取消',
+        detail: '长时间运行（8~10 分钟）的多因子组合研究不再阻塞页面，切换页面后继续在后台推进，实时展示当前阶段（训练期计算/中性化、权重拟合、测试期评估、BH-FDR 校正）与完成百分比，并可随时取消。',
+        action: { label: '去因子研究体验', view: 'factor-lab' },
+      },
+      {
+        category: 'improve',
+        summary: '风控配置新增「恢复默认」按钮',
+        detail: '一键将风控开关、总仓位、单股与单行业仓位上限、最大回撤线等恢复为平台默认值并保存。',
+        action: { label: '去策略回测查看', view: 'backtest-review' },
+      },
+      {
+        category: 'fix',
+        summary: '跨会话自动沿用最近一次回测配置，「用此组合回测」不再重置参数',
+        detail: '后端目录接口补充返回最近一次回测的日期、持仓、调仓频率、换手缓冲与费率/过滤设置，新浏览器或首次从因子研究跳入也能完整保留。',
+        action: { label: '去因子研究查看', view: 'factor-lab' },
+      },
+    ],
+  },
+  {
     id: '2026-11-24-backtest-ux-dedupe-and-compare-annual',
     date: '2026-11-24',
     title: '回测自动保存风控与防重提交、参数持久化记忆、研究对比新增分年收益',

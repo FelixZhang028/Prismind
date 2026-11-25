@@ -11,7 +11,14 @@ const props = defineProps({
   category: { type: String, default: 'backtest' },
 })
 const emit = defineEmits(['completed', 'view'])
-const title = computed(() => props.category === 'factor' ? '因子评估任务' : '回测任务')
+const title = computed(() => (
+  props.category === 'factor' ? '因子评估任务'
+    : props.category === 'factor_research' ? '组合研究任务'
+      : '回测任务'
+))
+const progressUnit = computed(() => (props.category === 'factor_research' ? '步' : '个交易日'))
+const progressVerb = computed(() => (props.category === 'factor_research' ? '已完成' : '已处理'))
+const progressPct = (job) => (job?.total > 0 ? Math.min(100, Math.round((Number(job.completed || 0) / Number(job.total)) * 100)) : 0)
 const jobs = ref([])
 const expanded = ref(false)
 const previewLimit = 3
@@ -68,7 +75,7 @@ async function cancel(job) {
   finally { cancelling.value = '' }
 }
 function viewResult(job) {
-  if (props.category === 'factor') emit('view', job)
+  if (props.category === 'factor' || props.category === 'factor_research') emit('view', job)
   else openResearch('backtest-review', { run: job.result_id })
 }
 onMounted(start)
@@ -93,10 +100,10 @@ watch(() => [props.refreshKey, props.focusJob], refresh)
         </div>
         <p class="mt-1 text-xs text-slate-400" role="status">
           {{ job.stage }}<template v-if="job.state === 'QUEUED'"> · 队列位置 {{ job.queue_position }}（有空闲名额且当前账户可运行时启动）</template>
-          <template v-if="job.state === 'RUNNING' && job.total"> · 已处理 {{ job.completed }} / {{ job.total }} 个交易日</template>
+          <template v-if="job.state === 'RUNNING' && job.total"> · {{ progressVerb }} {{ job.completed }} / {{ job.total }} {{ progressUnit }}（{{ progressPct(job) }}%）</template>
           <template v-if="job.state === 'RUNNING'"> · 已用时 {{ elapsed(job) }} 秒 · 运行上限 {{ Math.round(job.timeout_seconds / 60) }} 分钟</template>
         </p>
-        <progress v-if="job.state === 'RUNNING' && job.total" :value="job.completed" :max="job.total" class="mt-2 h-2 w-full accent-indigo-400" :aria-label="`已处理 ${job.completed} / ${job.total} 个交易日`" />
+        <progress v-if="job.state === 'RUNNING' && job.total" :value="job.completed" :max="job.total" class="mt-2 h-2 w-full accent-indigo-400" :aria-label="`${progressVerb} ${job.completed} / ${job.total} ${progressUnit}`" />
         <p class="mt-1 text-xs text-slate-500">提交于 {{ backtestTimestamp(job.created_at) }}</p>
       </article>
     </div>

@@ -299,6 +299,42 @@ def submit_backtest(body: BacktestIn, user: dict = Depends(get_current_user)):
     return {"id": bid, "status": "完成", "result": result, "created_at": _now()}
 
 
+def _latest_user_backtest_settings(user_id: int) -> dict[str, Any] | None:
+    """读取用户最近一次未归档回测的有效运行参数，供跨浏览器/新会话沿用。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT result FROM backtests WHERE user_id = ? AND archived_at IS NULL ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    if not row or not row["result"]:
+        return None
+    try:
+        result = json.loads(row["result"])
+    except (TypeError, ValueError):
+        return None
+    ec = result.get("effective_config")
+    if not isinstance(ec, dict):
+        return None
+    execution = ec.get("execution")
+    filters = ec.get("filters")
+    if not execution or not filters:
+        directory = run_directory(result)
+        snap_exec, snap_filters = extract_snapshot_assumptions(directory)
+        if not execution and snap_exec:
+            execution = snap_exec
+        if not filters and snap_filters:
+            filters = snap_filters
+    out: dict[str, Any] = {}
+    for key in ("from_date", "to_date", "initial_capital", "max_positions", "rebalance", "hold_buffer"):
+        if ec.get(key) is not None:
+            out[key] = ec[key]
+    if isinstance(execution, dict) and execution:
+        out["execution"] = execution
+    if isinstance(filters, dict) and filters:
+        out["filters"] = filters
+    return out or None
+
+
 @router.get("/catalog", summary="可执行策略目录")
 def backtest_catalog(user: dict = Depends(get_current_user)):
     service = build_backtest_service(user)
@@ -327,6 +363,7 @@ def backtest_catalog(user: dict = Depends(get_current_user)):
             "pool_preset": saved_pool[2] if saved_pool else None,
             "execution_defaults": exec_defaults,
             "filter_defaults": filter_defaults,
+            "last_settings": _latest_user_backtest_settings(user["id"]),
             "benchmark_coverage": (span or {"symbol": symbol, "name": BENCHMARK_NAMES.get(symbol, symbol)}) if symbol else None}
 
 

@@ -24,7 +24,7 @@ import { CURRENT_POOL, marketChoices, marketLabel, marketNote, suggestedHistoric
 import { paperPrefill, parseFactorRows, returnTone } from '../paperPresentation.js'
 import { strategyProtectionSummary, tradeReasonClass } from '../ruleForm.js'
 import { takeFactorBacktestDraft } from '../factorBacktestDraft.js'
-import { loadBacktestSettings, saveBacktestSettings } from '../backtestSettings.js'
+import { loadBacktestSettings, saveBacktestSettings, settingsFromEffectiveConfig } from '../backtestSettings.js'
 
 const props = defineProps({
   routeContext: { type: Object, default: () => ({}) },
@@ -121,6 +121,19 @@ function chooseStrategy() {
   if (strategy?.top_n != null) form.max_positions = strategy.top_n
   if (strategy?.rebalance) form.rebalance = strategy.rebalance
   if (strategy?.hold_buffer != null) form.hold_buffer = Number(strategy.hold_buffer)
+}
+function persistCurrentSettings() {
+  hasSavedSettings = true
+  saveBacktestSettings({
+    from_date: form.from_date,
+    to_date: form.to_date,
+    initial_capital: form.initial_capital,
+    max_positions: form.max_positions,
+    rebalance: form.rebalance,
+    hold_buffer: form.hold_buffer,
+    exec: { ...execForm },
+    filter: { ...filterForm },
+  })
 }
 function applySavedBacktestSettings(saved) {
   if (!saved) return
@@ -376,6 +389,7 @@ async function onSubmit() {
       }
       props.notify('已自动保存风控配置并开始提交回测')
     }
+    persistCurrentSettings()
     const data = await submitBacktest({
       strategy: form.strategy.trim(),
       market: form.market,
@@ -417,9 +431,16 @@ async function loadCatalog() {
     if (catalog.filter_defaults) filterDefaults.value = catalog.filter_defaults
     if (!execFilterInitialized && (catalog.execution_defaults || catalog.filter_defaults)) {
       syncExecFilterFromDefaults(catalog.execution_defaults, catalog.filter_defaults)
-      const saved = loadBacktestSettings()
-      if (saved?.exec) Object.assign(execForm, saved.exec)
-      if (saved?.filter) Object.assign(filterForm, saved.filter)
+      const localSaved = loadBacktestSettings()
+      const serverLast = settingsFromEffectiveConfig(catalog.last_settings)
+      if (!localSaved && serverLast) {
+        // 新浏览器或首次访问：用用户最近一次历史回测的有效配置补齐，避免“用此组合回测”退回默认值。
+        applySavedBacktestSettings(serverLast)
+        persistCurrentSettings()
+      } else if (localSaved) {
+        if (localSaved.exec) Object.assign(execForm, localSaved.exec)
+        if (localSaved.filter) Object.assign(filterForm, localSaved.filter)
+      }
       execFilterInitialized = true
     }
     strategyOptions.value = [
@@ -508,17 +529,7 @@ watch(
   ],
   () => {
     if (!settingsReady) return
-    hasSavedSettings = true
-    saveBacktestSettings({
-      from_date: form.from_date,
-      to_date: form.to_date,
-      initial_capital: form.initial_capital,
-      max_positions: form.max_positions,
-      rebalance: form.rebalance,
-      hold_buffer: form.hold_buffer,
-      exec: { ...execForm },
-      filter: { ...filterForm },
-    })
+    persistCurrentSettings()
   }
 )
 onActivated(async () => {
