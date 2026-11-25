@@ -86,6 +86,17 @@ export function saveBacktestSettings(snapshot, storage = defaultStorage()) {
   }
 }
 
+export function clearBacktestSettings(storage = defaultStorage()) {
+  if (!storage) return false
+  try {
+    if (typeof storage.removeItem === 'function') storage.removeItem(BACKTEST_SETTINGS_KEY)
+    else storage.setItem(BACKTEST_SETTINGS_KEY, '')
+    return true
+  } catch {
+    return false
+  }
+}
+
 // 把后端 effective_config / catalog.last_settings（费率为小数口径）转为前端表单口径。
 export function settingsFromEffectiveConfig(config) {
   if (!config || typeof config !== 'object') return null

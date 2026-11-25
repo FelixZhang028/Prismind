@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onActivated, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, reactive, ref, watch } from 'vue'
 import { getBacktestBenchmark, getBacktestCatalog, getBacktest, getPreferences, getRunAudit, listPackages, submitBacktest } from '../../api.js'
 import { REBALANCE_OPTIONS, backtestDefaults } from '../preferences.js'
 import { openResearch } from '../researchNavigation.js'
@@ -24,7 +24,7 @@ import { CURRENT_POOL, defaultBacktestMarket, marketChoices, marketLabel, market
 import { paperPrefill, parseFactorRows, returnTone } from '../paperPresentation.js'
 import { strategyProtectionSummary, tradeReasonClass } from '../ruleForm.js'
 import { takeFactorBacktestDraft } from '../factorBacktestDraft.js'
-import { loadBacktestSettings, saveBacktestSettings, settingsFromEffectiveConfig } from '../backtestSettings.js'
+import { clearBacktestSettings, loadBacktestSettings, saveBacktestSettings, settingsFromEffectiveConfig } from '../backtestSettings.js'
 
 const props = defineProps({
   routeContext: { type: Object, default: () => ({}) },
@@ -56,6 +56,15 @@ const filterDefaults = ref(null)
 let execFilterInitialized = false
 let settingsReady = false
 let hasSavedSettings = false
+let suppressPersist = false
+const rememberedBanner = ref(false)
+const preferenceDefaults = ref({
+  from_date: '2025-01-01',
+  to_date: '2025-12-31',
+  initial_capital: 1000000,
+  max_positions: 10,
+  rebalance: 'weekly',
+})
 const factorDraftPeriod = ref(null)
 const execForm = reactive({
   commission_wan: 3, // 万分之几，3 = 0.0003（万三）
@@ -124,6 +133,7 @@ function chooseStrategy() {
 }
 function persistCurrentSettings() {
   hasSavedSettings = true
+  rememberedBanner.value = true
   saveBacktestSettings({
     market: form.market,
     from_date: form.from_date,
@@ -139,12 +149,36 @@ function persistCurrentSettings() {
 function applySavedBacktestSettings(saved) {
   if (!saved) return
   hasSavedSettings = true
+  rememberedBanner.value = true
   for (const key of ['market', 'from_date', 'to_date', 'initial_capital', 'max_positions', 'rebalance', 'hold_buffer']) {
     if (saved[key] != null && saved[key] !== '') form[key] = saved[key]
   }
   if (saved.exec) Object.assign(execForm, saved.exec)
   if (saved.filter) Object.assign(filterForm, saved.filter)
 }
+function resetBacktestForm() {
+  suppressPersist = true
+  clearBacktestSettings()
+  hasSavedSettings = false
+  rememberedBanner.value = false
+  factorDraftPeriod.value = null
+  Object.assign(form, preferenceDefaults.value, {
+    market: defaultBacktestMarket(markets.value, ''),
+    hold_buffer: 0,
+  })
+  if (selectedStrategy.value) chooseStrategy()
+  resetExecFilterDefaults()
+  props.notify('已恢复默认回测配置')
+  nextTick(() => { suppressPersist = false })
+}
+const rebalanceLabel = computed(() => rebalances.find((r) => r.value === form.rebalance)?.label || form.rebalance)
+const preRunSummary = computed(() => {
+  const strat = selectedStrategy.value?.label || '未选择策略'
+  const mkt = marketLabel(form.market, markets.value) || '未选择范围'
+  const buf = Math.max(0, Math.round(Number(form.hold_buffer) || 0))
+  const bufText = buf > 0 ? `换手缓冲 +${buf}` : '无换手缓冲'
+  return `${strat} · ${mkt} · ${form.from_date} ~ ${form.to_date} · 最大持仓 ${form.max_positions} 只 · ${rebalanceLabel.value}调仓 · ${bufText}`
+})
 function applyFactorDraftPeriod() {
   if (!factorDraftPeriod.value) return
   form.from_date = factorDraftPeriod.value.from_date
@@ -508,7 +542,9 @@ async function applyPreferences() {
   if (preferencesApplied) return
   preferencesApplied = true
   try {
-    Object.assign(form, backtestDefaults((await getPreferences()).preferences))
+    const defaults = backtestDefaults((await getPreferences()).preferences)
+    preferenceDefaults.value = { ...preferenceDefaults.value, ...defaults }
+    Object.assign(form, defaults)
   } catch { /* 读不到就用页面自带的默认值 */ }
   applySavedBacktestSettings(loadBacktestSettings())
 }
@@ -533,7 +569,7 @@ watch(
     filterForm.minimum_average_amount,
   ],
   () => {
-    if (!settingsReady) return
+    if (!settingsReady || suppressPersist) return
     persistCurrentSettings()
   }
 )
@@ -556,6 +592,15 @@ onActivated(async () => {
 
     <!-- 新建回测 -->
     <SectionCard title="新建回测" hint="配置策略与市场区间，运行一次确定性回测">
+      <template #actions>
+        <button
+          type="button"
+          class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300 transition hover:bg-white/10 hover:text-white"
+          @click="resetBacktestForm"
+        >
+          恢复默认配置
+        </button>
+      </template>
       <p v-if="routeContext.mode === 'reuse'" class="mb-4 text-sm text-slate-400">已带入历史区间、资金、股票范围与策略参数；风控使用当前设置。</p>
       <div
         v-else-if="factorDraftPeriod && form.strategy === 'factor_composite'"
@@ -664,16 +709,26 @@ onActivated(async () => {
         <div class="p-3 pt-0"><RiskSettings ref="riskEditor" :notify="notify" /></div>
       </details>
       <p v-if="runError" class="mt-4 text-sm text-rose-300">{{ runError }}</p>
-      <div class="mt-5 flex flex-wrap items-center justify-end gap-3">
-        <p v-if="running" class="text-xs text-slate-400" role="status">正在提交任务…</p>
-        <button
-          data-guide="backtest-run"
-          @click="onSubmit"
-          :disabled="running || catalogLoading || !selectedStrategy || !riskEditor?.ready"
-          class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70"
-        >
-          {{ running ? '回测中…' : '运行回测' }}
-        </button>
+      <div class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+        <div class="min-w-0 flex-1 space-y-1">
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <span class="font-semibold text-white">本次回测配置</span>
+            <span v-if="rememberedBanner" class="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[11px] text-amber-200">沿用上次参数，提交前请核对</span>
+            <button type="button" class="text-indigo-300 underline hover:text-indigo-200" @click="resetBacktestForm">恢复默认</button>
+          </div>
+          <p class="text-xs leading-relaxed text-slate-300">{{ preRunSummary }}</p>
+        </div>
+        <div class="flex shrink-0 items-center gap-3">
+          <p v-if="running" class="text-xs text-slate-400" role="status">正在提交任务…</p>
+          <button
+            data-guide="backtest-run"
+            @click="onSubmit"
+            :disabled="running || catalogLoading || !selectedStrategy || !riskEditor?.ready"
+            class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70"
+          >
+            {{ running ? '回测中…' : '运行回测' }}
+          </button>
+        </div>
       </div>
     </SectionCard>
 

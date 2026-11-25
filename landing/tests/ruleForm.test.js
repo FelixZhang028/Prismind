@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  blankForm, blankRule, chooseIndicator, definitionFromForm, formFromDefinition,
+  blankForm, blankRule, chooseIndicator, definitionFromForm, describeRuleForm, formFromDefinition,
   isQuantileOperator, packagePayload, quantileHint, sourceLabel, strategyProtectionSummary, tradeReasonClass,
 } from '../src/workspace/ruleForm.js'
 
@@ -188,4 +188,44 @@ test('规则策略支持引用因子库指标和分位过滤条件无损往返',
   // 即使表单残留 compare='indicator'，分位条件提交时也绝不带 right
   form.rules[0].compare = 'indicator'
   assert.deepEqual(definitionFromForm(form), def)
+})
+
+test('describeRuleForm 在修改排序周期和条件后 0ms 即时输出与后端一致的中文预览', () => {
+  const fullOpts = {
+    indicators: {
+      close: '收盘价',
+      sma: '移动平均线',
+      volatility: '历史波动率',
+      'factor:roe_ttm': '净资产收益率（TTM） (roe_ttm · 正向)',
+    },
+    operators: { gt: '大于', exclude_worst_pct: '剔除最差 %（按因子方向）' },
+    indicator_windows: {
+      close: null,
+      sma: { default: 20, minimum: 2, maximum: 500 },
+      volatility: { default: 20, minimum: 2, maximum: 250 },
+      'factor:roe_ttm': null,
+    },
+    quantile_operators: ['exclude_worst_pct'],
+  }
+  const form = formFromDefinition({
+    name: '低波质量',
+    entry_logic: 'all',
+    entry_rules: [
+      { left: { name: 'close' }, operator: 'gt', right: { name: 'sma', window: 60 } },
+      { left: { name: 'factor:roe_ttm' }, operator: 'exclude_worst_pct', value: 20 },
+    ],
+    ranking: { indicator: { name: 'volatility', window: 20 }, direction: 'ascending' },
+    hold_buffer: 10,
+  }, { top_n: 15, rebalance: 'quarterly' }, fullOpts)
+
+  const before = describeRuleForm(form, fullOpts)
+  assert.match(before, /^每季调仓；/)
+  assert.match(before, /收盘价大于60日移动平均线，并且净资产收益率（TTM）剔除最差20%（按因子方向）/)
+  assert.match(before, /按20日历史波动率从低到高排序，等权持有前15只/)
+  assert.match(before, /排名在前25名以内继续保留/)
+
+  form.ranking.window = 250
+  const after = describeRuleForm(form, fullOpts)
+  assert.match(after, /按250日历史波动率从低到高排序/)
+  assert.doesNotMatch(after, /按20日历史波动率/)
 })

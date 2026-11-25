@@ -74,6 +74,7 @@ onActivated(loadAssets)
     <SectionCard title="策略列表" :hint="`共 ${assets.length} 个策略`">
       <template #actions><button class="rounded-full border border-white/10 px-4 py-2 text-sm text-slate-300 hover:bg-white/5 disabled:opacity-50" :disabled="loading" @click="loadAssets">{{ loading ? '加载中…' : '刷新' }}</button></template>
       <label class="block max-w-md"><span class="mb-2 block text-sm text-slate-400">搜索策略</span><input v-model="keyword" type="search" placeholder="输入名称或描述" class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-white outline-none focus:border-indigo-400/40" /></label>
+      <p v-if="loading && assets.length" role="status" class="mt-3 text-xs text-indigo-300">正在同步最新策略列表…</p>
       <p v-if="error" role="alert" class="mt-4 text-sm text-rose-300">{{ error }}</p>
       <EmptyState v-if="!loading && !visibleAssets.length" :text="keyword ? '没有匹配的策略' : '暂无策略，选择上方一种创建方式开始。'" />
       <div class="mt-5 grid gap-4">
