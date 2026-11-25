@@ -534,6 +534,9 @@ export function listBacktestJobs(category = 'backtest') {
 export function submitFactorJob(payload) {
   return request('/api/v1/backtest-jobs', { method: 'POST', body: { kind: 'factor', request: payload }, auth: true, timeoutMs: 30000 })
 }
+export function submitFactorResearchJob(payload) {
+  return request('/api/v1/backtest-jobs', { method: 'POST', body: { kind: 'factor_research', request: payload }, auth: true, timeoutMs: 30000 })
+}
 export function getFactorJobReport(id) {
   return request(`/api/v1/backtest-jobs/${encodeURIComponent(id)}/factor-report`, { auth: true, timeoutMs: 30000 })
 }

@@ -9,8 +9,8 @@ import {
   factorUniverses,
   getFactorJobReport,
   listFactors,
-  researchFactors,
   submitFactorJob,
+  submitFactorResearchJob,
 } from '../../api.js'
 import { CURRENT_POOL, defaultFactorUniverse, factorUniverseNote, marketChoices } from '../marketPresentation.js'
 import MetricCard from '../ui/MetricCard.vue'
@@ -511,21 +511,29 @@ const researchComparisonRows = computed(() => (researchResult.value?.comparison 
   '多重检验结论': row['多重检验结论'] || '—',
 })))
 
+const researchCorrNames = computed(() => {
+  const keys = Object.keys(researchResult.value?.correlation_matrix || {})
+  return keys.length ? keys : researchForm.factor_names
+})
 const researchCorrRows = computed(() => {
   const corr = researchResult.value?.correlation_matrix || {}
-  const names = researchForm.factor_names
-  return names.map((n) => ({ name: n, ...corr[n] }))
+  return researchCorrNames.value.map((n) => ({ name: n, ...corr[n] }))
 })
 const researchCorrCols = computed(() => [
   { key: 'name', label: '因子' },
-  ...researchForm.factor_names.map((n) => ({ key: n, label: n, align: 'right' })),
+  ...researchCorrNames.value.map((n) => ({ key: n, label: n, align: 'right' })),
 ])
 
+const researchJob = ref('')
+const researchTasksRefresh = ref(0)
+const researchReportLoading = ref(false)
+let researchReportRequest = 0
+
 async function runResearch() {
+  if (researchLoading.value) return
   if (researchForm.factor_names.length < 2) return props.notify('请至少选择两个因子')
   researchLoading.value = true
   researchError.value = ''
-  researchResult.value = null
   try {
     const directions = {}
     researchForm.factor_names.forEach((n) => {
@@ -553,13 +561,45 @@ async function runResearch() {
         payload.weights[n] = Number(researchWeights[n]) || 0
       })
     }
-    researchResult.value = await researchFactors(payload)
-    props.notify('组合研究完成')
+    const job = await submitFactorResearchJob(payload)
+    researchReportRequest += 1
+    researchReportLoading.value = false
+    researchResult.value = null
+    researchJob.value = job.id
+    researchTasksRefresh.value += 1
+    props.notify(
+      job?.deduplicated
+        ? '相同配置的组合研究正在运行中，已定位到该任务，未重复提交'
+        : '组合研究已提交，可在下方「组合研究任务」查看实时进度或取消'
+    )
   } catch (e) {
-    researchError.value = e.message || '研究失败'
-    props.notify(e.message || '研究失败')
+    researchError.value = e.message || '提交研究任务失败'
+    props.notify(e.message || '提交研究任务失败')
   } finally {
     researchLoading.value = false
+  }
+}
+
+async function viewResearchReport(job) {
+  const request = ++researchReportRequest
+  researchJob.value = job.id
+  researchError.value = ''
+  researchResult.value = null
+  researchReportLoading.value = true
+  try {
+    const result = await getFactorJobReport(job.id)
+    if (request === researchReportRequest) researchResult.value = result
+  } catch (e) {
+    if (request === researchReportRequest) researchError.value = e.message || '无法读取组合研究报告'
+  } finally {
+    if (request === researchReportRequest) researchReportLoading.value = false
+  }
+}
+
+function onResearchCompleted(job) {
+  if ((!researchJob.value || job.id === researchJob.value) && !researchReportLoading.value && !researchResult.value) {
+    props.notify('组合研究已完成')
+    viewResearchReport(job)
   }
 }
 
@@ -1245,11 +1285,20 @@ onBeforeUnmount(() => {
             :disabled="researchLoading"
             class="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/40 transition hover:-translate-y-0.5 disabled:opacity-70"
           >
-            {{ researchLoading ? '研究中…' : '运行组合研究' }}
+            {{ researchLoading ? '提交中…' : '运行组合研究' }}
           </button>
           <p v-if="researchError" class="text-sm text-rose-300">{{ researchError }}</p>
         </div>
       </SectionCard>
+
+      <BacktestTasks
+        category="factor_research"
+        :focus-job="researchJob"
+        :refresh-key="researchTasksRefresh"
+        @completed="onResearchCompleted"
+        @view="viewResearchReport"
+      />
+      <p v-if="researchReportLoading" role="status" class="text-sm text-slate-400">正在读取组合研究报告…</p>
 
       <template v-if="researchResult">
         <div class="rounded-xl border border-white/10 bg-white/5 p-4">

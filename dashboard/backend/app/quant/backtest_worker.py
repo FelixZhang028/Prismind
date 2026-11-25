@@ -50,7 +50,7 @@ def execute(jid):
         return
     user = dict(user)
     payload = json.loads(row["payload"])
-    if payload["kind"] != "factor":
+    if payload["kind"] not in {"factor", "factor_research"}:
         runtime.TASK_SETTINGS = {**payload["snapshot"], "paths": paths}
     token = jobs.JOB_ID.set(jid)
     try:
@@ -60,6 +60,11 @@ def execute(jid):
                 request = workspace.FactorEvalIn.model_validate(body)
                 result = workspace.run_factor_job(request, user, payload["snapshot"])
                 report("保存因子评估报告")
+                jobs.save_factor_report(jid, result)
+            elif payload["kind"] == "factor_research":
+                request = workspace.FactorResearchIn.model_validate(body)
+                result = workspace.run_factor_research_job(request, user, payload["snapshot"])
+                report("保存组合研究报告")
                 jobs.save_factor_report(jid, result)
             elif payload["kind"] == "backtest":
                 backtests.submit_backtest(backtests.BacktestIn.model_validate(body), user)

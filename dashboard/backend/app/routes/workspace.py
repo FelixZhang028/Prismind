@@ -1115,6 +1115,90 @@ def _factor_composite(body: FactorCompositeIn, components: tuple, repository: An
     }
 
 
+def _resolve_research_dates(body: FactorResearchIn) -> tuple[date, date, date, date]:
+    bounds = local_data_bounds()
+    if bounds is None:
+        raise HTTPException(status_code=409, detail="本地暂无行情数据，请先在数据管理中下载。")
+    local_start, local_end = bounds
+
+    def _parse(value: str, default: str) -> date:
+        try:
+            return date.fromisoformat(str(value or ""))
+        except ValueError:
+            return date.fromisoformat(default)
+
+    train_start = _parse(body.train_start, local_start.isoformat())
+    test_end = _parse(body.test_end, local_end.isoformat())
+    train_end = _parse(body.train_end, str(date.fromordinal(
+        train_start.toordinal() + max(1, int((test_end.toordinal() - train_start.toordinal()) * 0.7))
+    )))
+    test_start = _parse(body.test_start, str(date.fromordinal(train_end.toordinal() + 1)))
+    train_start = max(train_start, local_start)
+    test_end = min(test_end, local_end)
+    if not train_start <= train_end < test_start <= test_end:
+        raise HTTPException(status_code=422, detail="日期需满足：训练开始 ≤ 训练结束 < 测试开始 ≤ 测试结束。")
+    return train_start, train_end, test_start, test_end
+
+
+def prepare_factor_research_job(body: FactorResearchIn, user: dict) -> dict:
+    if len(body.factor_names) < 2 or len(set(body.factor_names)) != len(body.factor_names):
+        raise HTTPException(status_code=400, detail="请至少选择两个不同因子进行研究")
+    if body.universe != CURRENT_POOL and body.universe not in INDEX_UNIVERSES:
+        raise HTTPException(422, "不支持这个股票范围，请选择当前股票池或列表里的指数。")
+    registry = build_factor_registry(user)
+    components = []
+    custom_factors: dict[str, dict[str, Any]] = {}
+    for name in body.factor_names:
+        try:
+            factor = registry.get(name)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"因子不存在：{name}") from None
+        components.append(factor)
+        if isinstance(factor, CustomFactor):
+            custom_factors[name] = asdict(factor)
+    train_start, train_end, test_start, test_end = _resolve_research_dates(body)
+    symbols = _factor_symbols(user) if body.universe == CURRENT_POOL else None
+    names_preview = " + ".join((f.display_name or f.name) for f in components[:3])
+    if len(components) > 3:
+        names_preview += f" 等{len(components)}个因子"
+    return {
+        "kind": "factor_research",
+        "label": f"组合研究：{names_preview}",
+        "request": body.model_dump() | {
+            "train_start": train_start.isoformat(),
+            "train_end": train_end.isoformat(),
+            "test_start": test_start.isoformat(),
+            "test_end": test_end.isoformat(),
+        },
+        "snapshot": {
+            "symbols": symbols,
+            "custom_factors": custom_factors,
+        },
+    }
+
+
+def run_factor_research_job(body: FactorResearchIn, user: dict, snapshot: dict) -> dict[str, Any]:
+    custom_map = snapshot.get("custom_factors") or {}
+    registry = build_factor_registry(user)
+    components = []
+    for name in body.factor_names:
+        if name in custom_map:
+            components.append(CustomFactor(**custom_map[name]))
+        else:
+            try:
+                components.append(registry.get(name))
+            except KeyError:
+                raise HTTPException(status_code=404, detail=f"因子不存在：{name}") from None
+    train_start = date.fromisoformat(body.train_start)
+    train_end = date.fromisoformat(body.train_end)
+    test_start = date.fromisoformat(body.test_start)
+    test_end = date.fromisoformat(body.test_end)
+    repository, symbols = _factor_scope(
+        user, body.universe, train_start, test_end, submitted_symbols=snapshot.get("symbols")
+    )
+    return _factor_research(body, components, repository, symbols, train_start, train_end, test_start, test_end)
+
+
 @router.post("/factors/research", summary="因子组合研究：训练期定权重，测试期比较")
 def factor_research(body: FactorResearchIn, user: dict = Depends(get_current_user)):
     """迁移自 AlphaQuant factor_research_service：训练/测试集严格隔离的研究流程。"""
@@ -1128,26 +1212,7 @@ def factor_research(body: FactorResearchIn, user: dict = Depends(get_current_use
             components.append(registry.get(name))
         except KeyError:
             raise HTTPException(status_code=404, detail=f"因子不存在：{name}")
-    bounds = local_data_bounds()
-    if bounds is None:
-        raise HTTPException(status_code=409, detail="本地暂无行情数据，请先在数据管理中下载。")
-    local_start, local_end = bounds
-
-    def _parse(value: str, default: str) -> date:
-        try:
-            return date.fromisoformat(str(value or ""))
-        except ValueError:
-            return date.fromisoformat(default)
-
-    # 各边界缺省时自动切分为：前 70% 训练 / 后 30% 测试，并收敛到本地数据范围。
-    train_start = _parse(body.train_start, local_start.isoformat())
-    test_end = _parse(body.test_end, local_end.isoformat())
-    train_end = _parse(body.train_end, str(date.fromordinal(
-        train_start.toordinal() + max(1, int((test_end.toordinal() - train_start.toordinal()) * 0.7))
-    )))
-    test_start = _parse(body.test_start, str(date.fromordinal(train_end.toordinal() + 1)))
-    train_start = max(train_start, local_start)
-    test_end = min(test_end, local_end)
+    train_start, train_end, test_start, test_end = _resolve_research_dates(body)
     repository, symbols = _factor_scope(user, body.universe, train_start, test_end)
     request = {"body": body.model_dump(), "range": [train_start, train_end, test_start, test_end], "symbols": symbols,
                "factors": [repr(f) for f in components]}

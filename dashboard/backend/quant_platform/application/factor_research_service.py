@@ -8,7 +8,7 @@ from math import isfinite
 
 import pandas as pd
 
-from quant_platform.core import deadline
+from quant_platform.core import deadline, progress
 from quant_platform.data.extras import extra_columns
 from quant_platform.data.index_constituents import UNIVERSE_COLUMN
 from quant_platform.data.industry import EXPOSURES_TABLE
@@ -123,11 +123,22 @@ def research_combination(
         raise ValueError("不支持的中性化方式")
 
     extra = extra_columns(field for factor in components for field in factor.required_fields)
+    n_factors = len(components)
+    # 进度总步数：训练期(加载1 + 逐因子N) + 权重拟合(N若ic否则1) + 测试期(加载1 + 逐因子N + 评估N+2) + BH-FDR汇总(1)
+    total_steps = (1 + n_factors) + (n_factors if mode == "ic" else 1) + (1 + n_factors) + (n_factors + 2) + 1
+    completed_steps = 0
+
+    def advance(stage: str) -> None:
+        nonlocal completed_steps
+        completed_steps = min(total_steps, completed_steps + 1)
+        progress.report(stage, completed_steps, total_steps)
 
     def frames_until(start, end, period):
+        progress.report(f"加载{period}行情", completed_steps, total_steps)
         bars = repository.get_daily_bars(symbols=symbols, end_date=end, **({"extras": extra} if extra else {}))
         if bars.empty:
             raise ValueError("所选区间没有本地行情，请先更新数据。")
+        advance(f"已加载{period}行情")
         # 指数当时的成分股：只有那天在指数里的股票才是样本。
         members = bars[bars[UNIVERSE_COLUMN]] if UNIVERSE_COLUMN in bars.columns else bars
         universe = members[["trade_date", "symbol"]].rename(columns={"trade_date": "date"})
@@ -144,8 +155,10 @@ def research_combination(
             else None
         )
         frames = {}
-        for factor in components:
+        for idx, factor in enumerate(components, 1):
             deadline.check()
+            label = factor.display_name or factor.name
+            progress.report(f"{period}计算因子：{label} ({idx}/{len(components)})", completed_steps, total_steps)
             try:
                 values = factor.compute(bars)
             except ValueError as exc:
@@ -153,6 +166,7 @@ def research_combination(
             values["date"] = pd.to_datetime(values["date"]).dt.normalize()
             merged = phase_universe.merge(values, on=["date", "symbol"], how="left")
             if phase_evaluator is not None:
+                progress.report(f"{period}中性化处理：{label} ({idx}/{len(components)})", completed_steps, total_steps)
                 try:
                     neutralized, _, _ = phase_evaluator._neutralize_with_coverage(
                         merged,
@@ -166,6 +180,7 @@ def research_combination(
                     raise ValueError(f"{period}（{start} 至 {end}）中性化失败。{exc}") from exc
                 merged = phase_universe.merge(neutralized, on=["date", "symbol"], how="left")
             frames[factor.name] = merged
+            advance(f"{period}完成因子：{label} ({idx}/{len(components)})")
         sessions = pd.DatetimeIndex(pd.to_datetime(bars.trade_date).unique()).sort_values()
         return frames, sessions
 
@@ -194,26 +209,32 @@ def research_combination(
         for factor in components
     }
     weights = {}
-    for factor in components:
+    for idx, factor in enumerate(components, 1):
         if mode == "equal":
             weight = 1.0
         elif mode == "manual":
             weight = float((custom_weights or {}).get(factor.name, 0))
         else:
+            label = factor.display_name or factor.name
+            progress.report(f"训练期 IC 加权评估：{label} ({idx}/{len(components)})", completed_steps, total_steps)
             proxy = FrameFactor(
                 name=factor.name,
                 display_name=factor.display_name,
                 direction=directions[factor.name],
                 values=train_slice[factor.name],
             )
-            report = FactorEvaluator(BoundedRepository(repository, train_end, symbols)).evaluate(
-                proxy, train_start, train_end, horizon=horizon, n_groups=n_groups
-            )
+            with progress.reporting(None):
+                report = FactorEvaluator(BoundedRepository(repository, train_end, symbols)).evaluate(
+                    proxy, train_start, train_end, horizon=horizon, n_groups=n_groups
+                )
             weight = report.rank_ic_mean
             weight = max(weight, 0.0) if isfinite(weight) else 0.0
+            advance(f"训练期完成权重评估：{label} ({idx}/{len(components)})")
         if not isfinite(weight) or weight < 0:
             raise ValueError("权重必须是非负有限数值；如需反转因子请切换因子方向。")
         weights[factor.name] = weight
+    if mode != "ic":
+        advance("训练期相关性与权重拟合完成")
     scale = max(weights.values())
     if scale <= 0:
         raise ValueError("没有正权重：请调整手动权重，或改用等权；训练期负 IC 不会自动取绝对值。")
@@ -251,10 +272,15 @@ def research_combination(
     single_indices: list[int] = []
     single_p_values: list[float | None] = []
     evaluator = FactorEvaluator(BoundedRepository(repository, test_end, symbols))
-    for label, factor in candidates.items():
-        report = evaluator.evaluate(
-            factor, test_start, test_end, horizon=horizon, n_groups=n_groups
-        )
+    total_candidates = len(candidates)
+    for idx, (label, factor) in enumerate(candidates.items(), 1):
+        deadline.check()
+        progress.report(f"测试期评估方案：{label} ({idx}/{total_candidates})", completed_steps, total_steps)
+        with progress.reporting(None):
+            report = evaluator.evaluate(
+                factor, test_start, test_end, horizon=horizon, n_groups=n_groups
+            )
+        advance(f"测试期完成评估：{label} ({idx}/{total_candidates})")
         reports[label] = report
         sig = report.significance or {}
         hac_t = sig.get("hac_t")
@@ -310,6 +336,8 @@ def research_combination(
         "passed_005": sum(1 for q in valid_qs if q < 0.05),
         "passed_010": sum(1 for q in valid_qs if q < 0.10),
     }
+    completed_steps = total_steps
+    progress.report("完成 BH-FDR 多重检验校正与结果汇总", total_steps, total_steps)
 
     spec = [
         {
