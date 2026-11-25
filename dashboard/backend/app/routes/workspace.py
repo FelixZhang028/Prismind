@@ -116,10 +116,12 @@ from quant_platform.factors.combine import (
 )
 from quant_platform.strategies.nl_builder import NLStrategyBuilder, definition_explanation
 from quant_platform.strategies.rule_schema import (
+    FACTOR_INDICATOR_PREFIX,
     IndicatorSpec,
     INDICATOR_LABELS,
     MARKET_TIMING_BENCHMARKS,
     OPERATOR_LABELS,
+    QUANTILE_OPERATORS,
     RuleStrategyDefinition,
 )
 from quant_platform.strategies.templates import beginner_templates, get_beginner_template
@@ -285,7 +287,7 @@ def create_package(body: PackageIn, user: dict = Depends(get_current_user)):
         definition["name"] = "我的策略"
     if not definition.get("strategy_id"):
         definition["strategy_id"] = f"strategy_{random.Random().randint(0, 0xFFFFFFFF):08x}"
-    canonical = definition_to_quant(definition)
+    canonical = definition_to_quant(definition, user_registry=build_factor_registry(user))
     source = body.source
     preset = None
     if source.startswith("template:"):
@@ -372,7 +374,7 @@ def preflight_package(body: PackageIn, user: dict = Depends(get_current_user)):
     if not definition.get("strategy_id"):
         definition["strategy_id"] = f"strategy_{random.Random().randint(0, 0xFFFFFFFF):08x}"
     try:
-        package = _package_from_definition(definition, body.top_n, body.rebalance, body.source)
+        package = _package_from_definition(definition, body.top_n, body.rebalance, body.source, user=user)
     except ConfigurationError as exc:
         raise HTTPException(status_code=422, detail=_sanitize_detail(exc))
     available_days = available_trading_days()
@@ -402,11 +404,11 @@ SCREEN_LIMIT = (60, 60 * 60)          # 全市场一次要读一年多的行情�
 SCREEN_HISTORY_LIMIT = (20, 60 * 60)  # 回测比筛选慢得多：每人每小时最多 20 次
 
 
-def _screen_rule(definition_in: DefinitionIn) -> RuleStrategyDefinition:
+def _screen_rule(definition_in: DefinitionIn, user: dict | None = None) -> RuleStrategyDefinition:
     definition = definition_in.model_dump()
     definition["name"] = definition.get("name") or "未命名策略"     # 筛选不用名字；还没起名也能筛
     try:
-        return _package_from_definition(definition, 5, "weekly", "visual_builder").definition
+        return _package_from_definition(definition, 5, "weekly", "visual_builder", user=user).definition
     except ConfigurationError as exc:
         raise HTTPException(status_code=422, detail=_sanitize_detail(exc))
 
@@ -416,13 +418,13 @@ def _run_screen(body: ScreenIn, user: dict) -> tuple[RuleStrategyDefinition, dat
 
     from quant_platform.strategies.screen import screen
 
-    rule = _screen_rule(body.definition)
+    rule = _screen_rule(body.definition, user=user)
     bounds = local_data_bounds()
     if not bounds:
         raise HTTPException(status_code=409, detail="平台还没有行情数据，管理员更新后就能筛选")
     day = bounds[1]
     # 需要的交易日换成自然日：一年大约 244 个交易日，多读一些留余量
-    start = day - timedelta(days=int(rule.minimum_history_days * 1.5) + 20)
+    start = day - timedelta(days=int(rule.minimum_history_days * 1.6) + 30)
     symbols = None
     if body.scope == "pool":
         symbols = [to_canonical(str(code)) for code in _load_universe_symbols(user["id"])]
@@ -547,7 +549,7 @@ def screen_history(body: ScreenHistoryIn, user: dict = Depends(get_current_user)
     """用同样的选股条件回测最近几年（默认 1 年、每周调仓、持有前 5 只），结果和普通回测一样保存，可以打开看完整结果。"""
 
     rate_limit.check(f"screen-history:{user['id']}", *SCREEN_HISTORY_LIMIT, "回测太频繁，请稍后再试")
-    rule = _screen_rule(body.definition)
+    rule = _screen_rule(body.definition, user=user)
     bounds = local_data_bounds()
     if not bounds:
         raise HTTPException(status_code=409, detail="本地暂无行情数据，请先在数据管理中下载。")
@@ -665,10 +667,13 @@ def _stored_package(row, legacy_style: str = "balanced") -> StrategyPackage:
     return _package_from_definition(definition, row["top_n"], row["rebalance"], source)
 
 
-def _package_from_definition(definition: dict[str, Any], top_n: int, rebalance: str, source: str) -> StrategyPackage:
+def _package_from_definition(
+    definition: dict[str, Any], top_n: int, rebalance: str, source: str, *, user: dict | None = None
+) -> StrategyPackage:
     """前端/已存定义 -> 可执行的 StrategyPackage（校验失败抛 ConfigurationError）。"""
 
-    canonical = definition_to_quant(definition)
+    user_registry = build_factor_registry(user) if user is not None else None
+    canonical = definition_to_quant(definition, user_registry=user_registry)
     if not canonical["strategy_id"]:
         canonical["strategy_id"] = f"strategy_{random.Random().randint(0, 0xFFFFFFFF):08x}"
     rule_def = RuleStrategyDefinition.from_mapping(canonical)
@@ -716,6 +721,37 @@ def studio_options(user: dict = Depends(get_current_user)):
         frontend: INDICATOR_LABELS[quant]
         for frontend, (quant, _) in _FRONTEND_INDICATORS.items()
     }
+    builtin_group = [
+        {"value": frontend, "label": INDICATOR_LABELS[quant]}
+        for frontend, (quant, _) in _FRONTEND_INDICATORS.items()
+    ]
+    library_group: list[dict[str, Any]] = []
+    alpha101_group: list[dict[str, Any]] = []
+    custom_group: list[dict[str, Any]] = []
+    factor_registry = build_factor_registry(user)
+    for factor in factor_registry.list():
+        key = f"{FACTOR_INDICATOR_PREFIX}{factor.name}"
+        dir_tag = "反向" if factor.direction == -1 else "正向"
+        display = factor.display_name or factor.name
+        label = f"{display} ({factor.name} · {dir_tag})"
+        indicators[key] = label
+        indicator_windows[key] = None
+        entry = {"value": key, "label": label, "name": factor.name, "direction": factor.direction, "source": factor.source}
+        if factor.source == "Alpha101":
+            alpha101_group.append(entry)
+        elif factor.source == "自定义":
+            custom_group.append(entry)
+        else:
+            library_group.append(entry)
+
+    indicator_groups = [
+        {"label": "基础指标（13 项）", "items": builtin_group},
+        {"label": f"内置因子库（{len(library_group)} 项）", "items": library_group},
+        {"label": f"Alpha101 因子（{len(alpha101_group)} 项）", "items": alpha101_group},
+    ]
+    if custom_group:
+        indicator_groups.append({"label": f"我的自定义因子（{len(custom_group)} 项）", "items": custom_group})
+
     operators = {
         frontend: OPERATOR_LABELS[quant]
         for frontend, quant in _FRONTEND_OPERATORS.items()
@@ -724,7 +760,9 @@ def studio_options(user: dict = Depends(get_current_user)):
         "templates": templates,
         "indicators": indicators,
         "indicator_windows": indicator_windows,
+        "indicator_groups": indicator_groups,
         "operators": operators,
+        "quantile_operators": sorted(QUANTILE_OPERATORS),
         "frequencies": _FREQUENCIES,
         "directions": _DIRECTIONS,
         "styles": _STYLES,

@@ -67,7 +67,7 @@ def prepare(body: JobIn, user: dict) -> dict:
         label = row["name"]
     elif kind == "screen":
         request = workspace.ScreenHistoryIn.model_validate(values)
-        rule = workspace._screen_rule(request.definition)
+        rule = workspace._screen_rule(request.definition, user=user)
         values = request.model_dump()
         values.update(from_date=max(bounds[0], bounds[1] - timedelta(days=365 * request.years)).isoformat(), to_date=bounds[1].isoformat())
         label = "条件选股：" + rule.name

@@ -9,7 +9,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from quant_platform.strategies.rule_schema import FUNDAMENTAL_INDICATORS, RuleStrategyDefinition
+from quant_platform.factors.custom import CustomFactor, custom_factor_to_dict
+from quant_platform.strategies.rule_schema import (
+    FUNDAMENTAL_INDICATORS,
+    RuleStrategyDefinition,
+    factor_name_of,
+    is_factor_indicator,
+)
 
 # 前端指标名 -> (quant 指标名, 默认周期)；None 表示无周期。
 INDICATOR_TO_QUANT: dict[str, tuple[str, int | None]] = {
@@ -30,6 +36,11 @@ OPERATOR_TO_QUANT: dict[str, str] = {
     "gte": "greater_or_equal",
     "lt": "less_than",
     "lte": "less_or_equal",
+    "exclude_worst_pct": "exclude_worst_pct",
+    "exclude_bottom_pct": "exclude_bottom_pct",
+    "exclude_top_pct": "exclude_top_pct",
+    "top_pct": "top_pct",
+    "bottom_pct": "bottom_pct",
 }
 
 QUANT_TO_INDICATOR: dict[str, str] = {
@@ -38,13 +49,26 @@ QUANT_TO_INDICATOR: dict[str, str] = {
 QUANT_TO_OPERATOR: dict[str, str] = {quant: frontend for frontend, quant in OPERATOR_TO_QUANT.items()}
 
 
-def _indicator_to_quant(spec: dict[str, Any]) -> dict[str, Any]:
+def _indicator_to_quant(spec: dict[str, Any], user_registry: Any | None = None) -> dict[str, Any]:
     name = str(spec.get("name", "")).strip()
+    if is_factor_indicator(name):
+        result: dict[str, Any] = {"name": name}
+        if isinstance(spec.get("custom_factor"), dict):
+            result["custom_factor"] = spec["custom_factor"]
+        elif user_registry is not None:
+            fname = factor_name_of(name)
+            try:
+                factor = user_registry.get(fname)
+            except KeyError:
+                factor = None
+            if isinstance(factor, CustomFactor):
+                result["custom_factor"] = custom_factor_to_dict(factor)
+        return result
     mapped = INDICATOR_TO_QUANT.get(name)
     if mapped is not None:
         quant_name, default_window = mapped
         window = spec.get("window")
-        result: dict[str, Any] = {"name": quant_name}
+        result = {"name": quant_name}
         if default_window is not None:
             result["window"] = int(window) if window is not None else default_window
         return result
@@ -56,16 +80,18 @@ def _indicator_to_frontend(spec: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {"name": QUANT_TO_INDICATOR.get(name, name)}
     if spec.get("window") is not None:
         result["window"] = int(spec["window"])
+    if isinstance(spec.get("custom_factor"), dict):
+        result["custom_factor"] = spec["custom_factor"]
     return result
 
 
-def definition_to_quant(definition: dict[str, Any]) -> dict[str, Any]:
+def definition_to_quant(definition: dict[str, Any], *, user_registry: Any | None = None) -> dict[str, Any]:
     """前端策略定义 -> quant_platform 规则定义（可交给 from_mapping 校验）。"""
 
     rules: list[dict[str, Any]] = []
     for rule in definition.get("entry_rules") or []:
         translated: dict[str, Any] = {
-            "left": _indicator_to_quant(rule.get("left") or {}),
+            "left": _indicator_to_quant(rule.get("left") or {}, user_registry=user_registry),
             "operator": OPERATOR_TO_QUANT.get(
                 str(rule.get("operator", "")), str(rule.get("operator", ""))
             ),
@@ -73,7 +99,7 @@ def definition_to_quant(definition: dict[str, Any]) -> dict[str, Any]:
         if rule.get("value") is not None:
             translated["value"] = float(rule["value"])
         elif rule.get("right") is not None:
-            translated["right"] = _indicator_to_quant(rule["right"])
+            translated["right"] = _indicator_to_quant(rule["right"], user_registry=user_registry)
         rules.append(translated)
     if not rules:
         # 规则引擎要求 1~10 条：空条件（模板快速回测场景）补一条恒真规则。
@@ -88,7 +114,7 @@ def definition_to_quant(definition: dict[str, Any]) -> dict[str, Any]:
         "entry_logic": str(definition.get("entry_logic") or "all"),
         "entry_rules": rules,
         "ranking": {
-            "indicator": _indicator_to_quant(ranking.get("indicator") or {}),
+            "indicator": _indicator_to_quant(ranking.get("indicator") or {}, user_registry=user_registry),
             "direction": str(ranking.get("direction") or "descending"),
         },
     }

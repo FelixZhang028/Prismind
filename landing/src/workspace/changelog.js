@@ -19,6 +19,25 @@ export const CATEGORY_STYLE = {
 
 export const CHANGELOG_ENTRIES = [
   {
+    id: '2026-11-25-rule-factors-and-quantile-filters',
+    date: '2026-11-25',
+    title: '规则策略支持引用因子库与 Alpha101，新增按分位剔除/保留过滤',
+    items: [
+      {
+        category: 'feat',
+        summary: '规则策略与条件选股现可引用全部内置因子库、Alpha101 与自定义因子',
+        detail: '选股条件与排序不再局限于 13 项固定指标，支持按分组或关键词快速检索并选用因子库和 Alpha101 因子，每个调仓日在有效股票池截面上无前视偏差计算。',
+        action: { label: '去策略工坊体验', view: 'strategy-studio' },
+      },
+      {
+        category: 'feat',
+        summary: '选股条件新增横截面分位过滤（剔除最差/最低/最高 %、保留前/后 %）',
+        detail: '例如设置「剔除最差 20%（按因子方向）」即可按因子方向自动剔除尾部 20% 标的，方便对高 ROE、低波动、Alpha101 等因子做剔除测试与组合过滤，条件选股与策略回测口径完全一致。',
+        action: { label: '去条件选股体验', view: 'stock-screen' },
+      },
+    ],
+  },
+  {
     id: '2026-11-25-research-progress-risk-reset-and-last-settings',
     date: '2026-11-25',
     title: '组合研究新增后台进度条与取消、风控一键恢复默认、回测跨会话沿用上次配置',

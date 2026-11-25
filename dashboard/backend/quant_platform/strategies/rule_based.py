@@ -14,11 +14,33 @@ from quant_platform.strategies.base import Strategy
 from quant_platform.strategies.context import StrategyContext
 from quant_platform.strategies.rule_schema import (
     FUNDAMENTAL_INDICATORS,
+    QUANTILE_OPERATORS,
     IndicatorSpec,
     RuleSpec,
     RuleStrategyDefinition,
+    indicator_direction,
+    is_factor_indicator,
+    resolve_factor,
 )
 from quant_platform.strategies.spec import ParameterKind, StrategyParameter
+
+_NON_NUMERIC_COLUMNS = frozenset({
+    "symbol",
+    "trade_date",
+    "industry",
+    "sector",
+    "quality_status",
+    "is_st",
+    "is_suspended",
+})
+
+
+@dataclass(frozen=True)
+class UniverseEvaluation:
+    """Cross-sectional evaluation result on a single trade date."""
+
+    scores: dict[str, float]
+    indicator_values: dict[IndicatorSpec, dict[str, float]]
 
 @dataclass(frozen=True)
 class RuleBasedParameters:
@@ -76,34 +98,178 @@ class RuleBasedStrategy(Strategy):
     def generate_signals(self, context: StrategyContext) -> list[Signal]:
         context.require_fields(self.required_fields)
         definition = self.config.definition
-        fields = ["adjusted_close", "amount", *sorted(self.data_fields)]
+        requested = {"adjusted_close", "amount"} | set(self.data_fields)
+        optional = set(definition.optional_fields) & set(context.available_fields)
+        fields = sorted(requested | optional)
+        lookback = (
+            definition.minimum_history_days + 1
+            if definition.has_factor_indicators
+            else definition.minimum_history_days
+        )
         history = context.history(
             fields=fields,
-            lookback=definition.minimum_history_days,
+            lookback=lookback,
         )
-        # StrategyContext already sorts symbol/date. Convert once per rebalance,
-        # not once for every stock (a major cost on large pools).
-        history[fields] = history[fields].apply(pd.to_numeric, errors="coerce")
+        if history.empty:
+            return []
+        numeric_fields = [col for col in fields if col in history.columns and col not in _NON_NUMERIC_COLUMNS]
+        if numeric_fields:
+            history[numeric_fields] = history[numeric_fields].apply(pd.to_numeric, errors="coerce")
         cutoff = pd.Timestamp(context.trade_date)
-        signals: list[Signal] = []
-        for symbol, original in history.groupby("symbol", observed=True):
-            group = original
-            if group.empty or pd.Timestamp(group["trade_date"].iat[-1]) != cutoff:
-                continue
-            score = rank_score(group, definition)
-            if score is None:
-                continue
-            signals.append(
-                Signal(
-                    strategy_id=self.strategy_id,
-                    trade_date=context.trade_date,
-                    symbol=str(symbol),
-                    signal_type="RULE_BUILDER_SCORE",
-                    score=score,
-                    model_version=f"rule-schema-v{definition.schema_version}",
-                )
+        evaluation = evaluate_universe(history, cutoff, definition)
+        signals = [
+            Signal(
+                strategy_id=self.strategy_id,
+                trade_date=context.trade_date,
+                symbol=symbol,
+                signal_type="RULE_BUILDER_SCORE",
+                score=score,
+                model_version=f"rule-schema-v{definition.schema_version}",
             )
+            for symbol, score in evaluation.scores.items()
+        ]
         return sorted(signals, key=lambda signal: (-signal.score, signal.symbol))
+
+
+def _compare_values(operator: str, left: float | None, right: float | None) -> bool:
+    if left is None or right is None or not isfinite(left) or not isfinite(right):
+        return False
+    if operator == "greater_than":
+        return left > right
+    if operator == "greater_or_equal":
+        return left >= right
+    if operator == "less_than":
+        return left < right
+    if operator == "less_or_equal":
+        return left <= right
+    return False
+
+
+def _quantile_passing_symbols(
+    rule: RuleSpec,
+    symbol_values: dict[str, float],
+) -> set[str]:
+    if not symbol_values or rule.value is None:
+        return set()
+    series = pd.Series(symbol_values, dtype=float).replace([float("inf"), -float("inf")], float("nan")).dropna()
+    if series.empty:
+        return set()
+    p = float(rule.value) / 100.0
+    if rule.operator == "exclude_bottom_pct":
+        ranks = series.rank(method="average", ascending=True, pct=True)
+        return set(ranks[ranks > p].index)
+    if rule.operator == "exclude_top_pct":
+        ranks = series.rank(method="average", ascending=False, pct=True)
+        return set(ranks[ranks > p].index)
+    if rule.operator == "exclude_worst_pct":
+        direction = indicator_direction(rule.left)
+        ranks = series.rank(method="average", ascending=(direction >= 0), pct=True)
+        return set(ranks[ranks > p].index)
+    if rule.operator == "top_pct":
+        ranks = series.rank(method="average", ascending=False, pct=True)
+        return set(ranks[ranks <= p].index)
+    if rule.operator == "bottom_pct":
+        ranks = series.rank(method="average", ascending=True, pct=True)
+        return set(ranks[ranks <= p].index)
+    return set()
+
+
+def evaluate_universe(
+    history: pd.DataFrame,
+    cutoff: pd.Timestamp,
+    definition: RuleStrategyDefinition,
+) -> UniverseEvaluation:
+    """Evaluate all entry rules (including factor-library indicators & cross-sectional quantiles) on ``cutoff``."""
+
+    if history.empty:
+        return UniverseEvaluation(scores={}, indicator_values={})
+
+    cutoff_norm = pd.Timestamp(cutoff).normalize()
+    unique_indicators = list(dict.fromkeys(definition._indicators()))
+    factor_indicators = [ind for ind in unique_indicators if is_factor_indicator(ind.name)]
+    builtin_indicators = [ind for ind in unique_indicators if not is_factor_indicator(ind.name)]
+
+    # 1. Active symbols that actually have a bar on ``cutoff``.
+    active_groups: dict[str, pd.DataFrame] = {}
+    for symbol, group in history.groupby("symbol", observed=True, sort=False):
+        if group.empty or pd.Timestamp(group["trade_date"].iat[-1]).normalize() != cutoff_norm:
+            continue
+        active_groups[str(symbol)] = group
+    if not active_groups:
+        return UniverseEvaluation(scores={}, indicator_values={})
+    active_symbols = set(active_groups)
+
+    values_by_indicator: dict[IndicatorSpec, dict[str, float]] = {ind: {} for ind in unique_indicators}
+
+    # 2. Compute factor-library indicators once across the entire cross-section.
+    for ind in factor_indicators:
+        factor = resolve_factor(ind)
+        if factor is None:
+            continue
+        try:
+            computed = factor.compute(history)
+        except ValueError:
+            continue
+        if computed.empty or not {"date", "symbol", "value"} <= set(computed.columns):
+            continue
+        dates = pd.to_datetime(computed["date"], errors="coerce").dt.normalize()
+        today = computed.loc[dates == cutoff_norm, ["symbol", "value"]]
+        if today.empty:
+            continue
+        sym_map: dict[str, float] = {}
+        for sym, raw_val in zip(today["symbol"], today["value"], strict=False):
+            sym_str = str(sym)
+            if sym_str not in active_symbols:
+                continue
+            try:
+                val = float(raw_val)
+            except (TypeError, ValueError):
+                continue
+            if isfinite(val):
+                sym_map[sym_str] = val
+        values_by_indicator[ind] = sym_map
+
+    # 3. Compute built-in per-stock indicators.
+    if builtin_indicators:
+        for symbol, group in active_groups.items():
+            for ind in builtin_indicators:
+                val = _indicator_value(group, ind)
+                if val is not None and isfinite(val):
+                    values_by_indicator[ind][symbol] = val
+
+    # 4. Evaluate each entry rule across active symbols.
+    rule_passes: list[set[str]] = []
+    for rule in definition.entry_rules:
+        left_map = values_by_indicator.get(rule.left, {})
+        if rule.operator in QUANTILE_OPERATORS:
+            rule_passes.append(_quantile_passing_symbols(rule, left_map))
+            continue
+        right_map = values_by_indicator.get(rule.right, {}) if rule.right is not None else None
+        passed: set[str] = set()
+        for symbol in active_symbols:
+            left_val = left_map.get(symbol)
+            right_val = right_map.get(symbol) if right_map is not None else rule.value
+            if _compare_values(rule.operator, left_val, right_val):
+                passed.add(symbol)
+        rule_passes.append(passed)
+
+    if not rule_passes:
+        passing_symbols = set(active_symbols)
+    elif definition.entry_logic == "all":
+        passing_symbols = set.intersection(*rule_passes)
+    else:
+        passing_symbols = set.union(*rule_passes)
+
+    # 5. Compute ranking scores for passing stocks.
+    rank_map = values_by_indicator.get(definition.ranking.indicator, {})
+    scores: dict[str, float] = {}
+    for symbol in passing_symbols:
+        raw_score = rank_map.get(symbol)
+        if raw_score is None or not isfinite(raw_score):
+            continue
+        scores[symbol] = -raw_score if definition.ranking.direction == "ascending" else raw_score
+
+    return UniverseEvaluation(scores=scores, indicator_values=values_by_indicator)
 
 
 def passes(group: pd.DataFrame, definition: RuleStrategyDefinition) -> bool:
