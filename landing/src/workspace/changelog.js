@@ -35,6 +35,12 @@ export const CHANGELOG_ENTRIES = [
         detail: '在账户元信息栏与账户检查中直观展示下次预计调仓收盘日与建仓/定期调仓规则，便于确认当前是否处于持仓观察期。',
         action: { label: '去模拟账户查看', view: 'paper-accounts' },
       },
+      {
+        category: 'fix',
+        summary: '修复浅色主题下因子库因子名称与部分提示文本发白看不清的问题',
+        detail: '补全浅色主题中 text-slate-100/50 及 amber/indigo/sky/violet/rose 浅色文本类的深色映射，因子研究页及工作台卡片文字对比度恢复清晰。',
+        action: { label: '去因子研究查看', view: 'factor-lab' },
+      },
     ],
   },
   {
