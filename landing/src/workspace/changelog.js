@@ -19,6 +19,31 @@ export const CATEGORY_STYLE = {
 
 export const CHANGELOG_ENTRIES = [
   {
+    id: '2026-11-25-backtest-confirm-save-as-new-and-instant-preview',
+    date: '2026-11-25',
+    title: '回测新增配置速览与一键恢复默认、修复「另存为新策略」反馈、规则预览即时刷新',
+    items: [
+      {
+        category: 'improve',
+        summary: '策略回测新增「本次回测配置」核对条与「恢复默认配置」按钮',
+        detail: '提交回测前直接在按钮旁集中展示策略、股票范围、区间、持仓数、调仓频率与换手缓冲，并在沿用上次参数时给出提醒，支持一键恢复中证 800 历史成分股及默认参数。',
+        action: { label: '去策略回测查看', view: 'backtest-review' },
+      },
+      {
+        category: 'fix',
+        summary: '修复「另存为新策略」后跳回空白新建表单且看不到成功提示的问题',
+        detail: '另存为新策略后自动留在新策略编辑态，清晰展示成功卡片并自动滚动到可视区域；返回「我的策略」时同步展示列表刷新状态。',
+        action: { label: '去我的策略体验', view: 'strategy-hub' },
+      },
+      {
+        category: 'improve',
+        summary: '规则策略周期与条件预览改为 0ms 本地即时刷新，并缓存后端交易日历预检',
+        detail: '修改排序或条件周期时预览文案立刻更新，无需等待 1.5 秒后端往返；同时后端预检缓存交易日历元数据，显著缩短校验耗时。',
+        action: { label: '去策略工坊体验', view: 'strategy-studio' },
+      },
+    ],
+  },
+  {
     id: '2026-11-25-default-csi800-edit-strategy-and-preview-sync',
     date: '2026-11-25',
     title: '回测默认使用中证800历史成分股、支持直接编辑已保存策略、修复规则周期预览同步',

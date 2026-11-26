@@ -265,8 +265,22 @@ def build_data_center_service(user: dict) -> DataCenterService:
     return service
 
 
+_TRADING_DAYS_CACHE: dict[tuple[str, int, int, date | None], int] = {}
+
+
 def available_trading_days(end_date: date | None = None) -> int:
-    """本地交易日历中的交易日数量（无日历时返回 0）。"""
+    """本地交易日历中的交易日数量（无日历时返回 0），按文件元数据缓存避免每次预检重复读盘。"""
+
+    cal_path = MARKET_ROOT / "trade_calendar.parquet"
+    cache_key: tuple[str, int, int, date | None] | None = None
+    try:
+        st = cal_path.stat()
+        cache_key = (str(cal_path), st.st_mtime_ns, st.st_size, end_date)
+        cached_val = _TRADING_DAYS_CACHE.get(cache_key)
+        if cached_val is not None:
+            return cached_val
+    except OSError:
+        cache_key = None
 
     calendar = market_repository().read_table("trade_calendar")
     if calendar.empty:
@@ -276,4 +290,9 @@ def available_trading_days(end_date: date | None = None) -> int:
     dates = pd.to_datetime(calendar["cal_date"])
     if end_date is not None:
         dates = dates[dates <= pd.Timestamp(end_date)]
-    return int(dates.nunique())
+    count = int(dates.nunique())
+    if cache_key is not None:
+        if len(_TRADING_DAYS_CACHE) > 32:
+            _TRADING_DAYS_CACHE.clear()
+        _TRADING_DAYS_CACHE[cache_key] = count
+    return count

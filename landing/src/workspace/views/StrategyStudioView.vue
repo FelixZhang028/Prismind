@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { createPackage, getPackage, nlGenerate, nlStatus, preflightPackage, studioOptions, updatePackage } from '../../api.js'
 import { remainingText } from '../aiPresentation.js'
 import { openResearch } from '../researchNavigation.js'
@@ -7,6 +7,7 @@ import {
   blankForm,
   DEFAULT_TIMING_BENCHMARKS,
   definitionFromForm,
+  describeRuleForm,
   formFromDefinition,
   HOLD_BUFFER_OPTIONS,
   packagePayload,
@@ -45,10 +46,13 @@ const form = ref(null)
 const origin = ref(null)
 const savedAsset = ref(null)
 const savedIsUpdate = ref(false)
+const savedMode = ref('created')
+const savedCardRef = ref(null)
 const saving = ref(false)
 const editingPackageId = ref('')
 const editingLoading = ref(false)
 let editLoadRequest = 0
+let skipEditSyncFor = ''
 
 function normalizedEditPackageId() {
   if (props.routeContext.mode !== 'edit') return ''
@@ -65,10 +69,15 @@ async function syncEditContext() {
       editingPackageId.value = ''
       savedAsset.value = null
       savedIsUpdate.value = false
+      savedMode.value = 'created'
       const nextStart = startFor(props.routeContext.mode)
       chooseStart(nextStart)
     }
     return false
+  }
+  if (skipEditSyncFor && skipEditSyncFor === pkgId) {
+    skipEditSyncFor = ''
+    return true
   }
   const reqId = ++editLoadRequest
   editingLoading.value = true
@@ -84,6 +93,7 @@ async function syncEditContext() {
     origin.value = null
     savedAsset.value = null
     savedIsUpdate.value = false
+    savedMode.value = 'created'
     form.value = formFromDefinition(pkg.definition, { top_n: pkg.top_n, rebalance: pkg.rebalance }, options.value)
     clearTimeout(checkTimer)
     checkTimer = null
@@ -101,8 +111,10 @@ async function syncEditContext() {
 
 function exitEditMode() {
   editingPackageId.value = ''
+  skipEditSyncFor = ''
   savedAsset.value = null
   savedIsUpdate.value = false
+  savedMode.value = 'created'
   openResearch('strategy-studio', { mode: 'template' })
   if (options.value) chooseStart('template')
 }
@@ -212,8 +224,14 @@ function screenToday() {
   openResearch('stock-screen')
 }
 
-// ---------- 这个策略的意思（由后端按将要执行的规则读出来） ----------
+// ---------- 这个策略的意思（前端 0ms 即时渲染 + 后端校验与风险提示） ----------
 const check = reactive({ loading: false, description: '', warnings: [], minimumDays: null, error: '' })
+const instantDescription = computed(() => describeRuleForm(form.value, options.value))
+const previewDescription = computed(() => (
+  check.loading
+    ? (instantDescription.value || check.description)
+    : (check.description || instantDescription.value)
+))
 let checkRequest = 0
 let checkTimer = null
 async function runCheck() {
@@ -243,13 +261,19 @@ async function ensureCheckUpToDate() {
 watch(form, () => {
   savedAsset.value = null
   savedIsUpdate.value = false
+  savedMode.value = 'created'
   clearTimeout(checkTimer)
   if (form.value) {
-    // 表单一改动立刻进入更新中状态，缩短防抖并在保存前强制同步，避免预览停留在旧周期。
+    // 预览文案由 instantDescription 0ms 立即更新；后端预检防抖 120ms 负责合法性与风险警告。
     check.loading = true
-    checkTimer = setTimeout(runCheck, 180)
+    checkTimer = setTimeout(runCheck, 120)
   }
 }, { deep: true })
+
+async function scrollToSavedCard() {
+  await nextTick()
+  savedCardRef.value?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
+}
 
 async function save() {
   if (!form.value.name.trim()) return props.notify('请先给策略起个名字')
@@ -261,12 +285,15 @@ async function save() {
     if (editingPackageId.value) {
       savedAsset.value = await updatePackage(editingPackageId.value, payload)
       savedIsUpdate.value = true
+      savedMode.value = 'updated'
       props.notify('策略修改已保存')
     } else {
       savedAsset.value = await createPackage(payload)
       savedIsUpdate.value = false
+      savedMode.value = 'created'
       props.notify('策略已保存')
     }
+    await scrollToSavedCard()
   } catch (e) {
     props.notify(e.message || '保存失败')
   } finally {
@@ -280,10 +307,16 @@ async function saveAsNew() {
   if (check.error) return props.notify('规则还有问题，请先按提示修改')
   saving.value = true
   try {
-    savedAsset.value = await createPackage(packagePayload(form.value, origin.value))
+    const created = await createPackage(packagePayload(form.value, origin.value))
+    // 切换到新策略的编辑上下文并保留当前表单与成功提示卡片，避免跳回“怎么开始/空白表单”
+    editingPackageId.value = created.package_id
+    skipEditSyncFor = created.package_id
+    savedAsset.value = created
     savedIsUpdate.value = false
-    editingPackageId.value = ''
-    props.notify('已另存为新策略')
+    savedMode.value = 'saved_as_new'
+    openResearch('strategy-studio', { mode: 'edit', strategy: created.package_id })
+    props.notify(`已另存为新策略「${created.name}」`)
+    await scrollToSavedCard()
   } catch (e) {
     props.notify(e.message || '另存失败')
   } finally {
@@ -436,11 +469,11 @@ onActivated(async () => {
       </SectionCard>
 
       <!-- 这个策略的意思 -->
-      <SectionCard title="这个策略的意思" hint="按将要执行的规则读出来，随表单更新">
+      <SectionCard title="这个策略的意思" hint="随表单即时更新，后端同步校验周期范围与数据天数">
         <p v-if="check.error && !check.loading" class="text-sm text-rose-300" role="alert">{{ check.error }}</p>
-        <div v-else-if="check.description" class="space-y-1.5">
-          <p class="text-sm leading-relaxed transition" :class="check.loading ? 'text-slate-400' : 'text-slate-200'" aria-live="polite">{{ check.description }}</p>
-          <p v-if="check.loading" class="text-xs text-indigo-300" role="status">正在同步最新规则预览…</p>
+        <div v-else-if="previewDescription" class="space-y-1.5">
+          <p class="text-sm leading-relaxed text-slate-200" aria-live="polite">{{ previewDescription }}</p>
+          <p v-if="check.loading" class="text-xs text-indigo-300" role="status">正在校验规则参数与历史天数…</p>
         </div>
         <p v-else class="text-sm text-slate-400" role="status">正在读取…</p>
         <ul v-if="check.warnings.length" class="mt-3 space-y-1 rounded-xl border border-amber-400/20 bg-amber-400/5 p-4">
@@ -459,7 +492,9 @@ onActivated(async () => {
         </div>
       </SectionCard>
 
-      <StrategySaved v-if="savedAsset" :asset="savedAsset" :updated="savedIsUpdate" />
+      <div v-if="savedAsset" ref="savedCardRef">
+        <StrategySaved :asset="savedAsset" :updated="savedIsUpdate" :mode="savedMode" />
+      </div>
     </template>
   </div>
 </template>

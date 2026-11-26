@@ -278,3 +278,84 @@ export function tradeReasonClass(reason) {
   }
   return 'text-xs text-slate-400'
 }
+
+function trimDecimal(text) {
+  return String(text).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '')
+}
+
+function formatRuleNumber(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  if (n !== 0 && Math.abs(n) < 1) return `${trimDecimal((n * 100).toFixed(2))}%`
+  if (Number.isInteger(n)) return n.toLocaleString('en-US')
+  return trimDecimal(n.toFixed(2))
+}
+
+function indicatorPreviewLabel(item, options) {
+  const name = String(item?.name || '')
+  let label = options?.indicators?.[name] || name
+  if (name.startsWith('factor:')) {
+    // 去掉下拉框里拼接的 "(code · 方向)" 后缀，与后端展示名称对齐
+    label = String(label).replace(/\s*\([^)]*\)\s*$/, '').trim() || name.slice('factor:'.length)
+    return label
+  }
+  const hasWindow = item?.window != null && options?.indicator_windows?.[name]
+  if (!hasWindow) return label
+  const win = item.window === '' ? '?' : String(item.window)
+  return `${win}日${label}`
+}
+
+// 前端即时生成的策略规则说明，确保修改周期/指标/条件时 0ms 刷新预览；最终校验仍由后端 preflight 把关。
+export function describeRuleForm(form, options) {
+  if (!form || !options) return ''
+  const logic = form.entry_logic === 'any' ? '或者' : '并且'
+  const rules = Array.isArray(form.rules) ? form.rules : []
+  const conditions = rules.map((rule) => {
+    const left = indicatorPreviewLabel(rule.left, options)
+    if (isQuantileOperator(rule.operator, options)) {
+      const pctNum = Number(rule.value)
+      const pct = Number.isFinite(pctNum) ? `${trimDecimal(pctNum.toFixed(2))}%` : '?%'
+      const templates = {
+        exclude_worst_pct: `${left}剔除最差${pct}（按因子方向）`,
+        exclude_bottom_pct: `${left}剔除最低${pct}`,
+        exclude_top_pct: `${left}剔除最高${pct}`,
+        top_pct: `${left}保留最高前${pct}`,
+        bottom_pct: `${left}保留最低后${pct}`,
+      }
+      return templates[rule.operator] || `${left}${rule.operator}${pct}`
+    }
+    const opLabel = options.operators?.[rule.operator] || rule.operator
+    const right = rule.compare === 'indicator'
+      ? indicatorPreviewLabel(rule.right, options)
+      : formatRuleNumber(rule.value)
+    return `${left}${opLabel}${right}`
+  }).join(`，${logic}`)
+
+  const freqs = { daily: '每日', weekly: '每周', monthly: '每月', quarterly: '每季' }
+  const freq = freqs[form.rebalance] || form.rebalance || ''
+  const rankLabel = indicatorPreviewLabel(form.ranking, options)
+  const rankDir = form.ranking?.direction === 'ascending' ? '从低到高' : '从高到低'
+  const topN = form.top_n === '' || form.top_n == null ? '?' : Number(form.top_n)
+  const parts = [
+    `${freq}调仓；只保留满足“${conditions}”的股票；按${rankLabel}${rankDir}排序，等权持有前${topN}只。条件失效时在下一次调仓退出。`,
+  ]
+  const buffer = Number(form.hold_buffer ?? 0)
+  if (Number.isFinite(buffer) && buffer > 0 && Number.isFinite(topN)) {
+    parts.push(`防频繁换手：已持仓且仍满足条件的股票，排名在前${topN + Math.trunc(buffer)}名以内继续保留。`)
+  }
+  if (form.market_timing?.enabled) {
+    const benchmarks = options.market_timing_benchmarks?.length ? options.market_timing_benchmarks : DEFAULT_TIMING_BENCHMARKS
+    const bmName = benchmarks.find((b) => b.value === form.market_timing.benchmark)?.label || form.market_timing.benchmark || '大盘指数'
+    const maWin = Math.trunc(Number(form.market_timing.ma_window ?? 60))
+    const offW = Number(form.market_timing.off_weight ?? 0)
+    const action = offW <= 0 ? '空仓等待' : `目标总仓位降至${trimDecimal((offW * 100).toFixed(0))}%`
+    parts.push(`大盘择时：当${bmName}收盘低于${maWin}日均线时，${action}。`)
+  }
+  const stopLoss = form.exit_rules?.stop_loss_pct === '' || form.exit_rules?.stop_loss_pct == null ? 0 : Number(form.exit_rules.stop_loss_pct)
+  const trailingStop = form.exit_rules?.trailing_stop_pct === '' || form.exit_rules?.trailing_stop_pct == null ? 0 : Number(form.exit_rules.trailing_stop_pct)
+  const exitParts = []
+  if (Number.isFinite(stopLoss) && stopLoss > 0) exitParts.push(`较成本亏损达到${trimDecimal((stopLoss * 100).toFixed(1))}%止损`)
+  if (Number.isFinite(trailingStop) && trailingStop > 0) exitParts.push(`较持仓高点回撤达到${trimDecimal((trailingStop * 100).toFixed(1))}%止盈`)
+  if (exitParts.length) parts.push(`个股风控：收盘检查${exitParts.join('，或')}，次日开盘卖出。`)
+  return parts.join('')
+}
