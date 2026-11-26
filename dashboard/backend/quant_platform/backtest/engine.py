@@ -77,6 +77,7 @@ class BacktestEngine:
         hold_buffer: int | None = None,
         market_timing: object | None = None,
         exit_rules: object | None = None,
+        initial_rebalance: bool = False,
     ) -> None:
         self.repository = repository
         self.universe = universe
@@ -85,6 +86,7 @@ class BacktestEngine:
         self.order_generator = order_generator
         self.execution_model = execution_model
         self.rebalance = rebalance
+        self.initial_rebalance = bool(initial_rebalance)
         self.risk_free_rate = risk_free_rate
         self.risk_limits = risk_limits or RiskLimits()
         self.evaluation_mode = evaluation_mode
@@ -860,6 +862,8 @@ class BacktestEngine:
         }
 
     def _rebalance_dates(self, dates: list[date]) -> set[date]:
+        if not dates:
+            return set()
         frame = pd.DataFrame({"trade_date": pd.to_datetime(dates)})
         if self.rebalance == "daily":
             return set(dates)
@@ -873,7 +877,10 @@ class BacktestEngine:
             raise ValueError(f"Unsupported rebalance frequency: {self.rebalance}")
         frame["period"] = periods
         tails = frame.groupby("period", observed=True).tail(1)
-        return {timestamp.date() for timestamp in tails["trade_date"]}
+        scheduled = {timestamp.date() for timestamp in tails["trade_date"]}
+        if getattr(self, "initial_rebalance", False):
+            scheduled.add(dates[0])
+        return scheduled
 
     def _warmup_start_date(self, start_date: date) -> date:
         """按交易日历把加载起点回推 ``warmup_days`` 个交易日。

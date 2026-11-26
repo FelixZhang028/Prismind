@@ -16,7 +16,8 @@ import os
 import shutil
 import threading
 from dataclasses import replace as dc_replace
-from datetime import date
+import calendar as pycal
+from datetime import date, timedelta
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -266,6 +267,9 @@ def _run(account: Any, end: date) -> dict[str, Any]:
         end_date=end,
         initial_cash=float(account["initial_cash"]),
         risk_limits=RiskLimits.from_mapping(json.loads(account["risk_limits"])),
+        # 模拟账户开户首个交易日收盘即建仓（次日开盘成交），随后按所选周期再平衡，
+        # 避免月中/季中开户后空仓等待数周甚至一整个季度。
+        initial_rebalance=True,
     )
     if _is_factor_composite(stored):
         top_n = int(stored.get("top_n") or 10)
@@ -289,6 +293,7 @@ def _run(account: Any, end: date) -> dict[str, Any]:
             "initial_capital": float(account["initial_cash"]),
             "max_positions": top_n,
             "rebalance": rebalance,
+            "initial_rebalance": True,
             "from_date": account["start_date"],
             "to_date": end.isoformat(),
         }
@@ -301,7 +306,8 @@ def _run(account: Any, end: date) -> dict[str, Any]:
         "strategy_reference": f"paper:{account['account_id']}", "package_id": account["package_id"],
         "strategy_plugin": "rule_builder", "market": account["market"],
         "initial_capital": float(account["initial_cash"]), "max_positions": package.top_n,
-        "rebalance": package.rebalance, "from_date": account["start_date"], "to_date": end.isoformat(),
+        "rebalance": package.rebalance, "initial_rebalance": True,
+        "from_date": account["start_date"], "to_date": end.isoformat(),
     }
     return with_run_evidence(result)
 
@@ -449,12 +455,104 @@ def _summary(account: Any) -> dict[str, Any]:
     }
 
 
+def _period_end_estimate(anchor: date, rebalance: str) -> date:
+    """无未来交易日历时的工作日兜底估算。"""
+
+    if rebalance == "weekly":
+        days_to_fri = (4 - anchor.weekday()) % 7
+        return anchor + timedelta(days=days_to_fri)
+    if rebalance == "monthly":
+        last_dom = pycal.monthrange(anchor.year, anchor.month)[1]
+        candidate = date(anchor.year, anchor.month, last_dom)
+    else:
+        end_month = ((anchor.month - 1) // 3 + 1) * 3
+        last_dom = pycal.monthrange(anchor.year, end_month)[1]
+        candidate = date(anchor.year, end_month, last_dom)
+    while candidate.weekday() >= 5:
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def _next_rebalance_info(account: Any, latest: date | None) -> dict[str, Any]:
+    """计算模拟账户的下一次调仓信号日与可读说明。"""
+
+    stored = json.loads(account["package"])
+    rebalance = str(stored.get("rebalance") or "weekly")
+    start = date.fromisoformat(account["start_date"])
+    period_names = {
+        "daily": "每个交易日",
+        "weekly": "每周末最后交易日",
+        "monthly": "每月末最后交易日",
+        "quarterly": "每季末最后交易日",
+    }
+    period_name = period_names.get(rebalance, rebalance)
+
+    if account["status"] == "WAITING":
+        return {
+            "next_rebalance_date": start.isoformat(),
+            "next_rebalance_estimated": False,
+            "rebalance_rule": f"开户首日（{start.isoformat()}）收盘首次建仓，下一交易日开盘成交；之后按{period_name}调仓。",
+        }
+
+    if rebalance == "daily":
+        return {
+            "next_rebalance_date": None,
+            "next_rebalance_estimated": False,
+            "rebalance_rule": "开户首日收盘首次建仓，之后每个交易日收盘调仓（次日开盘成交）。",
+        }
+
+    anchor = date.fromisoformat(account["last_date"]) if account["last_date"] else (latest or start)
+    next_date: date | None = None
+    estimated = False
+
+    calendar = market_repository().read_table("trade_calendar")
+    if not calendar.empty:
+        if "is_open" in calendar.columns:
+            calendar = calendar[calendar["is_open"].astype(int) == 1]
+        all_days = sorted(pd.to_datetime(calendar["cal_date"]).dt.date.unique())
+        if all_days:
+            freq = {"weekly": "W-FRI", "monthly": "M", "quarterly": "Q"}[rebalance]
+            frame = pd.DataFrame({"d": pd.to_datetime(all_days)})
+            frame["p"] = frame["d"].dt.to_period(freq)
+            last_period = frame["p"].iloc[-1]
+            for period, grp in frame.groupby("p", observed=True):
+                tail_day = grp["d"].iloc[-1].date()
+                if tail_day >= anchor:
+                    if period != last_period:
+                        next_date = tail_day
+                        estimated = False
+                    else:
+                        est = _period_end_estimate(anchor, rebalance)
+                        if tail_day >= est:
+                            next_date = tail_day
+                            estimated = False
+                        else:
+                            next_date = est
+                            estimated = True
+                    break
+
+    if next_date is None:
+        next_date = _period_end_estimate(anchor, rebalance)
+        estimated = True
+
+    est_prefix = "预计 " if estimated else ""
+    suffix = "（以当期最后交易日为准，次日开盘成交）" if estimated else "（次日开盘成交）"
+    return {
+        "next_rebalance_date": next_date.isoformat(),
+        "next_rebalance_estimated": estimated,
+        "rebalance_rule": (
+            f"开户首日（{start.isoformat()}）收盘首次建仓，之后按{period_name}调仓；"
+            f"下次调仓：{est_prefix}{next_date.isoformat()} 收盘{suffix}。"
+        ),
+    }
+
+
 def _check(title: str, passed: bool, detail: str, severity: str = "info") -> dict[str, Any]:
     return {"title": title, "passed": passed, "severity": "ok" if passed else severity, "detail": detail}
 
 
 def account_checks(account: Any, result: dict[str, Any], *, today: date, latest: date | None,
-                   current_package: Any) -> list[dict[str, Any]]:
+                   current_package: Any, schedule: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """账户现在的情况：数据新不新、规则有没有变、风控、结果能不能当真。只描述，不评价策略好坏。"""
 
     checks = []
@@ -468,6 +566,9 @@ def account_checks(account: Any, result: dict[str, Any], *, today: date, latest:
             checks.append(_check("行情数据", False, text + f"本地行情已经 {behind} 天没有更新。", "warning"))
         else:
             checks.append(_check("行情数据", account["last_date"] == latest.isoformat(), text, "info"))
+
+    if schedule and schedule.get("rebalance_rule"):
+        checks.append(_check("调仓计划", True, str(schedule["rebalance_rule"])))
 
     stored = json.loads(account["package"])
     if _is_factor_composite(stored):
@@ -538,11 +639,15 @@ def _detail(account: Any) -> dict[str, Any]:
         describe_text = _package_text(package)
         factors = []
         standardization = None
+    schedule = _next_rebalance_info(account, bounds[1] if bounds else None)
     return {
         **_summary(account),
         "describe_text": describe_text,
         "factors": factors,
         "standardization": standardization,
+        "next_rebalance_date": schedule["next_rebalance_date"],
+        "next_rebalance_estimated": schedule["next_rebalance_estimated"],
+        "rebalance_rule": schedule["rebalance_rule"],
         "risk_limits": json.loads(account["risk_limits"]),
         "latest_data_date": bounds[1].isoformat() if bounds else None,
         "result": result,
@@ -550,7 +655,7 @@ def _detail(account: Any) -> dict[str, Any]:
         "positions": result.get("positions") or [],
         "benchmark": benchmark_comparison(directory) if directory else None,
         "checks": account_checks(account, result, today=china_today(), latest=bounds[1] if bounds else None,
-                                 current_package=current),
+                                 current_package=current, schedule=schedule),
     }
 
 

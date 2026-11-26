@@ -416,3 +416,66 @@ def test_factor_composite_account_validation_and_backtest_reference(env):
     assert ref["config"]["strategy_plugin"] == "factor_composite"
     assert ref["config"]["max_positions"] == 12
     assert "momentum_20" in ref["config"]["strategy_parameters"]["factors_json"]
+
+
+def test_paper_accounts_enable_initial_rebalance_and_report_next_schedule(env):
+    client, _, _, state = env
+    pkg = save_package(client, top_n=10)
+    account = create(client, pkg["package_id"], rebalance="monthly")
+    assert account["next_rebalance_date"] == TODAY.isoformat()
+    assert account["next_rebalance_estimated"] is False
+    checks = {item["title"]: item for item in account["checks"]}
+    assert "开户首日（2026-10-28）收盘首次建仓" in checks["调仓计划"]["detail"]
+
+    # 推进后：开启首日建仓，并结合交易日历给出当月末最后交易日
+    state.bounds = (date(2020, 1, 2), date(2026, 10, 29))
+    state.calendar = [
+        date(2026, 10, 28),
+        date(2026, 10, 29),
+        date(2026, 10, 30),
+        date(2026, 11, 2),
+    ]
+    active = client.post(f"/api/v1/paper-accounts/{account['account_id']}/advance").json()
+    assert state.requests[-1].initial_rebalance is True
+    assert active["result"]["effective_config"]["initial_rebalance"] is True
+    assert active["next_rebalance_date"] == "2026-10-30"
+    assert active["next_rebalance_estimated"] is False
+    active_checks = {item["title"]: item for item in active["checks"]}
+    assert "2026-10-30 收盘" in active_checks["调仓计划"]["detail"]
+
+    # 日历未覆盖未来时回退估算当期最后工作日
+    state.calendar = [date(2026, 10, 28), date(2026, 10, 29)]
+    refreshed = client.get(f"/api/v1/paper-accounts/{account['account_id']}").json()
+    assert refreshed["next_rebalance_date"] == "2026-10-30"
+    assert refreshed["next_rebalance_estimated"] is True
+
+
+def test_engine_initial_rebalance_builds_mid_month_position_while_default_stays_period_end():
+    from quant_platform.backtest.engine import BacktestEngine
+
+    dates = [
+        date(2026, 11, 18),
+        date(2026, 11, 19),
+        date(2026, 11, 20),
+        date(2026, 11, 23),
+        date(2026, 11, 24),
+        date(2026, 11, 25),
+    ]
+    stub = object.__new__(BacktestEngine)
+    stub.rebalance = "monthly"
+
+    # 默认回测口径：仅月末最后一天（区间内只有 11-25）
+    stub.initial_rebalance = False
+    assert stub._rebalance_dates(dates) == {date(2026, 11, 25)}
+
+    # 模拟账户口径：首日 11-18 加入调仓日历，11-18 收盘出信号、11-19 开盘成交
+    stub.initial_rebalance = True
+    assert stub._rebalance_dates(dates) == {date(2026, 11, 18), date(2026, 11, 25)}
+
+    # 跨月后：首日建仓 + 11 月末调仓，不重不漏
+    across_month = [*dates, date(2026, 11, 26), date(2026, 11, 27), date(2026, 11, 30), date(2026, 12, 1)]
+    assert stub._rebalance_dates(across_month) == {date(2026, 11, 18), date(2026, 11, 30), date(2026, 12, 1)}
+
+    # 按季调仓同理：季中开户首日建仓，之后每季末调仓
+    stub.rebalance = "quarterly"
+    assert stub._rebalance_dates(across_month) == {date(2026, 11, 18), date(2026, 12, 1)}

@@ -18,7 +18,9 @@ export function statusTone(status) {
 export function statusNote(account) {
   if (!account) return ''
   if (account.status === 'WAITING') {
-    return `从 ${account.start_date} 开始：开始那天收盘时第一次调仓，下一个交易日开盘成交。等下一个交易日的数据更新后出第一份结果。`
+    const period = { daily: '之后每个交易日调仓', weekly: '之后每周末最后交易日调仓', monthly: '之后每月末最后交易日调仓', quarterly: '之后每季末最后交易日调仓' }[account.rebalance]
+    const followUp = period ? `（${period}）` : ''
+    return `从 ${account.start_date} 开始：开始那天收盘时第一次调仓建仓${followUp}，下一个交易日开盘成交。等下一个交易日的数据更新后出第一份结果。`
   }
   if (account.status === 'FAILED') {
     const kept = account.last_date ? `下面仍是推进到 ${account.last_date} 的结果。` : ''
@@ -28,6 +30,19 @@ export function statusNote(account) {
     return `已推进到 ${account.last_date}；本地行情已有 ${account.latest_data_date} 的数据，稍后会自动推进。`
   }
   return account.last_date ? `已推进到 ${account.last_date}，每个交易日数据更新后自动推进。` : ''
+}
+
+// 账户详情顶部展示的“下次调仓”简短文案。
+export function nextRebalanceLabel(account) {
+  if (!account) return ''
+  if (account.status === 'WAITING' && account.start_date) {
+    return `${account.start_date} 收盘首次建仓`
+  }
+  if (account.rebalance === 'daily') return '每个交易日收盘'
+  if (account.next_rebalance_date) {
+    return `${account.next_rebalance_estimated ? '预计 ' : ''}${account.next_rebalance_date} 收盘`
+  }
+  return ''
 }
 
 // 检查项的颜色：通过是绿色，需要留意是黄色，只是说明是灰色。

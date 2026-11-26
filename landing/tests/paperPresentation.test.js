@@ -5,6 +5,7 @@ import {
   checkMark,
   checkTone,
   factorSummaryText,
+  nextRebalanceLabel,
   paperPrefill,
   parseFactorRows,
   returnText,
@@ -111,4 +112,18 @@ test('收益带正负号，没有结果时显示占位符', () => {
   assert.equal(checkTone('ok'), 'text-emerald-300')
   assert.equal(checkTone('warning'), 'text-amber-300')
   assert.equal(checkMark('info'), '·')
+})
+
+test('模拟账户下次调仓标签区分首日建仓、每日调仓、已确认日历日与估算日', () => {
+  assert.equal(nextRebalanceLabel({ status: 'WAITING', start_date: '2026-11-18', rebalance: 'monthly' }), '2026-11-18 收盘首次建仓')
+  assert.equal(nextRebalanceLabel({ status: 'ACTIVE', rebalance: 'daily' }), '每个交易日收盘')
+  assert.equal(
+    nextRebalanceLabel({ status: 'ACTIVE', rebalance: 'monthly', next_rebalance_date: '2026-11-30', next_rebalance_estimated: false }),
+    '2026-11-30 收盘',
+  )
+  assert.equal(
+    nextRebalanceLabel({ status: 'ACTIVE', rebalance: 'monthly', next_rebalance_date: '2026-11-30', next_rebalance_estimated: true }),
+    '预计 2026-11-30 收盘',
+  )
+  assert.equal(nextRebalanceLabel(null), '')
 })
