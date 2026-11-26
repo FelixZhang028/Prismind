@@ -224,3 +224,28 @@ def test_saved_package_and_copy_can_be_updated_in_place(workflow):
         json={"definition": updated_def, "top_n": 15, "rebalance": "quarterly"},
     ).status_code == 404
     assert not captured
+
+
+def test_available_trading_days_caches_by_calendar_file_stat(tmp_path, monkeypatch):
+    cal_path = tmp_path / "trade_calendar.parquet"
+    pd.DataFrame({"cal_date": pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"])}).to_parquet(cal_path)
+    monkeypatch.setattr(runtime, "MARKET_ROOT", tmp_path)
+    runtime._TRADING_DAYS_CACHE.clear()
+
+    reads = {"count": 0}
+    orig_repo = runtime.market_repository
+
+    class _CountingRepo:
+        def read_table(self, name):
+            reads["count"] += 1
+            return orig_repo().read_table(name)
+
+    monkeypatch.setattr(runtime, "market_repository", lambda: _CountingRepo())
+    assert runtime.available_trading_days() == 3
+    assert runtime.available_trading_days() == 3
+    assert reads["count"] == 1  # 第二次命中缓存，不再重读 parquet
+
+    # 更新日历文件后缓存自动失效
+    pd.DataFrame({"cal_date": pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07"])}).to_parquet(cal_path)
+    assert runtime.available_trading_days() == 4
+    assert reads["count"] == 2

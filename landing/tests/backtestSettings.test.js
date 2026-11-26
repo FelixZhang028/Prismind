@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   BACKTEST_SETTINGS_KEY,
+  clearBacktestSettings,
   loadBacktestSettings,
   sanitizeBacktestSettings,
   saveBacktestSettings,
@@ -13,6 +14,7 @@ function memoryStorage() {
   return {
     getItem: (k) => (map.has(k) ? map.get(k) : null),
     setItem: (k, v) => { map.set(k, String(v)) },
+    removeItem: (k) => { map.delete(k) },
   }
 }
 
@@ -91,4 +93,12 @@ test('从后端 effective_config 还原最近一次回测的表单口径设置',
   assert.equal(converted.exec.commission_wan, 2.5)
   assert.equal(converted.exec.slippage_bps, 10)
   assert.equal(converted.filter.minimum_listing_days, 250)
+})
+
+test('恢复默认配置时可清空本地保存的回测参数', () => {
+  const storage = memoryStorage()
+  saveBacktestSettings({ market: '000300.SH', rebalance: 'monthly', max_positions: 15 }, storage)
+  assert.equal(loadBacktestSettings(storage)?.rebalance, 'monthly')
+  assert.equal(clearBacktestSettings(storage), true)
+  assert.equal(loadBacktestSettings(storage), null)
 })
