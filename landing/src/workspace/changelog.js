@@ -19,6 +19,25 @@ export const CATEGORY_STYLE = {
 
 export const CHANGELOG_ENTRIES = [
   {
+    id: '2026-11-26-paper-initial-rebalance-and-next-date',
+    date: '2026-11-26',
+    title: '模拟账户支持开户首日建仓并展示下次调仓日期',
+    items: [
+      {
+        category: 'fix',
+        summary: '修复按月/按季/按周调仓的模拟账户在周期中开户后长期空仓不建仓的问题',
+        detail: '模拟账户现统一在开户首个交易日收盘生成初始建仓信号、次日开盘成交，随后再并入既定的每周末/每月末/每季末调仓日历（与页面说明保持一致；已有空仓模拟账户点「马上推进」或等待下次自动推进即可生效）。',
+        action: { label: '去模拟账户查看', view: 'paper-accounts' },
+      },
+      {
+        category: 'improve',
+        summary: '模拟账户详情新增「下次调仓」日期与调仓计划说明',
+        detail: '在账户元信息栏与账户检查中直观展示下次预计调仓收盘日与建仓/定期调仓规则，便于确认当前是否处于持仓观察期。',
+        action: { label: '去模拟账户查看', view: 'paper-accounts' },
+      },
+    ],
+  },
+  {
     id: '2026-11-25-default-csi800-edit-strategy-and-preview-sync',
     date: '2026-11-25',
     title: '回测默认使用中证800历史成分股、支持直接编辑已保存策略、修复规则周期预览同步',

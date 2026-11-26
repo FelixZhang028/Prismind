@@ -60,6 +60,7 @@ class BacktestRequest:
     portfolio_method: str | None = None
     universe_mode: str | None = None
     hold_buffer: int | None = None
+    initial_rebalance: bool = False
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,7 @@ class BacktestService:
                 require_mapping(snapshot["universe"], "universe").get("mode", "fixed")
             ),
             rebalance=str(strategy.get("rebalance", default.rebalance)),
+            initial_rebalance=bool(strategy.get("initial_rebalance", False)),
             risk_limits=RiskLimits.from_mapping(risk if isinstance(risk, dict) else {}),
             evaluation_mode="in_sample",
             run_kind="single",
@@ -260,6 +262,7 @@ class BacktestService:
             warmup_days=warmup_days,
             annualization=int(backtest_section.get("annualization", 252)),
             hold_buffer=effective.hold_buffer,
+            initial_rebalance=effective.initial_rebalance,
         )
         return engine, self._config_snapshot(effective)
 
@@ -332,6 +335,7 @@ class BacktestService:
                 "plugin": request.strategy_plugin,
                 "rebalance": request.rebalance,
                 "parameters": deepcopy(request.strategy_parameters),
+                **({"initial_rebalance": True} if request.initial_rebalance else {}),
             }
         )
         backtest = require_mapping(snapshot["app"], "backtest")

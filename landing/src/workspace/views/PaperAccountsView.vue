@@ -5,7 +5,7 @@ import { REBALANCE_OPTIONS } from '../preferences.js'
 import { openResearch } from '../researchNavigation.js'
 import { benchmarkCards, benchmarkNote, benchmarkSeries } from '../benchmarkPresentation.js'
 import { CURRENT_POOL, marketChoices, marketLabel, usableMarket } from '../marketPresentation.js'
-import { accountsLeft, checkMark, checkTone, paperPrefill, parseFactorRows, returnText, returnTone, statusLabel, statusNote, statusTone } from '../paperPresentation.js'
+import { accountsLeft, checkMark, checkTone, nextRebalanceLabel, paperPrefill, parseFactorRows, returnText, returnTone, statusLabel, statusNote, statusTone } from '../paperPresentation.js'
 import { takeFactorPaperDraft } from '../factorBacktestDraft.js'
 import { tradeReasonClass } from '../ruleForm.js'
 import SectionCard from '../ui/SectionCard.vue'
@@ -410,6 +410,7 @@ onActivated(async () => {
           <span class="whitespace-nowrap"><span class="text-slate-400">开始 </span><span class="text-white">{{ current.start_date }}</span></span>
           <span class="whitespace-nowrap"><span class="text-slate-400">初始资金 </span><span class="text-white">{{ money(current.initial_cash) }}</span></span>
           <span class="whitespace-nowrap"><span class="text-slate-400">持股 </span><span class="text-white">最多 {{ current.top_n }} 只 · {{ rebalanceLabel(current.rebalance) }}调仓</span></span>
+          <span v-if="nextRebalanceLabel(current)" class="whitespace-nowrap"><span class="text-slate-400">下次调仓 </span><span class="text-indigo-200">{{ nextRebalanceLabel(current) }}</span></span>
         </div>
         <p v-if="note" class="text-sm" :class="current.status === 'FAILED' ? 'text-rose-300' : 'text-slate-300'">{{ note }}</p>
         <div v-if="current.describe_text || current.factors?.length" class="space-y-2">
@@ -599,7 +600,7 @@ onActivated(async () => {
           </p>
         </div>
         <p class="mt-3 text-xs text-slate-400">
-          创建时会把{{ form.strategy_kind === 'factor_composite' ? '因子组合快照（含自定义因子定义）' : '策略规则' }}、股票范围（选股票池时是现在的股票池）和现在的风控设置复制一份锁住，以后修改它们都不影响这个账户。风控可以先在「策略回测」页的风险设置里改好。
+          开户首个交易日收盘即按规则建仓、下一交易日开盘成交，之后按所选调仓频率（每周末/每月末/每季末最后交易日）定期调仓，避免月中或季中开户长时间空仓。创建时会把{{ form.strategy_kind === 'factor_composite' ? '因子组合快照（含自定义因子定义）' : '策略规则' }}、股票范围（选股票池时是现在的股票池）和现在的风控设置复制一份锁住，以后修改它们都不影响这个账户。风控可以先在「策略回测」页的风险设置里改好。
         </p>
         <div class="mt-5 flex justify-end">
           <button data-guide="paper-create" :disabled="!canCreate"
