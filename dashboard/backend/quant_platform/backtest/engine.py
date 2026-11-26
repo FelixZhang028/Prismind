@@ -878,7 +878,7 @@ class BacktestEngine:
         frame["period"] = periods
         tails = frame.groupby("period", observed=True).tail(1)
         scheduled = {timestamp.date() for timestamp in tails["trade_date"]}
-        if self.initial_rebalance:
+        if getattr(self, "initial_rebalance", False):
             scheduled.add(dates[0])
         return scheduled
 
